@@ -27,6 +27,7 @@ import org.apache.ignite.IgniteException;
 import org.apache.ignite.IgniteIllegalStateException;
 import org.apache.ignite.IgniteLogger;
 import org.apache.ignite.IgniteTransactions;
+import org.apache.ignite.TestDebugLog;
 import org.apache.ignite.cache.CacheAtomicityMode;
 import org.apache.ignite.cache.CacheMode;
 import org.apache.ignite.cache.affinity.Affinity;
@@ -368,6 +369,8 @@ public abstract class IgniteCachePrimaryNodeFailureRecoveryAbstractTest extends 
 
         log.info("Put key2 [key2=" + key2 + ", nodes=" + U.nodeIds(aff.mapKeyToPrimaryAndBackups(key2)) + ']');
 
+        log.info("part: " + aff.partition(key2));
+
         cache0.put(key2, key2);
 
         log.info("Start prepare.");
@@ -455,6 +458,14 @@ public abstract class IgniteCachePrimaryNodeFailureRecoveryAbstractTest extends 
 
             for (Ignite ignite : G.allGrids()) {
                 IgniteCache<Integer, Integer> cache = ignite.cache(DEFAULT_CACHE_NAME);
+
+                if (cache.get(key) == null) {
+                    TestDebugLog.addMessage("No value " + key + " " + ignite.name());
+
+                    TestDebugLog.printMessages(true, 6);
+
+                    System.exit(1);
+                }
 
                 assertEquals("Unexpected value for: " + ignite.name(), key, cache.get(key));
             }

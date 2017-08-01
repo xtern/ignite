@@ -30,6 +30,7 @@ import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
 import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.IgniteLogger;
+import org.apache.ignite.TestDebugLog;
 import org.apache.ignite.cache.CacheRebalanceMode;
 import org.apache.ignite.cluster.ClusterNode;
 import org.apache.ignite.configuration.CacheConfiguration;
@@ -682,6 +683,9 @@ public class GridDhtPartitionDemander {
                             if (last) {
                                 if (supply.isClean(p))
                                     part.updateCounter(supply.last().get(p));
+
+                                if (p == 6 && grp.cacheOrGroupName().equals("default"))
+                                    TestDebugLog.addPartMessage(6, "last supply", "owned");
 
                                 top.own(part);
 

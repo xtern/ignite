@@ -31,6 +31,7 @@ import java.util.concurrent.locks.ReentrantLock;
 import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.IgniteException;
 import org.apache.ignite.IgniteLogger;
+import org.apache.ignite.TestDebugLog;
 import org.apache.ignite.cluster.ClusterNode;
 import org.apache.ignite.internal.IgniteInternalFuture;
 import org.apache.ignite.internal.NodeStoppingException;
@@ -558,6 +559,9 @@ public class GridDhtLocalPartition extends GridCacheConcurrentMapImpl implements
                 boolean update = this.state.compareAndSet(state, setPartState(state, toState));
 
                 if (update)
+                    if (id == 6 && grp.cacheOrGroupName().equals("default"))
+                        TestDebugLog.addPartMessage(6, toState, "set state");
+
                     try {
                         ctx.wal().log(new PartitionMetaStateRecord(grp.groupId(), id, toState, updateCounter()));
                     }

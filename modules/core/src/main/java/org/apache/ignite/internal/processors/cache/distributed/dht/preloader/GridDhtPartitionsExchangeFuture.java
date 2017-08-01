@@ -38,6 +38,7 @@ import java.util.concurrent.locks.ReadWriteLock;
 import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.IgniteLogger;
 import org.apache.ignite.IgniteSystemProperties;
+import org.apache.ignite.TestDebugLog;
 import org.apache.ignite.cluster.ClusterNode;
 import org.apache.ignite.configuration.NearCacheConfiguration;
 import org.apache.ignite.events.DiscoveryEvent;
@@ -512,6 +513,8 @@ public class GridDhtPartitionsExchangeFuture extends GridDhtTopologyFutureAdapte
         initTs = U.currentTimeMillis();
 
         U.await(evtLatch);
+
+        TestDebugLog.addMessage("init " + initialVersion());
 
         assert discoEvt != null : this;
         assert exchId.nodeId().equals(discoEvt.eventNode().id()) : this;
@@ -1346,6 +1349,8 @@ public class GridDhtPartitionsExchangeFuture extends GridDhtTopologyFutureAdapte
     @Override public boolean onDone(@Nullable AffinityTopologyVersion res, @Nullable Throwable err) {
         if (!done.compareAndSet(false, true))
             return false;
+
+        TestDebugLog.addMessage("done " + initialVersion() + " " + res);
 
         log.info("Finish exchange future [startVer=" + initialVersion() +
             ", resVer=" + res +
