@@ -1,0 +1,186 @@
+Index: modules/core/src/test/java/org/apache/ignite/internal/processors/cache/datastructures/GridCacheAbstractDataStructuresFailoverSelfTest.java
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+--- modules/core/src/test/java/org/apache/ignite/internal/processors/cache/datastructures/GridCacheAbstractDataStructuresFailoverSelfTest.java	(revision )
++++ modules/core/src/test/java/org/apache/ignite/internal/processors/cache/datastructures/GridCacheAbstractDataStructuresFailoverSelfTest.java	(revision )
+@@ -17,9 +17,17 @@
+ 
+ package org.apache.ignite.internal.processors.cache.datastructures;
+ 
+-import static org.apache.ignite.cache.CacheAtomicityMode.TRANSACTIONAL;
+-import static org.apache.ignite.testframework.GridTestUtils.waitForCondition;
+-
++import java.util.Collection;
++import java.util.Timer;
++import java.util.TimerTask;
++import java.util.UUID;
++import java.util.concurrent.BrokenBarrierException;
++import java.util.concurrent.Callable;
++import java.util.concurrent.ConcurrentSkipListSet;
++import java.util.concurrent.CyclicBarrier;
++import java.util.concurrent.Semaphore;
++import java.util.concurrent.atomic.AtomicBoolean;
++import java.util.concurrent.atomic.AtomicInteger;
+ import org.apache.ignite.Ignite;
+ import org.apache.ignite.IgniteAtomicLong;
+ import org.apache.ignite.IgniteAtomicReference;
+@@ -52,19 +60,8 @@
+ import org.apache.ignite.spi.discovery.tcp.TcpDiscoverySpi;
+ import org.apache.ignite.testframework.GridTestUtils;
+ 
+-import java.util.Collection;
+-import java.util.Timer;
+-import java.util.TimerTask;
+-import java.util.UUID;
+-import java.util.concurrent.BrokenBarrierException;
+-import java.util.concurrent.Callable;
+-import java.util.concurrent.ConcurrentSkipListSet;
+-import java.util.concurrent.CountDownLatch;
+-import java.util.concurrent.CyclicBarrier;
+-import java.util.concurrent.FutureTask;
+-import java.util.concurrent.Semaphore;
+-import java.util.concurrent.atomic.AtomicBoolean;
+-import java.util.concurrent.atomic.AtomicInteger;
++import static org.apache.ignite.cache.CacheAtomicityMode.TRANSACTIONAL;
++import static org.apache.ignite.testframework.GridTestUtils.waitForCondition;
+ 
+ /**
+  * Failover tests for cache data structures.
+@@ -424,7 +421,7 @@
+ 
+             stopGrid(NEW_IGNITE_INSTANCE_NAME);
+ 
+-            assert waitForCondition(new PA() {
++            waitForCondition(new PA() {
+                 @Override public boolean apply() {
+                     return semaphore.availablePermits() == 20;
+                 }
+@@ -445,41 +442,22 @@
+ 
+             assertEquals(0, sem.availablePermits());
+ 
+-            CountDownLatch sync = new CountDownLatch(1);
++            new Timer().schedule(new TimerTask() {
++                @Override public void run() {
++                    stopGrid(NEW_IGNITE_INSTANCE_NAME);
++                }
++            }, 2000);
+ 
+-            FutureTask<Boolean> task = new FutureTask<>(new Callable<Boolean>() {
+-                @Override
+-                public Boolean call() throws Exception {
+-                    try {
+-                        // signal main thread
+-                        sync.countDown();
+-
+-                        sem.acquire(1);
+-                    }
+-                    catch (IgniteInterruptedException ignored) {
+-                        // Expected exception.
+-                        return true;
+-                    }
+-
+-                    return false;
+-                }
+-            });
++            try {
++                sem.acquire(1);
++            }
++            catch (IgniteInterruptedException ignored) {
++                // Expected exception.
++                return;
++            }
++        }
+ 
+-            // execute task in new thread
+-            new Thread(task).start();
+-
+-            // sync execution with new thread
+-            sync.await();
+-
+-            // ensure that semaphore was acquired
+-            while (!sem.isBroken() && !sem.hasQueuedThreads())
+-                Thread.sleep(100);
+-
+-            // test failover
+-            stopGrid(NEW_IGNITE_INSTANCE_NAME);
+-
+-            assertTrue("Thread hasn't been interrupted", task.get());
+-        }
++        fail("Thread hasn't been interrupted");
+     }
+ 
+     /**
+@@ -559,8 +537,8 @@
+      */
+     private void doTestSemaphore(ConstantTopologyChangeWorker topWorker, final boolean failoverSafe) throws Exception {
+         final int permits = topWorker instanceof MultipleTopologyChangeWorker ||
+-            topWorker instanceof PartitionedMultipleTopologyChangeWorker ? TOP_CHANGE_THREAD_CNT * 3 :
+-            TOP_CHANGE_CNT;
++                topWorker instanceof PartitionedMultipleTopologyChangeWorker ? TOP_CHANGE_THREAD_CNT * 3 :
++                TOP_CHANGE_CNT;
+ 
+         try (IgniteSemaphore s = grid(0).semaphore(STRUCTURE_NAME, permits, failoverSafe, true)) {
+             IgniteInternalFuture<?> fut = topWorker.startChangingTopology(new IgniteClosure<Ignite, Object>() {
+@@ -574,7 +552,7 @@
+                             break;
+                         }
+                         catch (IgniteInterruptedException e) {
+-                           // Exception may happen in non failover safe mode.
++                            // Exception may happen in non failover safe mode.
+                             if (failoverSafe)
+                                 throw e;
+                             else {
+@@ -765,9 +743,9 @@
+      * @throws Exception If failed.
+      */
+     private void doTestReentrantLock(
+-        final ConstantTopologyChangeWorker topWorker,
+-        final boolean failoverSafe,
+-        final boolean fair
++            final ConstantTopologyChangeWorker topWorker,
++            final boolean failoverSafe,
++            final boolean fair
+     ) throws Exception {
+         IgniteEx ig = grid(0);
+ 
+@@ -860,13 +838,13 @@
+         try (IgniteCountDownLatch s = grid(0).countDownLatch(STRUCTURE_NAME, Integer.MAX_VALUE, false, true)) {
+             try {
+                 IgniteInternalFuture<?> fut = topWorker.startChangingTopology(
+-                    new IgniteClosure<Ignite, Object>() {
+-                        @Override public Object apply(Ignite ignite) {
+-                            assert ignite.countDownLatch(STRUCTURE_NAME, Integer.MAX_VALUE, false, false).count() > 0;
++                        new IgniteClosure<Ignite, Object>() {
++                            @Override public Object apply(Ignite ignite) {
++                                assert ignite.countDownLatch(STRUCTURE_NAME, Integer.MAX_VALUE, false, false).count() > 0;
+ 
+-                            return null;
+-                        }
+-                    });
++                                return null;
++                            }
++                        });
+ 
+                 int val = s.count();
+ 
+@@ -1194,8 +1172,8 @@
+      */
+     private ConstantTopologyChangeWorker multipleTopologyChangeWorker(int topChangeThreads) {
+         return collectionCacheMode() == CacheMode.PARTITIONED ?
+-            new PartitionedMultipleTopologyChangeWorker(topChangeThreads) :
+-            new MultipleTopologyChangeWorker(topChangeThreads);
++                new PartitionedMultipleTopologyChangeWorker(topChangeThreads) :
++                new MultipleTopologyChangeWorker(topChangeThreads);
+     }
+ 
+     /**
+@@ -1413,4 +1391,4 @@
+             return fut;
+         }
+     }
+-}
++} 
+\ No newline at end of file
