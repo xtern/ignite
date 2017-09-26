@@ -60,7 +60,12 @@ import org.apache.ignite.internal.managers.communication.GridMessageListener;
 import org.apache.ignite.internal.managers.deployment.GridDeployment;
 import org.apache.ignite.internal.managers.eventstorage.GridLocalEventListener;
 import org.apache.ignite.internal.processors.GridProcessorAdapter;
+import org.apache.ignite.internal.processors.affinity.AffinityTopologyVersion;
+import org.apache.ignite.internal.processors.cache.GridCacheMvccManager;
 import org.apache.ignite.internal.processors.cache.IgniteInternalCache;
+import org.apache.ignite.internal.processors.cache.distributed.dht.preloader.GridDhtPartitionsExchangeFuture;
+import org.apache.ignite.internal.processors.cache.transactions.IgniteInternalTx;
+import org.apache.ignite.internal.processors.cache.transactions.IgniteTxManager;
 import org.apache.ignite.internal.processors.cluster.IgniteChangeGlobalStateSupport;
 import org.apache.ignite.internal.util.GridConcurrentFactory;
 import org.apache.ignite.internal.util.GridSpinReadWriteLock;
@@ -442,6 +447,9 @@ public class GridTaskProcessor extends GridProcessorAdapter implements IgniteCha
         lock.readLock();
 
         try {
+
+            checkTopologyUpdate();
+
             if (stopping)
                 throw new IllegalStateException("Failed to execute task due to grid shutdown: " + task);
 
@@ -451,6 +459,23 @@ public class GridTaskProcessor extends GridProcessorAdapter implements IgniteCha
         finally {
             lock.readUnlock();
         }
+    }
+
+    /**
+     * <a href="https://issues.apache.org/jira/browse/IGNITE-6380">IGNITE-6380</a>
+     * restrict execution within transaction or lock if topology pending updates.
+     *
+     * @throws IgniteException when restricted behavior is detected
+     */
+    private void checkTopologyUpdate() throws IgniteException {
+        AffinityTopologyVersion lockedTopVer = ctx.cache().context().lockedTopologyVersion(null);
+
+        GridDhtPartitionsExchangeFuture fut = ctx.cache().context().exchange().lastTopologyFuture();
+
+        if (lockedTopVer != null && !fut.isDone() && lockedTopVer.compareTo(fut.initialVersion()) < 0)
+            throw new IgniteException("Pending topology detected (local = "
+                + lockedTopVer + " vs pending version = "
+                + fut.initialVersion() + "), compute task running within lock or transaction was aborted.");
     }
 
     /**
