@@ -24,7 +24,9 @@ import java.util.UUID;
 import java.util.concurrent.BrokenBarrierException;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentSkipListSet;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.FutureTask;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -61,6 +63,7 @@ import org.apache.ignite.spi.discovery.tcp.TcpDiscoverySpi;
 import org.apache.ignite.testframework.GridTestUtils;
 
 import static org.apache.ignite.cache.CacheAtomicityMode.TRANSACTIONAL;
+import static org.apache.ignite.testframework.GridTestUtils.DFLT_BUSYWAIT_SLEEP_INTERVAL;
 import static org.apache.ignite.testframework.GridTestUtils.waitForCondition;
 
 /**
@@ -421,11 +424,13 @@ public abstract class GridCacheAbstractDataStructuresFailoverSelfTest extends Ig
 
             stopGrid(NEW_IGNITE_INSTANCE_NAME);
 
-            waitForCondition(new PA() {
+            boolean permitsAvailable = waitForCondition(new PA() {
                 @Override public boolean apply() {
                     return semaphore.availablePermits() == 20;
                 }
             }, 2000);
+
+            assertTrue("Permits from stopped node are still unavailable - timeout", permitsAvailable);
         }
     }
 
@@ -442,22 +447,41 @@ public abstract class GridCacheAbstractDataStructuresFailoverSelfTest extends Ig
 
             assertEquals(0, sem.availablePermits());
 
-            new Timer().schedule(new TimerTask() {
-                @Override public void run() {
-                    stopGrid(NEW_IGNITE_INSTANCE_NAME);
+            final CountDownLatch sync = new CountDownLatch(1);
+
+            // Acquire semaphore in separate thread.
+            IgniteInternalFuture<Boolean> task = GridTestUtils.runAsync(new Callable<Boolean>() {
+                @Override public Boolean call() throws Exception {
+                    try {
+                        // Notify main thread.
+                        sync.countDown();
+
+                        sem.acquire(1);
+                    }
+                    catch (IgniteInterruptedException ignored) {
+                        // Expected exception.
+                        return true;
+                    }
+                    // Test failed.
+                    return false;
+                }
+            });
+
+            // Sync execution of new thread with current.
+            sync.await();
+
+            // Ensure that semaphore was acquired.
+            waitForCondition(new PA() {
+                @Override public boolean apply() {
+                    return sem.isBroken() || sem.hasQueuedThreads();
                 }
             }, 2000);
 
-            try {
-                sem.acquire(1);
-            }
-            catch (IgniteInterruptedException ignored) {
-                // Expected exception.
-                return;
-            }
-        }
+            // Test failover.
+            stopGrid(NEW_IGNITE_INSTANCE_NAME);
 
-        fail("Thread hasn't been interrupted");
+            assertTrue("Thread hasn't been interrupted", task.get());
+        }
     }
 
     /**
