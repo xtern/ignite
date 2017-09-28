@@ -31,7 +31,7 @@ public class GridSemaphoreCloseFailedRepro extends GridCommonAbstractTest {
                             semaphore.acquire(1);
                         }
                         catch (IgniteInterruptedException ignore) {
-                            // Ignore - normal behavior.
+                            // Normal behavior.
                         }
                         finally {
                             semaphore.close();
