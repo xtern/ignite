@@ -15,7 +15,7 @@ public class GridSemaphoreCloseFailedRepro extends GridCommonAbstractTest {
 
         try (Ignite node = startGrid(0)) {
 
-            for (; ; ) {
+            for ( ; ; ) {
                 final AtomicReference<IgniteSemaphore> ref = new AtomicReference<>();
 
                 success[0] = false;
@@ -32,11 +32,11 @@ public class GridSemaphoreCloseFailedRepro extends GridCommonAbstractTest {
                             semaphore.acquire(1);
                         }
                         catch (IgniteInterruptedException ignore) {
-                            // ignore - normal behavior
+                            // Ignore - normal behavior.
                         }
                         finally {
                             semaphore.close();
-                            // no exception - continue
+                            // Here expected exception when thread interrupted state is set.
                             success[0] = true;
                         }
                     }
