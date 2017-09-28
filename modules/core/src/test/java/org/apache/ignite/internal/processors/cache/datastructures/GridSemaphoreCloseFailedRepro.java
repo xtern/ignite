@@ -36,7 +36,7 @@ public class GridSemaphoreCloseFailedRepro extends GridCommonAbstractTest {
                         }
                         finally {
                             semaphore.close();
-                            // test failed
+                            // no exception - continue
                             success[0] = true;
                         }
                     }
