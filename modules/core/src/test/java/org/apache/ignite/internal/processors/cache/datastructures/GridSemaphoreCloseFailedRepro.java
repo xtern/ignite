@@ -1,6 +1,5 @@
 package org.apache.ignite.internal.processors.cache.datastructures;
 
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import org.apache.ignite.Ignite;
 import org.apache.ignite.IgniteInterruptedException;
