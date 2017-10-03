@@ -38,6 +38,7 @@ import org.apache.ignite.IgniteDeploymentException;
 import org.apache.ignite.IgniteException;
 import org.apache.ignite.cluster.ClusterNode;
 import org.apache.ignite.compute.ComputeExecutionRejectedException;
+import org.apache.ignite.compute.ComputeJob;
 import org.apache.ignite.compute.ComputeJobSibling;
 import org.apache.ignite.compute.ComputeTaskSession;
 import org.apache.ignite.events.DiscoveryEvent;
@@ -63,9 +64,11 @@ import org.apache.ignite.internal.managers.deployment.GridDeployment;
 import org.apache.ignite.internal.managers.eventstorage.GridLocalEventListener;
 import org.apache.ignite.internal.processors.GridProcessorAdapter;
 import org.apache.ignite.internal.processors.affinity.AffinityTopologyVersion;
+import org.apache.ignite.internal.processors.cache.GridCacheAdapter;
 import org.apache.ignite.internal.processors.cache.GridCacheContext;
 import org.apache.ignite.internal.processors.cache.distributed.dht.GridDhtLocalPartition;
 import org.apache.ignite.internal.processors.cache.distributed.dht.GridReservable;
+import org.apache.ignite.internal.processors.cache.distributed.dht.preloader.GridDhtPartitionsExchangeFuture;
 import org.apache.ignite.internal.processors.jobmetrics.GridJobMetricsSnapshot;
 import org.apache.ignite.internal.util.GridAtomicLong;
 import org.apache.ignite.internal.util.GridBoundedConcurrentLinkedHashMap;
@@ -1109,10 +1112,18 @@ public class GridJobProcessor extends GridProcessorAdapter {
                     if (job.initialize(dep, dep.deployedClass(req.getTaskClassName()))) {
                         // Internal jobs will always be executed synchronously.
                         if (job.isInternal()) {
-                            // This is an internal job and can be executed inside busy lock
-                            // since job is expected to be short.
-                            // This is essential for proper stop without races.
-                            job.run();
+                            // IGNITE-6380
+                            if (isRestrictExecution(job.getJob())) {
+                                IgniteException ex = new ComputeExecutionRejectedException("Pending " +
+                                    "topology found - job execution within transaction or lock was canceled.");
+
+                                job.finishJob(null, ex, true);
+                            }
+                            else
+                                // This is an internal job and can be executed inside busy lock
+                                // since job is expected to be short.
+                                // This is essential for proper stop without races.
+                                job.run();
 
                             // No execution outside lock.
                             job = null;
@@ -1490,6 +1501,23 @@ public class GridJobProcessor extends GridProcessorAdapter {
      */
     private boolean isDeadNode(UUID uid) {
         return ctx.discovery().node(uid) == null || !ctx.discovery().pingNodeNoError(uid);
+    }
+
+    /**
+     * <a href="https://issues.apache.org/jira/browse/IGNITE-6380">IGNITE-6380</a>
+     * restrict execution within transaction or locks if topology pending updates.
+     *
+     * @return {@code True} if execution must be restricted to prevent possible deadlock.
+     */
+    private boolean isRestrictExecution(ComputeJob job) {
+        if (job instanceof GridCacheAdapter.TopologyVersionAwareJob) {
+            AffinityTopologyVersion lockedVer = ctx.cache().context().lockedTopologyVersion(null);
+            GridDhtPartitionsExchangeFuture fut = ctx.cache().context().exchange().lastTopologyFuture();
+
+            // restrict execution if we have incomplete topology future with newer version
+            return (lockedVer != null && !fut.isDone() && lockedVer.compareTo(fut.initialVersion()) < 0);
+        }
+        return false;
     }
 
     /** {@inheritDoc} */
