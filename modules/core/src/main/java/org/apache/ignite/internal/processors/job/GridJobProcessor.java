@@ -1511,6 +1511,8 @@ public class GridJobProcessor extends GridProcessorAdapter {
      * @return {@code True} if execution must be rejected to prevent possible deadlock.
      */
     private boolean isExecutionAllowed(ComputeJob job) {
+        assert job != null;
+
         if (!(job instanceof GridCacheAdapter.TopologyVersionAwareJob))
             return true;
 
@@ -1520,6 +1522,8 @@ public class GridJobProcessor extends GridProcessorAdapter {
             return true;
 
         GridDhtPartitionsExchangeFuture lastTopFut = ctx.cache().context().exchange().lastTopologyFuture();
+
+        assert lastTopFut != null;
 
         return lastTopFut.isDone() || lockedVer.compareTo(lastTopFut.initialVersion()) >= 0;
     }
