@@ -93,9 +93,9 @@ public class IgniteComputeWithPendingTopologyDeadlockTest extends GridCommonAbst
         CacheWriteSynchronizationMode writeMode) {
         CacheConfiguration<Integer, Integer> cacheConfiguration = new CacheConfiguration<>(name);
 
-        cacheConfiguration.setAtomicityMode(CacheAtomicityMode.TRANSACTIONAL);
         cacheConfiguration.setCacheMode(mode);
         cacheConfiguration.setWriteSynchronizationMode(writeMode);
+        cacheConfiguration.setAtomicityMode(CacheAtomicityMode.TRANSACTIONAL);
 
         return cacheConfiguration;
     }
@@ -110,7 +110,7 @@ public class IgniteComputeWithPendingTopologyDeadlockTest extends GridCommonAbst
             for (CacheWriteSynchronizationMode syncMode : CacheWriteSynchronizationMode.values()) {
                 boolean result = doTestExplicitLock(mode, syncMode);
 
-                String msg = "Possible deadlock in this mode: " + mode + "/" + syncMode + " (see thread dumps).";
+                String msg = "Possible deadlock in this mode: " + mode + "/" + syncMode + " (see thread dump).";
 
                 assertTrue(msg, result);
             }
@@ -132,7 +132,7 @@ public class IgniteComputeWithPendingTopologyDeadlockTest extends GridCommonAbst
 
                         String msg = "Possible deadlock in this modes:" +
                             " cache - " + cacheMode + "/" + cacheWriteSyncMode + ", "
-                            + "tx - " + concurrency + "/" + isolation + " (see thread dumps).";
+                            + "tx - " + concurrency + "/" + isolation + " (see thread dump).";
 
                         assertTrue(msg, result);
                     }
@@ -182,11 +182,16 @@ public class IgniteComputeWithPendingTopologyDeadlockTest extends GridCommonAbst
 
                     assertTrue(done);
 
+                    Thread.sleep(500);
+
                     // Execute distributed (topology version aware) task.
                     cache2.size();
                 }
                 catch (CacheException ignore) {
                     return true;
+                }
+                catch (InterruptedException e) {
+                    fail("Thread was interrupted");
                 }
                 finally {
                     lock.unlock();
@@ -238,6 +243,7 @@ public class IgniteComputeWithPendingTopologyDeadlockTest extends GridCommonAbst
         IgniteInternalFuture<Boolean> fut = runAsync(new Callable<Boolean>() {
             @Override public Boolean call() throws IgniteInterruptedCheckedException {
                 try (Transaction tx = node.transactions().txStart(concurrency, isolation)) {
+                    // Get write lock.
                     cache1.put(12, 12);
 
                     sync.countDown();
@@ -251,6 +257,8 @@ public class IgniteComputeWithPendingTopologyDeadlockTest extends GridCommonAbst
 
                     assertTrue(done);
 
+                    Thread.sleep(500);
+
                     // Execute distributed (topology version aware) task.
                     cache2.clear();
 
@@ -258,6 +266,9 @@ public class IgniteComputeWithPendingTopologyDeadlockTest extends GridCommonAbst
                 }
                 catch (CacheException ignore) {
                     return concurrency == TransactionConcurrency.PESSIMISTIC;
+                }
+                catch (InterruptedException e) {
+                    fail("Thread was interrupted");
                 }
 
                 return concurrency == TransactionConcurrency.OPTIMISTIC;
@@ -308,5 +319,4 @@ public class IgniteComputeWithPendingTopologyDeadlockTest extends GridCommonAbst
             }
         }, "Deadlock tracker");
     }
-
 }
