@@ -17,14 +17,11 @@
 
 package org.apache.ignite.internal.processors.compute;
 
-import com.google.common.collect.ImmutableList;
-import com.google.common.collect.ImmutableSet;
-import java.util.Collections;
-import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.Lock;
+import javax.cache.Cache;
 import javax.cache.CacheException;
 import org.apache.ignite.Ignite;
 import org.apache.ignite.IgniteCache;
@@ -33,6 +30,7 @@ import org.apache.ignite.cache.CacheAtomicityMode;
 import org.apache.ignite.cache.CacheMode;
 import org.apache.ignite.cache.CacheWriteSynchronizationMode;
 import org.apache.ignite.configuration.CacheConfiguration;
+import org.apache.ignite.internal.IgniteFutureTimeoutCheckedException;
 import org.apache.ignite.internal.IgniteInternalFuture;
 import org.apache.ignite.internal.IgniteInterruptedCheckedException;
 import org.apache.ignite.internal.util.typedef.PA;
@@ -46,18 +44,15 @@ import org.apache.ignite.transactions.TransactionIsolation;
 import static org.apache.ignite.testframework.GridTestUtils.runAsync;
 
 /**
- * Reproduce <a href="https://issues.apache.org/jira/browse/IGNITE-6380">IGNITE-6380</a>
- * (restrict execution within transaction or lock if topology pending updates).<br>
- *
- * The main goal for tests is to fail, when deadlock possible.
+ * Test that compute task will be rejected when executed within transaction/lock if topology pending updates.
  */
 public class IgniteComputeWithPendingTopologyDeadlockTest extends GridCommonAbstractTest {
 
     /** Maximum timeout for topology update (prevent hanging and long shutdown). */
-    private static final long PENDING_TIMEOUT = 15_000;
+    private static final long PENDING_TIMEOUT = 15_000L;
 
     /** */
-    private static final long CACHE_CREATION_TIMEOUT = 2_000;
+    private static final long CACHE_CREATION_TIMEOUT = 2_000L;
 
     /** */
     private static final int CACHE_SIZE = 10;
@@ -71,193 +66,222 @@ public class IgniteComputeWithPendingTopologyDeadlockTest extends GridCommonAbst
     /** */
     private static final String CACHE3 = "cache3";
 
+    /** */
+    private static final CacheMode[] TEST_CACHE_MODES = { CacheMode.PARTITIONED, CacheMode.REPLICATED };
+
+    /** {@inheritDoc} */
+    @Override public void beforeTest() throws Exception {
+        super.beforeTest();
+        startGrid(0);
+    }
+
+    /** {@inheritDoc} */
+    @Override public void afterTest() throws Exception {
+        super.afterTest();
+        stopAllGrids();
+    }
+
     /**
      * Create cache configuration with transactional atomicity mode.
      *
-     * @param mode name for cache.
-     * @return cache configuration.
+     * @param mode Name for cache.
+     * @return Cache configuration.
      */
     private CacheConfiguration<Integer, Integer> cacheConfiguration(String name, CacheMode mode,
         CacheWriteSynchronizationMode writeMode) {
+        CacheConfiguration<Integer, Integer> cacheConfiguration = new CacheConfiguration<>(name);
 
-        return new CacheConfiguration<Integer, Integer>(name)
-            .setAtomicityMode(CacheAtomicityMode.TRANSACTIONAL)
-            .setCacheMode(mode)
-            .setWriteSynchronizationMode(writeMode);
+        cacheConfiguration.setAtomicityMode(CacheAtomicityMode.TRANSACTIONAL);
+        cacheConfiguration.setCacheMode(mode);
+        cacheConfiguration.setWriteSynchronizationMode(writeMode);
+
+        return cacheConfiguration;
     }
 
     /**
      * Explicit lock test.
      *
-     * @throws Exception if fails.
+     * @throws Exception If fails.
      */
     public void testExplicitLock() throws Exception {
-        for (CacheMode cacheMode : CacheMode.values())
-            for (CacheWriteSynchronizationMode cacheWriteSyncMode : CacheWriteSynchronizationMode.values())
-                assertTrue("Possible deadlock in this mode: " + cacheMode + "/"
-                    + cacheWriteSyncMode + " (see thread dumps).", doTestExplicitLock(cacheMode, cacheWriteSyncMode));
+        for (CacheMode mode : TEST_CACHE_MODES) {
+            for (CacheWriteSynchronizationMode syncMode : CacheWriteSynchronizationMode.values()) {
+                boolean result = doTestExplicitLock(mode, syncMode);
+
+                String msg = "Possible deadlock in this mode: " + mode + "/" + syncMode + " (see thread dumps).";
+
+                assertTrue(msg, result);
+            }
+        }
     }
 
 
     /**
      * Transactional lock test.
      *
-     * @throws Exception if fails.
+     * @throws Exception If fails.
      */
     public void testTxLock() throws Exception {
-        for (CacheMode cacheMode : CacheMode.values())
-            for (CacheWriteSynchronizationMode cacheWriteSyncMode : CacheWriteSynchronizationMode.values())
-                for (TransactionConcurrency concurrency : TransactionConcurrency.values())
-                    for (TransactionIsolation isolation : TransactionIsolation.values())
-                        assertTrue("Possible deadlock in this modes:" +
-                                " cache - " + cacheMode + "/" + cacheWriteSyncMode + ", "
-                                + "tx - " + concurrency + "/" + isolation + " (see thread dumps).",
-                            doTestTx(concurrency, isolation, cacheMode, cacheWriteSyncMode));
-    }
+        for (CacheMode cacheMode : TEST_CACHE_MODES) {
+            for (CacheWriteSynchronizationMode cacheWriteSyncMode : CacheWriteSynchronizationMode.values()) {
+                for (TransactionConcurrency concurrency : TransactionConcurrency.values()) {
+                    for (TransactionIsolation isolation : TransactionIsolation.values()) {
+                        boolean result = doTestTx(concurrency, isolation, cacheMode, cacheWriteSyncMode);
 
-    /**
-     * Test execution within transaction.
-     *
-     * @param concurrency transaction concurrency level.
-     * @param isolation transaction isolation level.
-     * @return {@code True} if no hanging was detected.
-     * @throws Exception if fails.
-     */
-    private boolean doTestTx(
-        final TransactionConcurrency concurrency,
-        final TransactionIsolation isolation,
-        final CacheMode cacheMode,
-        final CacheWriteSynchronizationMode cacheWriteMode) throws Exception {
+                        String msg = "Possible deadlock in this modes:" +
+                            " cache - " + cacheMode + "/" + cacheWriteSyncMode + ", "
+                            + "tx - " + concurrency + "/" + isolation + " (see thread dumps).";
 
-        try (Ignite node = startGrid(0)) {
-            final IgniteCache<Integer, Integer> cache1 = node.createCache(cacheConfiguration(CACHE1, cacheMode, cacheWriteMode));
-            final IgniteCache<Integer, Integer> cache2 = node.createCache(cacheConfiguration(CACHE2, cacheMode, cacheWriteMode));
-
-            // Fill with test values.
-            fillCaches(ImmutableList.of(cache1, cache2));
-
-            final CountDownLatch sync = new CountDownLatch(1);
-
-            IgniteInternalFuture<Boolean> fut = runAsync(new Callable<Boolean>() {
-                @Override public Boolean call() throws IgniteInterruptedCheckedException {
-
-                    try (Transaction tx = node.transactions().txStart(concurrency, isolation)) {
-
-                        cache1.put(12, 12);
-
-                        // Signal main thread.
-                        sync.countDown();
-
-                        // Await when new cache will be created.
-                        boolean done = GridTestUtils.waitForCondition(new PA() {
-                            @Override public boolean apply() {
-                                return node.cacheNames().size() >= 3;
-                            }
-                        }, CACHE_CREATION_TIMEOUT);
-
-                        assertTrue(done);
-
-                        // Execute distributed (topology version aware) task.
-                        cache2.clear();
-
-                        tx.commit();
+                        assertTrue(msg, result);
                     }
-                    catch (CacheException ignore) {
-                        // Expected behavior - computation was aborted.
-                    }
-                    return true;
                 }
-            });
-            // Create watch-thread that will cancel task if timeout expired.
-            IgniteInternalFuture<Boolean> trackingFuture = startTracking(fut);
-
-            // Await new thread.
-            sync.await(PENDING_TIMEOUT, TimeUnit.MILLISECONDS);
-
-            // Create cache - topology update.
-            node.createCache(cacheConfiguration(CACHE3, cacheMode, cacheWriteMode));
-
-            // Await completion or timeout.
-            return trackingFuture.get();
+            }
         }
     }
 
     /**
      * Test execution within lock.
      *
+     * @param mode CacheMode Cache mode.}
+     * @param writeMode {@link CacheWriteSynchronizationMode Cache write synchronization mode.}
      * @return {@code True} if no hanging was detected.
      * @throws Exception if fails.
      */
-    private boolean doTestExplicitLock(CacheMode cacheMode,
-        CacheWriteSynchronizationMode cacheWriteMode) throws Exception {
-        try (Ignite node = startGrid(0)) {
+    private boolean doTestExplicitLock(CacheMode mode, CacheWriteSynchronizationMode writeMode) throws Exception {
+        final Ignite node = grid(0);
 
-            final IgniteCache<Integer, Integer> cache1 = node.createCache(cacheConfiguration(CACHE1, cacheMode, cacheWriteMode));
-            final IgniteCache<Integer, Integer> cache2 = node.createCache(cacheConfiguration(CACHE2, cacheMode, cacheWriteMode));
+        final String name1 = CACHE1 + mode + writeMode;
+        final String name2 = CACHE2 + mode + writeMode;
+        final String name3 = CACHE3 + mode + writeMode;
 
-            // Fill with test values.
-            fillCaches(ImmutableList.of(cache1, cache2));
+        final IgniteCache<Integer, Integer> cache1 = node.createCache(cacheConfiguration(name1, mode, writeMode));
+        final IgniteCache<Integer, Integer> cache2 = node.createCache(cacheConfiguration(name2, mode, writeMode));
 
-            final CountDownLatch sync = new CountDownLatch(1);
+        final CountDownLatch sync = new CountDownLatch(1);
 
-            IgniteInternalFuture<Boolean> fut = runAsync(new Callable<Boolean>() {
+        putTestEntries(cache1);
+        putTestEntries(cache2);
 
-                @Override public Boolean call() throws IgniteInterruptedCheckedException {
+        IgniteInternalFuture<Boolean> fut = runAsync(new Callable<Boolean>() {
+            @Override public Boolean call() throws IgniteInterruptedCheckedException {
+                Lock lock = cache1.lock(2);
 
-                    Lock lock = cache1.lock(2);
+                lock.lock();
 
-                    lock.lock();
+                try {
+                    sync.countDown();
 
-                    try {
-                        // Signal main thread.
-                        sync.countDown();
+                    // Await when new cache will be created.
+                    boolean done = GridTestUtils.waitForCondition(new PA() {
+                        @Override public boolean apply() {
+                            return node.cacheNames().contains(name3);
+                        }
+                    }, CACHE_CREATION_TIMEOUT);
 
-                        // Await when new cache will be created.
-                        boolean done = GridTestUtils.waitForCondition(new PA() {
-                            @Override public boolean apply() {
-                                return node.cacheNames().size() >= 3;
-                            }
-                        }, CACHE_CREATION_TIMEOUT);
+                    assertTrue(done);
 
-                        assertTrue(done);
-
-                        // Execute distributed (topology version aware) task.
-                        cache2.size();
-                    }
-                    catch (CacheException ignore) {
-                        // Expected behavior - computation was aborted.
-                    }
-                    finally {
-                        lock.unlock();
-                    }
+                    // Execute distributed (topology version aware) task.
+                    cache2.size();
+                }
+                catch (CacheException ignore) {
                     return true;
                 }
-            });
+                finally {
+                    lock.unlock();
+                }
+                return false;
+            }
+        });
 
-            // Create watch-thread that will cancel task if timeout expired.
-            IgniteInternalFuture<Boolean> trackingFuture = startTracking(fut);
+        // Create watch-thread that will cancel task if timeout expired.
+        IgniteInternalFuture<Boolean> trackingFuture = startTracking(fut);
 
-            // Await new thread.
-            sync.await(PENDING_TIMEOUT, TimeUnit.MILLISECONDS);
+        // Await new thread.
+        sync.await(PENDING_TIMEOUT, TimeUnit.MILLISECONDS);
 
-            // Create cache - topology update.
-            node.createCache(CACHE3);
+        // Create cache - topology update.
+        node.createCache(name3);
 
-            // Await completion or timeout.
-            return trackingFuture.get();
-        }
+        // Await completion or timeout.
+        return trackingFuture.get(PENDING_TIMEOUT * 2);
     }
 
+    /**
+     * Test execution within transaction.
+     *
+     * @param concurrency Transaction concurrency level.
+     * @param isolation Transaction isolation level.
+     * @return {@code True} if no hanging was detected.
+     * @throws Exception If fails.
+     */
+    private boolean doTestTx(
+        final TransactionConcurrency concurrency,
+        final TransactionIsolation isolation,
+        final CacheMode cacheMode,
+        final CacheWriteSynchronizationMode cacheWriteMode) throws Exception {
+        final Ignite node = grid(0);
+
+        final String name1 = CACHE1 + cacheMode + cacheWriteMode + concurrency + isolation;
+        final String name2 = CACHE2 + cacheMode + cacheWriteMode + concurrency + isolation;
+        final String name3 = CACHE3 + cacheMode + cacheWriteMode + concurrency + isolation;
+
+        final IgniteCache<Integer, Integer> cache1 = node.createCache(cacheConfiguration(name1, cacheMode, cacheWriteMode));
+        final IgniteCache<Integer, Integer> cache2 = node.createCache(cacheConfiguration(name2, cacheMode, cacheWriteMode));
+
+        final CountDownLatch sync = new CountDownLatch(1);
+
+        putTestEntries(cache1);
+        putTestEntries(cache2);
+
+        IgniteInternalFuture<Boolean> fut = runAsync(new Callable<Boolean>() {
+            @Override public Boolean call() throws IgniteInterruptedCheckedException {
+                try (Transaction tx = node.transactions().txStart(concurrency, isolation)) {
+                    cache1.put(12, 12);
+
+                    sync.countDown();
+
+                    // Await when new cache will be created.
+                    boolean done = GridTestUtils.waitForCondition(new PA() {
+                        @Override public boolean apply() {
+                            return node.cacheNames().contains(name3);
+                        }
+                    }, CACHE_CREATION_TIMEOUT);
+
+                    assertTrue(done);
+
+                    // Execute distributed (topology version aware) task.
+                    cache2.clear();
+
+                    tx.commit();
+                }
+                catch (CacheException ignore) {
+                    return concurrency == TransactionConcurrency.PESSIMISTIC;
+                }
+
+                return concurrency == TransactionConcurrency.OPTIMISTIC;
+            }
+        });
+        // Create watch-thread that will cancel task if timeout expired.
+        IgniteInternalFuture<Boolean> trackingFuture = startTracking(fut);
+
+        // Await new thread.
+        sync.await(PENDING_TIMEOUT, TimeUnit.MILLISECONDS);
+
+        // Create cache - topology update.
+        node.createCache(cacheConfiguration(name3, cacheMode, cacheWriteMode));
+
+        // Await completion or timeout.
+        return trackingFuture.get(PENDING_TIMEOUT * 2);
+    }
 
     /**
-     * Fill cache with test keys.
+     * Put rest keys to cache.
      *
-     * @param caches caches to fill with test entries.
+     * @param cache Cache to fill with test entries.
      */
-    private void fillCaches(List<IgniteCache<Integer, Integer>> caches) {
-        for (IgniteCache<Integer, Integer> cache : caches)
-            for (int i = 0; i < CACHE_SIZE; i++)
-                cache.put(i, i);
+    private void putTestEntries(Cache<Integer, Integer> cache) {
+        for (int i = 0; i < CACHE_SIZE; i++)
+            cache.put(i, i);
     }
 
     /**
@@ -268,33 +292,15 @@ public class IgniteComputeWithPendingTopologyDeadlockTest extends GridCommonAbst
      */
     private IgniteInternalFuture<Boolean> startTracking(final IgniteInternalFuture<Boolean> fut) {
         return runAsync(new Callable<Boolean>() {
-            @Override public Boolean call() {
+            @Override public Boolean call() throws IgniteCheckedException {
                 try {
-                    // Busy wait for completion.
-                    boolean done = GridTestUtils.waitForCondition(new PA() {
-                        @Override public boolean apply() {
-                            return fut.isDone();
-                        }
-                    }, PENDING_TIMEOUT);
-
-                    // If task was finished with uncaught exception.
-                    if (fut.error() != null) {
-                        log.error(fut.error().getMessage(), fut.error());
-                        return false;
-                    }
-
-                    // If timeout expired.
-                    if (!done) {
-                        U.dumpThreads(log);
-                        fut.cancel();
-                        return false;
-                    }
-
-                    return true;
+                    return fut.get(PENDING_TIMEOUT);
                 }
-                catch (IgniteCheckedException e) {
-                    log.error(e.getMessage(), e);
-                    fail("Tracking thread abnormal termination");
+                catch (IgniteFutureTimeoutCheckedException e) {
+                    U.dumpThreads(log);
+
+                    fut.cancel();
+
                     return false;
                 }
             }
