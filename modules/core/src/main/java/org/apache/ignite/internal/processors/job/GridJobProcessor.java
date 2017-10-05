@@ -1112,18 +1112,20 @@ public class GridJobProcessor extends GridProcessorAdapter {
                     if (job.initialize(dep, dep.deployedClass(req.getTaskClassName()))) {
                         // Internal jobs will always be executed synchronously.
                         if (job.isInternal()) {
-                            // IGNITE-6380
-                            if (isRestrictExecution(job.getJob())) {
+                            // Some jobs executed within transaction/lock should
+                            // be rejected if topology pending updates to prevent deadlock.
+                            if (isExecutionAllowed(job.getJob())) {
+                                // This is an internal job and can be executed inside busy lock
+                                // since job is expected to be short.
+                                // This is essential for proper stop without races.
+                                job.run();
+                            }
+                            else {
                                 IgniteException ex = new ComputeExecutionRejectedException("Pending " +
                                     "topology found - job execution within transaction or lock was canceled.");
 
                                 job.finishJob(null, ex, true);
                             }
-                            else
-                                // This is an internal job and can be executed inside busy lock
-                                // since job is expected to be short.
-                                // This is essential for proper stop without races.
-                                job.run();
 
                             // No execution outside lock.
                             job = null;
@@ -1504,20 +1506,22 @@ public class GridJobProcessor extends GridProcessorAdapter {
     }
 
     /**
-     * <a href="https://issues.apache.org/jira/browse/IGNITE-6380">IGNITE-6380</a>
-     * restrict execution within transaction or locks if topology pending updates.
+     * Reject execution within transaction/lock if topology pending updates.
      *
-     * @return {@code True} if execution must be restricted to prevent possible deadlock.
+     * @return {@code True} if execution must be rejected to prevent possible deadlock.
      */
-    private boolean isRestrictExecution(ComputeJob job) {
-        if (job instanceof GridCacheAdapter.TopologyVersionAwareJob) {
-            AffinityTopologyVersion lockedVer = ctx.cache().context().lockedTopologyVersion(null);
-            GridDhtPartitionsExchangeFuture fut = ctx.cache().context().exchange().lastTopologyFuture();
+    private boolean isExecutionAllowed(ComputeJob job) {
+        if (!(job instanceof GridCacheAdapter.TopologyVersionAwareJob))
+            return true;
 
-            // restrict execution if we have incomplete topology future with newer version
-            return (lockedVer != null && !fut.isDone() && lockedVer.compareTo(fut.initialVersion()) < 0);
-        }
-        return false;
+        AffinityTopologyVersion lockedVer = ctx.cache().context().lockedTopologyVersion(null);
+
+        if (lockedVer == null)
+            return true;
+
+        GridDhtPartitionsExchangeFuture lastTopFut = ctx.cache().context().exchange().lastTopologyFuture();
+
+        return lastTopFut.isDone() || lockedVer.compareTo(lastTopFut.initialVersion()) >= 0;
     }
 
     /** {@inheritDoc} */
