@@ -116,17 +116,6 @@ public class IgniteComputeWithPendingTopologyDeadlockTest extends GridCommonAbst
     }
 
     /**
-     * Test ensures that tasks executes normally within transaction without pending topology.
-     *
-     * @throws Exception if fails.
-     */
-    public void testWithoutPendingTopology() throws Exception {
-        for (CacheMode cacheMode : CacheMode.values())
-            for (CacheWriteSynchronizationMode cacheWriteSyncMode : CacheWriteSynchronizationMode.values())
-                doTestWithoutPendingTopology(cacheMode, cacheWriteSyncMode);
-    }
-
-    /**
      * Test execution within transaction.
      *
      * @param concurrency transaction concurrency level.
@@ -151,7 +140,7 @@ public class IgniteComputeWithPendingTopologyDeadlockTest extends GridCommonAbst
 
             IgniteInternalFuture<Boolean> fut = runAsync(new Callable<Boolean>() {
                 @Override public Boolean call() throws IgniteInterruptedCheckedException {
-                    // Transaction manager starts on node1.
+
                     try (Transaction tx = node.transactions().txStart(concurrency, isolation)) {
 
                         cache1.put(12, 12);
@@ -259,45 +248,9 @@ public class IgniteComputeWithPendingTopologyDeadlockTest extends GridCommonAbst
         }
     }
 
-    /**
-     * Ensure that tasks executes normally without pending topology.
-     *
-     * @param cacheMode cache mode.
-     * @param cacheWriteMode cache write synchronization mode.
-     * @throws Exception if fails.
-     */
-    private void doTestWithoutPendingTopology(CacheMode cacheMode,
-        CacheWriteSynchronizationMode cacheWriteMode) throws Exception {
-        int sizeBefore, sizeAfter;
-
-        try (Ignite node = startGrid(0)) {
-
-            final IgniteCache<Integer, Integer> cache = node.createCache(cacheConfiguration(CACHE1, cacheMode, cacheWriteMode));
-
-            // Fill with test values.
-            fillCaches(Collections.singletonList(cache));
-
-            try (Transaction tx = node.transactions().txStart(TransactionConcurrency.PESSIMISTIC, TransactionIsolation.SERIALIZABLE)) {
-
-                cache.put(12, 12);
-
-                sizeBefore = cache.size();
-
-                cache.clearAll(ImmutableSet.of(1, 2, 3, 4, 12));
-
-                tx.commit();
-            }
-
-            sizeAfter = cache.size();
-        }
-
-        // First put is not visible for distributed task till end of transaction.
-        assertEquals(cacheMode + "/" + cacheWriteMode, CACHE_SIZE, sizeBefore);
-        assertEquals(cacheMode + "/" + cacheWriteMode, 7, sizeAfter);
-    }
 
     /**
-     * Populate cache with test keys.
+     * Fill cache with test keys.
      *
      * @param caches caches to fill with test entries.
      */
