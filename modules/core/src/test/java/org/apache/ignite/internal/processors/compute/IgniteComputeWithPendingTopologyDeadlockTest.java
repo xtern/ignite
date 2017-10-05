@@ -84,7 +84,9 @@ public class IgniteComputeWithPendingTopologyDeadlockTest extends GridCommonAbst
     /**
      * Create cache configuration with transactional atomicity mode.
      *
-     * @param mode Name for cache.
+     * @param name Cache name.
+     * @param mode {@link CacheMode Cache mode.}
+     * @param writeMode {@link CacheWriteSynchronizationMode Cache write synchronization mode.}
      * @return Cache configuration.
      */
     private CacheConfiguration<Integer, Integer> cacheConfiguration(String name, CacheMode mode,
@@ -142,7 +144,7 @@ public class IgniteComputeWithPendingTopologyDeadlockTest extends GridCommonAbst
     /**
      * Test execution within lock.
      *
-     * @param mode CacheMode Cache mode.}
+     * @param mode {@link CacheMode Cache mode.}
      * @param writeMode {@link CacheWriteSynchronizationMode Cache write synchronization mode.}
      * @return {@code True} if no hanging was detected.
      * @throws Exception if fails.
