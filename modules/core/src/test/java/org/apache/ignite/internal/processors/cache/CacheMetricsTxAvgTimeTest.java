@@ -37,7 +37,6 @@ public class CacheMetricsTxAvgTimeTest extends GridCommonAbstractTest {
             float commitTime = cache.metrics().getAverageTxCommitTime();
 
             // But this assertion will fail because it in milliseconds and returns only ~1000.
-            System.out.println(commitTime);
             assert commitTime >= 1_000_000;
         }
     }
