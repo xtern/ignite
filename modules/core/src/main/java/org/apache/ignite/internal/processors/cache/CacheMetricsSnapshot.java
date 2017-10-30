@@ -50,6 +50,12 @@ public class CacheMetricsSnapshot implements CacheMetrics, Externalizable {
     /** Number of transaction rollbacks. */
     private long txRollbacks = 0;
 
+    /** Number of transaction rollbacks due to deadlock. */
+    private long txRollbacksOnDeadlock = 0;
+
+    /** Number of transaction rollbacks due to timeout. */
+    private long txRollbacksOnTimeout = 0;
+
     /** Number of evictions. */
     private long evicts = 0;
 
@@ -249,6 +255,8 @@ public class CacheMetricsSnapshot implements CacheMetrics, Externalizable {
         misses = m.getCacheMisses();
         txCommits = m.getCacheTxCommits();
         txRollbacks = m.getCacheTxRollbacks();
+        txRollbacksOnTimeout = m.getCacheTxRollbacksOnTimeout();
+        txRollbacksOnDeadlock = m.getCacheTxRollbacksOnDeadlock();
         evicts = m.getCacheEvictions();
         removes = m.getCacheRemovals();
 
@@ -350,6 +358,8 @@ public class CacheMetricsSnapshot implements CacheMetrics, Externalizable {
             misses += e.getCacheMisses();
             txCommits += e.getCacheTxCommits();
             txRollbacks += e.getCacheTxRollbacks();
+            txRollbacksOnTimeout += e.getCacheTxRollbacksOnTimeout();
+            txRollbacksOnDeadlock += e.getCacheTxRollbacksOnDeadlock();
             evicts += e.getCacheEvictions();
             removes += e.getCacheRemovals();
 
@@ -531,6 +541,16 @@ public class CacheMetricsSnapshot implements CacheMetrics, Externalizable {
     /** {@inheritDoc} */
     @Override public long getCacheTxRollbacks() {
         return txRollbacks;
+    }
+
+    /** {@inheritDoc} */
+    @Override public long getCacheTxRollbacksOnDeadlock() {
+        return txRollbacksOnDeadlock;
+    }
+
+    /** {@inheritDoc} */
+    @Override public long getCacheTxRollbacksOnTimeout() {
+        return txRollbacksOnTimeout;
     }
 
     /** {@inheritDoc} */
@@ -836,6 +856,8 @@ public class CacheMetricsSnapshot implements CacheMetrics, Externalizable {
         out.writeLong(misses);
         out.writeLong(txCommits);
         out.writeLong(txRollbacks);
+        out.writeLong(txRollbacksOnTimeout);
+        out.writeLong(txRollbacksOnDeadlock);
         out.writeLong(evicts);
         out.writeLong(removes);
 
@@ -891,6 +913,8 @@ public class CacheMetricsSnapshot implements CacheMetrics, Externalizable {
         misses = in.readLong();
         txCommits = in.readLong();
         txRollbacks = in.readLong();
+        txRollbacksOnTimeout = in.readLong();
+        txRollbacksOnDeadlock = in.readLong();
         evicts = in.readLong();
         removes = in.readLong();
 

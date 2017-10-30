@@ -221,7 +221,10 @@ public abstract class IgniteTxAdapter extends GridMetadataAwareAdapter implement
     private volatile TransactionState state = ACTIVE;
 
     /** Timed out flag. */
-    private volatile boolean timedOut;
+    protected volatile boolean timedOut;
+
+    /** Transaction participated deadlock flag. */
+    protected volatile boolean deadlocked;
 
     /** */
     protected int txSize;
@@ -1073,11 +1076,11 @@ public abstract class IgniteTxAdapter extends GridMetadataAwareAdapter implement
                 }
             }
 
+            if (timedOut)
+                this.timedOut = true;
+
             if (valid) {
                 this.state = state;
-
-                if (timedOut)
-                    this.timedOut = true;
 
                 if (log.isDebugEnabled())
                     log.debug("Changed transaction state [prev=" + prev + ", new=" + this.state + ", tx=" + this + ']');
@@ -1152,6 +1155,11 @@ public abstract class IgniteTxAdapter extends GridMetadataAwareAdapter implement
     /** {@inheritDoc} */
     @Override public boolean timedOut() {
         return timedOut;
+    }
+
+    /** {@inheritDoc} */
+    @Override public boolean deadlocked() {
+        return deadlocked;
     }
 
     /** {@inheritDoc} */
@@ -2270,6 +2278,11 @@ public abstract class IgniteTxAdapter extends GridMetadataAwareAdapter implement
 
         /** {@inheritDoc} */
         @Override public boolean timedOut() {
+            return false;
+        }
+
+        /** {@inheritDoc} */
+        @Override public boolean deadlocked() {
             return false;
         }
 

@@ -170,6 +170,16 @@ public class PlatformCacheWriteMetricsTask extends ComputeTaskAdapter<Long, Obje
         }
 
         /** {@inheritDoc} */
+        @Override public long getCacheTxRollbacksOnDeadlock() {
+            return 0;
+        }
+
+        /** {@inheritDoc} */
+        @Override public long getCacheTxRollbacksOnTimeout() {
+            return 0;
+        }
+
+        /** {@inheritDoc} */
         @Override public String name() {
             return "myCache";
         }

@@ -1610,7 +1610,12 @@ public abstract class IgniteTxLocalAdapter extends IgniteTxAdapter implements Ig
         @Override public final IgniteInternalFuture<T> apply(Boolean locked, @Nullable final Exception e) {
             TransactionDeadlockException deadlockErr = X.cause(e, TransactionDeadlockException.class);
 
-            if (e != null && deadlockErr == null) {
+            if (deadlockErr != null)
+                IgniteTxLocalAdapter.this.deadlocked = true;
+            else if (e != null) {
+                if (X.hasCause(e, IgniteTxTimeoutCheckedException.class))
+                    IgniteTxLocalAdapter.this.timedOut = true;
+
                 setRollbackOnly();
 
                 if (commit && commitAfterLock())
