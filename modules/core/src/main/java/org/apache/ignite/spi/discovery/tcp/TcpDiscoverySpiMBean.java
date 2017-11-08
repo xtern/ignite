@@ -246,6 +246,18 @@ public interface TcpDiscoverySpiMBean extends IgniteSpiManagementMBean {
     public long getJoinTimeout();
 
     /**
+     * Count of server nodes.
+     */
+    @MXBeanDescription("Server nodes count.")
+    public int getTotalServerNodes();
+
+    /**
+     * Topology version.
+     */
+    @MXBeanDescription("Last topology version.")
+    public long getTopologyVersion();
+
+    /**
      * Dumps debug info using configured logger.
      */
     @MXBeanDescription("Dump debug info.")

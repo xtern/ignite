@@ -56,6 +56,7 @@ import org.apache.ignite.configuration.AddressResolver;
 import org.apache.ignite.configuration.IgniteConfiguration;
 import org.apache.ignite.internal.IgniteInterruptedCheckedException;
 import org.apache.ignite.internal.util.tostring.GridToStringExclude;
+import org.apache.ignite.internal.IgniteKernal;
 import org.apache.ignite.internal.util.typedef.F;
 import org.apache.ignite.internal.util.typedef.X;
 import org.apache.ignite.internal.util.typedef.internal.LT;
@@ -2395,6 +2396,34 @@ public class TcpDiscoverySpi extends IgniteSpiAdapter implements DiscoverySpi {
         /** {@inheritDoc} */
         @Override public long getCoordinatorSinceTimestamp() {
             return TcpDiscoverySpi.this.getCoordinatorSinceTimestamp();
+        }
+        
+        /**
+         * Get total server nodes count.
+         *
+         * @return Total server nodes count.
+         */
+        @Override public int getTotalServerNodes() {
+            Ignite ignite0 = ignite();
+
+            if (!(ignite0 instanceof IgniteKernal))
+                throw new IgniteSpiException("Wrong Ignite instance is set: " + ignite0);
+
+            return ((IgniteKernal)ignite0).context().discovery().discoCache().serverNodes().size();
+        }
+
+        /**
+         * Get current topology version.
+         *
+         * @return Major topology version.
+         */
+        @Override public long getTopologyVersion() {
+            Ignite ignite0 = ignite();
+
+            if (!(ignite0 instanceof IgniteKernal))
+                throw new IgniteSpiException("Wrong Ignite instance is set: " + ignite0);
+
+            return ((IgniteKernal)ignite0).context().discovery().topologyVersion();
         }
 
         @Override public void checkRingLatency(int maxHops) {
