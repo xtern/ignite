@@ -98,6 +98,7 @@ import org.apache.ignite.internal.binary.BinaryMarshaller;
 import org.apache.ignite.internal.binary.BinaryUtils;
 import org.apache.ignite.internal.cluster.ClusterGroupAdapter;
 import org.apache.ignite.internal.cluster.IgniteClusterEx;
+import org.apache.ignite.internal.cluster.IgniteTopologyMXBeanImpl;
 import org.apache.ignite.internal.managers.GridManager;
 import org.apache.ignite.internal.managers.checkpoint.GridCheckpointManager;
 import org.apache.ignite.internal.managers.collision.GridCollisionManager;
@@ -184,6 +185,7 @@ import org.apache.ignite.marshaller.MarshallerExclusions;
 import org.apache.ignite.marshaller.jdk.JdkMarshaller;
 import org.apache.ignite.mxbean.ClusterLocalNodeMetricsMXBean;
 import org.apache.ignite.mxbean.IgniteMXBean;
+import org.apache.ignite.mxbean.IgniteTopologyMXBean;
 import org.apache.ignite.mxbean.StripedExecutorMXBean;
 import org.apache.ignite.mxbean.ThreadPoolMXBean;
 import org.apache.ignite.plugin.IgnitePlugin;
@@ -300,6 +302,10 @@ public class IgniteKernal implements IgniteEx, IgniteMXBean, Externalizable {
     /** */
     @GridToStringExclude
     private ObjectName locNodeMBean;
+
+    /** */
+    @GridToStringExclude
+    private ObjectName topologyMBean;
 
     /** */
     @GridToStringExclude
@@ -1080,6 +1086,7 @@ public class IgniteKernal implements IgniteEx, IgniteMXBean, Externalizable {
             // Register MBeans.
             registerKernalMBean();
             registerLocalNodeMBean();
+            registerTopologyMBean();
             registerExecutorMBeans(execSvc, sysExecSvc, p2pExecSvc, mgmtExecSvc, restExecSvc, qryExecSvc,
                 schemaExecSvc);
 
@@ -1722,6 +1729,32 @@ public class IgniteKernal implements IgniteEx, IgniteMXBean, Externalizable {
         }
     }
 
+    /** @throws IgniteCheckedException If registration failed. */
+    private void registerTopologyMBean() throws IgniteCheckedException {
+        if(U.IGNITE_MBEANS_DISABLED)
+            return;
+
+        IgniteTopologyMXBean mbean = new IgniteTopologyMXBeanImpl(ctx.discovery());
+
+        try {
+            topologyMBean = U.registerMBean(
+                cfg.getMBeanServer(),
+                cfg.getIgniteInstanceName(),
+                "Kernal",
+                mbean.getClass().getSimpleName(),
+                mbean,
+                IgniteTopologyMXBean.class);
+
+            if (log.isDebugEnabled())
+                log.debug("Registered topology MBean: " + topologyMBean);
+        }
+        catch (JMException e) {
+            topologyMBean = null;
+
+            throw new IgniteCheckedException("Failed to register topology MBean.", e);
+        }
+    }
+
     /**
      * @param execSvc Public executor service.
      * @param sysExecSvc System executor service.
@@ -2271,6 +2304,7 @@ public class IgniteKernal implements IgniteEx, IgniteMXBean, Externalizable {
                     unregisterMBean(p2PExecSvcMBean) &
                     unregisterMBean(kernalMBean) &
                     unregisterMBean(locNodeMBean) &
+                    unregisterMBean(topologyMBean) &
                     unregisterMBean(restExecSvcMBean) &
                     unregisterMBean(qryExecSvcMBean) &
                     unregisterMBean(schemaExecSvcMBean) &
