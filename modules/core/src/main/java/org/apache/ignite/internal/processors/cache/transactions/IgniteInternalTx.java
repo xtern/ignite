@@ -564,6 +564,11 @@ public interface IgniteInternalTx {
     public boolean timedOut();
 
     /**
+     * @return {@code True} if transaction participated deadlock.
+     */
+    public boolean deadlocked();
+
+    /**
      * @return {@code True} if transaction had completed successfully or unsuccessfully.
      */
     public boolean done();
