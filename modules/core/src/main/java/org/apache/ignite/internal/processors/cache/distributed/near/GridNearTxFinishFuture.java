@@ -322,7 +322,7 @@ public final class GridNearTxFinishFuture<K, V> extends GridCacheCompoundIdentit
                         err = new TransactionRollbackException("Failed to commit transaction.", err);
 
                     try {
-                        tx.localFinish(err == null, true);
+                        tx.localFinish(err == null, true, false, false);
                     }
                     catch (IgniteCheckedException e) {
                         if (err != null)
@@ -394,6 +394,9 @@ public final class GridNearTxFinishFuture<K, V> extends GridCacheCompoundIdentit
             fut.getClass() == CheckRemoteTxMiniFuture.class;
     }
 
+    public void finish(boolean commit, boolean clearThreadMap) {
+        finish(commit, clearThreadMap, false, false);
+    }
     /**
      * Initializes future.
      *
@@ -401,7 +404,7 @@ public final class GridNearTxFinishFuture<K, V> extends GridCacheCompoundIdentit
      * @param clearThreadMap If {@code true} removes {@link GridNearTxLocal} from thread map.
      */
     @SuppressWarnings("ForLoopReplaceableByForEach")
-    public void finish(boolean commit, boolean clearThreadMap) {
+    public void finish(boolean commit, boolean clearThreadMap, boolean timedOut, boolean deadlocked) {
         if (tx.onNeedCheckBackup()) {
             assert tx.onePhaseCommit();
 
@@ -415,7 +418,7 @@ public final class GridNearTxFinishFuture<K, V> extends GridCacheCompoundIdentit
         }
 
         try {
-            if (tx.localFinish(commit, clearThreadMap) || (!commit && tx.state() == UNKNOWN)) {
+            if (tx.localFinish(commit, clearThreadMap, timedOut, deadlocked) || (!commit && tx.state() == UNKNOWN)) {
                 if ((tx.onePhaseCommit() && needFinishOnePhase(commit)) || (!tx.onePhaseCommit() && mappings != null)) {
                     if (mappings.single()) {
                         GridDistributedTxMapping mapping = mappings.singleMapping();

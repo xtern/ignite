@@ -85,6 +85,7 @@ import org.apache.ignite.internal.util.typedef.CI1;
 import org.apache.ignite.internal.util.typedef.CI2;
 import org.apache.ignite.internal.util.typedef.CX1;
 import org.apache.ignite.internal.util.typedef.F;
+import org.apache.ignite.internal.util.typedef.X;
 import org.apache.ignite.internal.util.typedef.internal.CU;
 import org.apache.ignite.internal.util.typedef.internal.S;
 import org.apache.ignite.internal.util.typedef.internal.U;
@@ -94,8 +95,10 @@ import org.apache.ignite.lang.IgniteInClosure;
 import org.apache.ignite.lang.IgniteUuid;
 import org.apache.ignite.plugin.security.SecurityPermission;
 import org.apache.ignite.transactions.TransactionConcurrency;
+import org.apache.ignite.transactions.TransactionDeadlockException;
 import org.apache.ignite.transactions.TransactionIsolation;
 import org.apache.ignite.transactions.TransactionState;
+import org.apache.ignite.transactions.TransactionTimeoutException;
 import org.jetbrains.annotations.Nullable;
 
 import static org.apache.ignite.events.EventType.EVT_CACHE_OBJECT_READ;
@@ -3039,9 +3042,13 @@ public class GridNearTxLocal extends GridDhtTxLocalAdapter implements GridTimeou
         }
     }
 
+//    @Override public boolean localFinish(boolean commit, boolean clearThreadMap) throws IgniteCheckedException {
+//        return localFinish(commit, clearThreadMap, false);
+//    }
+
     /** {@inheritDoc} */
     @SuppressWarnings({"CatchGenericClass", "ThrowableInstanceNeverThrown"})
-    @Override public boolean localFinish(boolean commit, boolean clearThreadMap) throws IgniteCheckedException {
+    @Override public boolean localFinish(boolean commit, boolean clearThreadMap, boolean timedOut, boolean deadlocked) throws IgniteCheckedException {
         if (log.isDebugEnabled())
             log.debug("Finishing near local tx [tx=" + this + ", commit=" + commit + "]");
 
@@ -3061,7 +3068,7 @@ public class GridNearTxLocal extends GridDhtTxLocalAdapter implements GridTimeou
             }
         }
         else {
-            if (!state(ROLLING_BACK)) {
+            if (!state(ROLLING_BACK, timedOut, deadlocked)) {
                 if (log.isDebugEnabled())
                     log.debug("Invalid transaction state for rollback [state=" + state() + ", tx=" + this + ']');
 
@@ -3238,8 +3245,16 @@ public class GridNearTxLocal extends GridDhtTxLocalAdapter implements GridTimeou
                 catch (IgniteCheckedException e) {
                     COMMIT_ERR_UPD.compareAndSet(GridNearTxLocal.this, null, e);
 
+//                    if (X.hasCause(e, TransactionDeadlockException.class))
+//                        GridNearTxLocal.this.deadlocked = true;
+//                    else
+//                    if (X.hasCause(e, TransactionTimeoutException.class))
+//                        GridNearTxLocal.this.timedOut = true;
+
                     if (!(e instanceof NodeStoppingException))
-                        fut0.finish(false, true);
+                        fut0.finish(false, true,
+                            X.hasCause(e, IgniteTxTimeoutCheckedException.class),
+                            X.hasCause(e, TransactionDeadlockException.class));
                 }
             }
         });
@@ -4121,7 +4136,7 @@ public class GridNearTxLocal extends GridDhtTxLocalAdapter implements GridTimeou
 
     /** {@inheritDoc} */
     @Override public void onTimeout() {
-        if (state(MARKED_ROLLBACK, true) || (state() == MARKED_ROLLBACK)) {
+        if (state(MARKED_ROLLBACK, true, false) || (state() == MARKED_ROLLBACK)) {
             if (log.isDebugEnabled())
                 log.debug("Will rollback tx on timeout: " + this);
 
