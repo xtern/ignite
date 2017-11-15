@@ -1242,7 +1242,7 @@ public abstract class IgniteTxLocalAdapter extends IgniteTxAdapter implements Ig
      */
     protected void checkValid() throws IgniteCheckedException {
         if (local() && !dht() && remainingTime() == -1)
-            state(MARKED_ROLLBACK, true);
+            state(MARKED_ROLLBACK, true, false);
 
         if (isRollbackOnly()) {
             if (remainingTime() == -1)
@@ -1610,7 +1610,9 @@ public abstract class IgniteTxLocalAdapter extends IgniteTxAdapter implements Ig
         @Override public final IgniteInternalFuture<T> apply(Boolean locked, @Nullable final Exception e) {
             TransactionDeadlockException deadlockErr = X.cause(e, TransactionDeadlockException.class);
 
-            if (e != null && deadlockErr == null) {
+            if (deadlockErr != null);
+                //IgniteTxLocalAdapter.this.deadlocked = true;
+            else if (e != null) {
                 setRollbackOnly();
 
                 if (commit && commitAfterLock())

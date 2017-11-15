@@ -223,6 +223,9 @@ public abstract class IgniteTxAdapter extends GridMetadataAwareAdapter implement
     /** Timed out flag. */
     private volatile boolean timedOut;
 
+    /** Transaction participated deadlock flag. */
+    private volatile boolean deadlocked;
+
     /** */
     protected int txSize;
 
@@ -804,7 +807,12 @@ public abstract class IgniteTxAdapter extends GridMetadataAwareAdapter implement
 
     /** {@inheritDoc} */
     @Override public boolean setRollbackOnly() {
-        return state(MARKED_ROLLBACK);
+        return setRollbackOnly(false, false);
+    }
+
+    /** {@inheritDoc} */
+    @Override public boolean setRollbackOnly(boolean timedOut, boolean deadlocked) {
+        return state(MARKED_ROLLBACK, timedOut, deadlocked);
     }
 
     /**
@@ -954,7 +962,7 @@ public abstract class IgniteTxAdapter extends GridMetadataAwareAdapter implement
 
     /** {@inheritDoc} */
     @Override public boolean state(TransactionState state) {
-        return state(state, false);
+        return state(state, false, false);
     }
 
     /** {@inheritDoc} */
@@ -994,7 +1002,7 @@ public abstract class IgniteTxAdapter extends GridMetadataAwareAdapter implement
      * @return {@code True} if state changed.
      */
     @SuppressWarnings({"TooBroadScope"})
-    protected final boolean state(TransactionState state, boolean timedOut) {
+    protected final boolean state(TransactionState state, boolean timedOut, boolean deadlocked) {
         boolean valid = false;
 
         TransactionState prev;
@@ -1079,12 +1087,18 @@ public abstract class IgniteTxAdapter extends GridMetadataAwareAdapter implement
                 if (timedOut)
                     this.timedOut = true;
 
+                if (deadlocked)
+                    this.deadlocked = true;
+//                else if ((state == ROLLING_BACK && prev != MARKED_ROLLBACK) || state == MARKED_ROLLBACK)
+//                    U.dumpStack(log, "Caught it " + prev + " -> " + state + ": " + xid());
+
                 if (log.isDebugEnabled())
                     log.debug("Changed transaction state [prev=" + prev + ", new=" + this.state + ", tx=" + this + ']');
 
                 notifyAll();
             }
             else {
+
                 if (log.isDebugEnabled())
                     log.debug("Invalid transaction state transition [invalid=" + state + ", cur=" + this.state +
                         ", tx=" + this + ']');
@@ -1152,6 +1166,11 @@ public abstract class IgniteTxAdapter extends GridMetadataAwareAdapter implement
     /** {@inheritDoc} */
     @Override public boolean timedOut() {
         return timedOut;
+    }
+
+    /** {@inheritDoc} */
+    @Override public boolean deadlocked() {
+        return deadlocked;
     }
 
     /** {@inheritDoc} */
@@ -1948,6 +1967,11 @@ public abstract class IgniteTxAdapter extends GridMetadataAwareAdapter implement
         }
 
         /** {@inheritDoc} */
+        @Override public boolean setRollbackOnly(boolean timedOut, boolean deadlocked) {
+            throw new IllegalStateException("Deserialized transaction can only be used as read-only.");
+        }
+
+        /** {@inheritDoc} */
         @Override public void errorWhenCommitting() {
             throw new IllegalStateException("Deserialized transaction can only be used as read-only.");
         }
@@ -2270,6 +2294,11 @@ public abstract class IgniteTxAdapter extends GridMetadataAwareAdapter implement
 
         /** {@inheritDoc} */
         @Override public boolean timedOut() {
+            return false;
+        }
+
+        /** {@inheritDoc} */
+        @Override public boolean deadlocked() {
             return false;
         }
 

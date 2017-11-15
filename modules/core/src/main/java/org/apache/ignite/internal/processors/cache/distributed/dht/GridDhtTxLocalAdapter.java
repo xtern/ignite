@@ -734,7 +734,7 @@ public abstract class GridDhtTxLocalAdapter extends IgniteTxLocalAdapter {
 
     /** {@inheritDoc} */
     @SuppressWarnings({"CatchGenericClass", "ThrowableInstanceNeverThrown"})
-    @Override public boolean localFinish(boolean commit, boolean clearThreadMap) throws IgniteCheckedException {
+    @Override public boolean localFinish(boolean commit, boolean clearThreadMap, boolean timedOut, boolean deadlocked) throws IgniteCheckedException {
         if (log.isDebugEnabled())
             log.debug("Finishing dht local tx [tx=" + this + ", commit=" + commit + "]");
 
@@ -757,7 +757,7 @@ public abstract class GridDhtTxLocalAdapter extends IgniteTxLocalAdapter {
             }
         }
         else {
-            if (!state(ROLLING_BACK)) {
+            if (!state(ROLLING_BACK, timedOut, deadlocked)) {
                 if (log.isDebugEnabled())
                     log.debug("Invalid transaction state for rollback [state=" + state() + ", tx=" + this + ']');
 

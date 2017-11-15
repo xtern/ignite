@@ -52,8 +52,9 @@ public interface IgniteTxLocalEx extends IgniteInternalTx {
      *
      * @param commit {@code True} if commit, {@code false} if rollback.
      * @param clearThreadMap If {@code true} removes {@link GridNearTxLocal} from thread map.
+     * @param timedOut {@code True} if timeout was occurred.
      * @return {@code True} if state has been changed.
      * @throws IgniteCheckedException If finish failed.
      */
-    public boolean localFinish(boolean commit, boolean clearThreadMap) throws IgniteCheckedException;
+    public boolean localFinish(boolean commit, boolean clearThreadMap, boolean timedOut, boolean deadlocked) throws IgniteCheckedException;
 }
