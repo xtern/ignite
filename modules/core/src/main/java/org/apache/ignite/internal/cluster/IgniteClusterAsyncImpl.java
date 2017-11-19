@@ -211,6 +211,11 @@ public class IgniteClusterAsyncImpl extends AsyncSupportAdapter<IgniteCluster>
     }
 
     /** {@inheritDoc} */
+    @Override public ClusterGroup forStringAttribute(String name, @Nullable String val) {
+        return cluster.forStringAttribute(name, val);
+    }
+
+    /** {@inheritDoc} */
     @Override public ClusterGroup forServers() {
         return cluster.forServers();
     }
@@ -298,6 +303,11 @@ public class IgniteClusterAsyncImpl extends AsyncSupportAdapter<IgniteCluster>
     /** {@inheritDoc} */
     @Override public ClusterMetrics metrics() {
         return cluster.metrics();
+    }
+
+    /** {@inheritDoc} */
+    @Override public Map<Object, Integer> countNodesByAttribute(String attr) {
+        return cluster.countNodesByAttribute(attr);
     }
 
     /** {@inheritDoc} */

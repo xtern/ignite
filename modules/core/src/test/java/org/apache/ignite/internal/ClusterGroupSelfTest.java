@@ -29,6 +29,7 @@ import org.apache.ignite.Ignite;
 import org.apache.ignite.Ignition;
 import org.apache.ignite.cluster.ClusterGroup;
 import org.apache.ignite.cluster.ClusterNode;
+import org.apache.ignite.configuration.IgniteConfiguration;
 import org.apache.ignite.internal.util.typedef.F;
 import org.apache.ignite.internal.util.typedef.internal.U;
 import org.apache.ignite.lang.IgnitePredicate;
@@ -43,12 +44,27 @@ import org.apache.ignite.testframework.junits.common.GridCommonTest;
 public class ClusterGroupSelfTest extends ClusterGroupAbstractTest {
     /** Nodes count. */
     private static final int NODES_CNT = 4;
+    /** */
+    private static final String USER_ATTR_NAME = "attr1";
 
     /** Projection node IDs. */
     private static Collection<UUID> ids;
 
     /** */
     private static Ignite ignite;
+
+    /** */
+    private int nodesCntr;
+
+    /** {@inheritDoc} */
+    @Override protected IgniteConfiguration getConfiguration(String igniteInstanceName) throws Exception {
+        IgniteConfiguration cfg = super.getConfiguration(igniteInstanceName);
+
+        cfg.setClientMode(nodesCntr > 1);
+        cfg.setUserAttributes(F.asMap(USER_ATTR_NAME, nodesCntr == 0));
+
+        return cfg;
+    }
 
     /** {@inheritDoc} */
     @SuppressWarnings({"ConstantConditions"})
@@ -58,14 +74,12 @@ public class ClusterGroupSelfTest extends ClusterGroupAbstractTest {
         ids = new LinkedList<>();
 
         try {
-            for (int i = 0; i < NODES_CNT; i++) {
-                Ignition.setClientMode(i > 1);
-
-                Ignite g = startGrid(i);
+            for (nodesCntr = 0; nodesCntr < NODES_CNT; nodesCntr++) {
+                Ignite g = startGrid(nodesCntr);
 
                 ids.add(g.cluster().localNode().id());
 
-                if (i == 0)
+                if (nodesCntr == 0)
                     ignite = g;
             }
         }
@@ -390,6 +404,25 @@ public class ClusterGroupSelfTest extends ClusterGroupAbstractTest {
         assertEquals(0, emptyGrp.forServers().nodes().size());
         assertEquals(0, emptyGrp.forHost(ignite.cluster().localNode()).nodes().size());
         assertEquals(0, emptyGrp.forHost("127.0.0.1").nodes().size());
+    }
+
+    /**
+     * Test filter/grouping nodes by attributes.
+     *
+     * @throws Exception If failed.
+     */
+    public void testAttributes() throws Exception {
+        ClusterGroup grp = ignite.cluster();
+
+        assertEquals(F.asMap(IgniteVersionUtils.VER_STR, NODES_CNT),
+            grp.countNodesByAttribute(IgniteNodeAttributes.ATTR_BUILD_VER));
+
+        assertEquals(F.asMap(true, 1, false, 3), grp.countNodesByAttribute(USER_ATTR_NAME));
+
+        assertEquals(2, grp.forAttribute(IgniteNodeAttributes.ATTR_CLIENT_MODE, false).nodes().size());
+        assertEquals(0, grp.forAttribute(IgniteNodeAttributes.ATTR_CLIENT_MODE, "false").nodes().size());
+
+        assertEquals(2, grp.forStringAttribute(IgniteNodeAttributes.ATTR_CLIENT_MODE, "false").nodes().size());
     }
 
     /**

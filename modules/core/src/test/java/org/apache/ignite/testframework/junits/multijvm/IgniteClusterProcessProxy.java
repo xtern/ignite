@@ -215,6 +215,11 @@ public class IgniteClusterProcessProxy implements IgniteClusterEx {
     }
 
     /** {@inheritDoc} */
+    @Override public ClusterGroup forStringAttribute(String name, @Nullable String val) {
+        throw new UnsupportedOperationException("Operation is not supported yet.");
+    }
+
+    /** {@inheritDoc} */
     @Override public ClusterGroup forServers() {
         throw new UnsupportedOperationException("Operation is not supported yet.");
     }
@@ -301,6 +306,11 @@ public class IgniteClusterProcessProxy implements IgniteClusterEx {
 
     /** {@inheritDoc} */
     @Override public ClusterMetrics metrics() throws IgniteException {
+        throw new UnsupportedOperationException("Operation is not supported yet.");
+    }
+
+    /** {@inheritDoc} */
+    @Override public Map<Object, Integer> countNodesByAttribute(String attr) {
         throw new UnsupportedOperationException("Operation is not supported yet.");
     }
 

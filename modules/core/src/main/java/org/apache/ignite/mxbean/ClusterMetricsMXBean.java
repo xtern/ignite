@@ -20,34 +20,10 @@ package org.apache.ignite.mxbean;
 import java.util.Map;
 
 /**
- * Management bean for monitoring cluster topology.
+ * Cluster metrics MBean.
  */
-@MXBeanDescription("MBean for monitoring cluster topology.")
-public interface IgniteTopologyMXBean {
-    /**
-     * Get count of server nodes.
-     *
-     * @return Count of server nodes.
-     */
-    @MXBeanDescription("Server nodes count.")
-    public int getTotalServerNodes();
-
-    /**
-     * Get count of client nodes.
-     *
-     * @return Count of client nodes.
-     */
-    @MXBeanDescription("Client nodes count.")
-    public int getTotalClientNodes();
-
-    /**
-     * Get current topology version.
-     *
-     * @return Current topology version.
-     */
-    @MXBeanDescription("Current topology version.")
-    public long getTopologyVersion();
-
+@MXBeanDescription("MBean that provides access to aggregated cluster metrics.")
+public interface ClusterMetricsMXBean extends ClusterLocalNodeMetricsMXBean {
     /**
      * Get the number of nodes that have specified attribute.
      *
