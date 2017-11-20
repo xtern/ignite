@@ -250,4 +250,16 @@ public interface ClusterLocalNodeMetricsMXBean extends ClusterMetrics {
     /** {@inheritDoc} */
     @MXBeanDescription("Total number of nodes.")
     public int getTotalNodes();
+
+    /** {@inheritDoc} */
+    @MXBeanDescription("Server nodes count.")
+    public int getTotalServerNodes();
+
+    /** {@inheritDoc} */
+    @MXBeanDescription("Client nodes count.")
+    public int getTotalClientNodes();
+
+    /** {@inheritDoc} */
+    @MXBeanDescription("Current topology version.")
+    public long getTopologyVersion();
 }

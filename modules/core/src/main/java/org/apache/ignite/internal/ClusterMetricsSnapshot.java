@@ -252,6 +252,15 @@ public class ClusterMetricsSnapshot implements ClusterMetrics {
     /** */
     private int totalNodes = -1;
 
+    /** */
+    private transient int totalClientNodes = -1;
+
+    /** */
+    private transient int totalSrvNodes = -1;
+
+    /** */
+    private transient long topVer = -1;
+
     /**
      * Create empty snapshot.
      */
@@ -323,10 +332,17 @@ public class ClusterMetricsSnapshot implements ClusterMetrics {
         rcvdBytesCnt = 0;
         outMesQueueSize = 0;
         heapTotal = 0;
+        totalClientNodes = 0;
+        totalSrvNodes = 0;
         totalNodes = nodes.size();
 
         for (ClusterNode node : nodes) {
             ClusterMetrics m = node.metrics();
+
+            if (node.isClient())
+                totalClientNodes++;
+            else if (!node.isDaemon())
+                totalSrvNodes++;
 
             lastUpdateTime = max(lastUpdateTime, node.metrics().getLastUpdateTime());
 
@@ -423,6 +439,7 @@ public class ClusterMetricsSnapshot implements ClusterMetrics {
         gcLoad = gcCpus(neighborhood);
         load = cpus(neighborhood);
         availProcs = cpuCnt(neighborhood);
+        topVer = p.ignite().cluster().topologyVersion();
     }
 
     /** {@inheritDoc} */
@@ -940,6 +957,21 @@ public class ClusterMetricsSnapshot implements ClusterMetrics {
         return totalNodes;
     }
 
+    /** {@inheritDoc} */
+    @Override public int getTotalServerNodes() {
+        return totalSrvNodes;
+    }
+
+    /** {@inheritDoc} */
+    @Override public int getTotalClientNodes() {
+        return totalClientNodes;
+    }
+
+    /** {@inheritDoc} */
+    @Override public long getTopologyVersion() {
+        return topVer;
+    }
+
     /**
      * Sets available processors.
      *
@@ -1172,6 +1204,33 @@ public class ClusterMetricsSnapshot implements ClusterMetrics {
      */
     public void setTotalNodes(int totalNodes) {
         this.totalNodes = totalNodes;
+    }
+
+    /**
+     * Sets total number of server nodes.
+     *
+     * @param totalSrvNodes Total number of server nodes.
+     */
+    public void setTotalServerNodes(int totalSrvNodes) {
+        this.totalSrvNodes = totalSrvNodes;
+    }
+
+    /**
+     * Sets total number of client nodes.
+     *
+     * @param totalClientNodes Total number of client nodes.
+     */
+    public void setTotalClientNodes(int totalClientNodes) {
+        this.totalClientNodes = totalClientNodes;
+    }
+
+    /**
+     * Sets current topology version.
+     *
+     * @param topVer Major topology version.
+     */
+    public void setTopologyVersion(long topVer) {
+        this.topVer = topVer;
     }
 
     /**

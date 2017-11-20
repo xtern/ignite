@@ -24,6 +24,7 @@ import org.apache.ignite.GridTestTask;
 import org.apache.ignite.Ignite;
 import org.apache.ignite.IgniteCache;
 import org.apache.ignite.IgniteCheckedException;
+import org.apache.ignite.Ignition;
 import org.apache.ignite.cache.eviction.fifo.FifoEvictionPolicy;
 import org.apache.ignite.cluster.ClusterMetrics;
 import org.apache.ignite.configuration.CacheConfiguration;
@@ -340,20 +341,38 @@ public class ClusterNodeMetricsSelfTest extends GridCommonAbstractTest {
         final Ignite ignite0 = grid();
         final Ignite ignite1 = startGrid(1);
 
+        Ignition.setClientMode(true);
+
+        final Ignite ignite2 = startGrid(2);
+
         GridTestUtils.waitForCondition(new GridAbsPredicate() {
             @Override public boolean apply() {
-                return ignite0.cluster().nodes().size() == 2 && ignite1.cluster().nodes().size() == 2;
+                return ignite0.cluster().nodes().size() == 3
+                    && ignite1.cluster().nodes().size() == 3
+                    && ignite2.cluster().nodes().size() == 3;
             }
         }, 3000L);
 
         ClusterMetrics metrics0 = ignite0.cluster().localNode().metrics();
+        ClusterMetrics metrics2 = ignite2.cluster().localNode().metrics();
 
         ClusterMetrics nodesMetrics =
-            ignite0.cluster().forNode(ignite0.cluster().localNode(), ignite1.cluster().localNode()).metrics();
+            ignite0.cluster().forNode(ignite0.cluster().localNode(),
+                ignite1.cluster().localNode(), ignite2.cluster().localNode()).metrics();
 
         assertEquals(metrics0.getTotalCpus(), nodesMetrics.getTotalCpus());
         assertEquals(1, metrics0.getTotalNodes());
-        assertEquals(2, nodesMetrics.getTotalNodes());
+        assertEquals(1, metrics0.getTotalServerNodes());
+        assertEquals(0, metrics0.getTotalClientNodes());
+
+        assertEquals(0, metrics2.getTotalServerNodes());
+        assertEquals(1, metrics2.getTotalClientNodes());
+
+        assertEquals(3, nodesMetrics.getTotalNodes());
+        assertEquals(2, nodesMetrics.getTotalServerNodes());
+        assertEquals(1, nodesMetrics.getTotalClientNodes());
+
+        assertEquals(ignite0.cluster().topologyVersion(), nodesMetrics.getTopologyVersion());
 
         assert metrics0.getHeapMemoryUsed() > 0;
         assert metrics0.getHeapMemoryTotal() > 0;

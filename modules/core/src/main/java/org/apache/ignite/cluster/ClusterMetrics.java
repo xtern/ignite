@@ -684,4 +684,25 @@ public interface ClusterMetrics {
      * @return Total number of nodes.
      */
     public int getTotalNodes();
+
+    /**
+     * Gets count of server nodes.
+     *
+     * @return Count of server nodes.
+     */
+    public int getTotalServerNodes();
+
+    /**
+     * Gets count of client nodes.
+     *
+     * @return Count of client nodes.
+     */
+    public int getTotalClientNodes();
+
+    /**
+     * Gets current topology version.
+     *
+     * @return Topology version.
+     */
+    public long getTopologyVersion();
 }

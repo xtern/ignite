@@ -27,7 +27,9 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ExecutorService;
@@ -335,6 +337,26 @@ public class ClusterGroupAdapter implements ClusterGroupEx, Externalizable {
     }
 
     /** {@inheritDoc} */
+    @Override public Map<Object, Integer> countNodesByAttribute(String attr) {
+        Map<Object, Integer> attrGroups = new HashMap<>();
+
+        for (ClusterNode node : nodes()) {
+            Object attrVal = node.attribute(attr);
+
+            if (attrVal != null) {
+                Integer cnt = attrGroups.get(attrVal);
+
+                if (cnt == null)
+                    attrGroups.put(attrVal, 1);
+                else
+                    attrGroups.put(attrVal, ++cnt);
+            }
+        }
+
+        return attrGroups;
+    }
+
+    /** {@inheritDoc} */
     @Override public final ClusterNode node(UUID id) {
         A.notNull(id, "id");
 
@@ -386,9 +408,16 @@ public class ClusterGroupAdapter implements ClusterGroupEx, Externalizable {
 
     /** {@inheritDoc} */
     @Override public final ClusterGroup forAttribute(String name, @Nullable final Object val) {
-        A.notNull(name, "n");
+        A.notNull(name, "name");
 
         return forPredicate(new AttributeFilter(name, val));
+    }
+
+    /** {@inheritDoc} */
+    @Override public final ClusterGroup forStringAttribute(String name, @Nullable final String val) {
+        A.notNull(name, "name");
+
+        return forPredicate(new AttributeFilter(name, val, true));
     }
 
     /** {@inheritDoc} */
@@ -815,18 +844,44 @@ public class ClusterGroupAdapter implements ClusterGroupEx, Externalizable {
         /** Value. */
         private final Object val;
 
+        /** Compare attribute value as string. */
+        private final boolean strcmp;
+
         /**
-         * @param name Name.
-         * @param val Value.
+         * @param name Attribute name.
+         * @param val Attribute value.
          */
         private AttributeFilter(String name, Object val) {
             this.name = name;
             this.val = val;
+            this.strcmp = false;
+        }
+
+        /**
+         * @param name Attribute name.
+         * @param val Attribute value.
+         * @param strcmp Сonvert attribute value to string before comparision.
+         */
+        private AttributeFilter(String name, String val, boolean strcmp) {
+            this.name = name;
+            this.val = val;
+            this.strcmp = strcmp;
         }
 
         /** {@inheritDoc} */
         @Override public boolean apply(ClusterNode n) {
-            return val == null ? n.attributes().containsKey(name) : val.equals(n.attribute(name));
+            if (val == null)
+                return n.attributes().containsKey(name);
+
+            Object nodeVal = n.attribute(name);
+
+            if (nodeVal == null)
+                return false;
+
+            if (strcmp)
+                return nodeVal.toString().equals(val);
+            else
+                return val.equals(nodeVal);
         }
     }
 

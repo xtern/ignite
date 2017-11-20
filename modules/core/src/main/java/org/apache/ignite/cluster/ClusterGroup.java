@@ -18,6 +18,7 @@
 package org.apache.ignite.cluster;
 
 import java.util.Collection;
+import java.util.Map;
 import java.util.UUID;
 import org.apache.ignite.Ignite;
 import org.apache.ignite.IgniteCluster;
@@ -136,6 +137,22 @@ public interface ClusterGroup {
      * @return Cluster group for nodes containing specified attribute.
      */
     public ClusterGroup forAttribute(String name, @Nullable Object val);
+
+    /**
+     * Creates a new cluster group for nodes containing given name and value
+     * specified in user attributes.
+     * <p>
+     * User attributes for every node are optional and can be specified in
+     * grid node configuration. See {@link IgniteConfiguration#getUserAttributes()}
+     * for more information.
+     * <p>
+     * This method will compare attribute value as string.
+     *
+     * @param name Name of the attribute.
+     * @param val Optional string attribute value to match.
+     * @return Cluster group for nodes containing specified attribute.
+     */
+    public ClusterGroup forStringAttribute(String name, @Nullable String val);
 
     /**
      * Creates a cluster group of nodes started in server mode.
@@ -293,4 +310,12 @@ public interface ClusterGroup {
      * @throws IgniteException If this cluster group is empty.
      */
     public ClusterMetrics metrics() throws IgniteException;
+
+    /**
+     * Get the number of nodes grouped by the node attribute value.
+     *
+     * @param attr Attribute name.
+     * @return The number of nodes grouped by the node attribute value.
+     */
+    public Map<Object, Integer> countNodesByAttribute(String attr);
 }
