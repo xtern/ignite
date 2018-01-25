@@ -17,6 +17,7 @@
 
 package org.apache.ignite.internal.processors.service;
 
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashSet;
 import java.util.Map;
@@ -29,6 +30,7 @@ import org.apache.ignite.internal.IgniteEx;
 import org.apache.ignite.internal.processors.cache.IgniteInternalCache;
 import org.apache.ignite.internal.util.typedef.F;
 import org.apache.ignite.internal.util.typedef.internal.U;
+import org.apache.ignite.testframework.GridTestUtils;
 
 /**
  * Tests service reassignment.
@@ -104,35 +106,47 @@ public class GridServiceReassignmentSelfTest extends GridServiceProcessorAbstrac
                 if (grow) {
                     assert startedGrids.size() < maxTopSize;
 
-                    int gridIdx = nextAvailableIdx(startedGrids, maxTopSize, rnd);
+                    int gridIdx1 = nextAvailableIdx(startedGrids, maxTopSize, rnd);
+                    startedGrids.add(gridIdx1);
+                    int gridIdx2 = nextAvailableIdx(startedGrids, maxTopSize, rnd);
+                    startedGrids.add(gridIdx2);
 
-                    startGrid(gridIdx);
+                    GridTestUtils.runAsync(() -> { return startGrid(gridIdx1); });
+                    startGrid(gridIdx2);
 
-                    startedGrids.add(gridIdx);
 
                     if (startedGrids.size() == maxTopSize)
                         grow = false;
                 }
                 else {
-                    assert startedGrids.size() > 1;
+                    assert startedGrids.size() > 2;
 
-                    int gridIdx = nextRandomIdx(startedGrids, rnd);
-
-                    stopGrid(gridIdx);
-
-                    startedGrids.remove(gridIdx);
+                    int gridIdx1 = nextRandomIdx(startedGrids, rnd);
+                    stopGrid(gridIdx1);
+                    startedGrids.remove(gridIdx1);
+                    int gridIdx2 = nextRandomIdx(startedGrids, rnd);
+                    stopGrid(gridIdx2);
+                    startedGrids.remove(gridIdx2);
 
                     if (startedGrids.size() == 1)
                         grow = true;
                 }
 
-                for (int attempt = 0; attempt <= 10; ++attempt) {
-                    U.sleep(500);
+//                if (startedGrids.size() > 1) {
+//                    waitForDiscovery0(startedGrids);
+//                    U.sleep(500);
+//                }
 
+                U.sleep(500);
+
+                for (int attempt = 0; attempt <= 10; ++attempt) {
                     if (checkServices(total, maxPerNode, F.first(startedGrids), attempt == 10))
                         break;
                 }
             }
+
+
+
         }
         finally {
             grid(F.first(startedGrids)).services().cancel("testService");
@@ -141,6 +155,16 @@ public class GridServiceReassignmentSelfTest extends GridServiceProcessorAbstrac
 
             startGrid(0);
         }
+    }
+
+    private void waitForDiscovery0(Collection<Integer> grids) throws IgniteCheckedException {
+        Ignite[] nodes = new Ignite[grids.size()];
+        int n = 0;
+
+        for (int idx : grids)
+            nodes[n++] = grid(idx);
+
+        waitForDiscovery(nodes);
     }
 
     /**
@@ -186,6 +210,11 @@ public class GridServiceReassignmentSelfTest extends GridServiceProcessorAbstrac
         if (total > 0)
             assertTrue("Total number of services limit exceeded [sum=" + sum +
                 ", assigns=" + assignments.assigns() + ']', sum <= total);
+        else
+            //if (aliveNodes)
+            System.out.println("TOTAL " + sum + " vs " + nodes.size());
+
+
 
         if (!lastTry && proxy(grid).get() != 10)
             return false;
@@ -216,12 +245,14 @@ public class GridServiceReassignmentSelfTest extends GridServiceProcessorAbstrac
      * @param rnd Random numbers generator.
      * @return Randomly chosen started grid.
      */
-    private int nextRandomIdx(Iterable<Integer> startedGrids, Random rnd) {
-        while (true) {
-            for (Integer idx : startedGrids) {
-                if (rnd.nextBoolean())
-                    return idx;
-            }
+    private int nextRandomIdx(Collection<Integer> startedGrids, Random rnd) {
+        int n = rnd.nextInt(startedGrids.size());
+
+        for (Integer idx : startedGrids) {
+            if (0 == n--)
+                return idx;
         }
+
+        throw new IllegalStateException();
     }
 }
