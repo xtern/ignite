@@ -36,6 +36,7 @@ import javax.cache.integration.CompletionListener;
 import javax.cache.processor.EntryProcessor;
 import javax.cache.processor.EntryProcessorResult;
 import org.apache.ignite.IgniteCache;
+import org.apache.ignite.IgniteSet;
 import org.apache.ignite.cache.CacheEntry;
 import org.apache.ignite.cache.CacheEntryProcessor;
 import org.apache.ignite.cache.CacheMetrics;
@@ -1640,6 +1641,20 @@ public class GatewayProtectedCacheProxy<K, V> extends AsyncSupportAdapter<Ignite
 
         try {
             delegate.enableStatistics(enabled);
+        }
+        finally {
+            onLeave(gate, prev);
+        }
+    }
+
+    /** {@inheritDoc} */
+    @Override public IgniteSet<K> asSet() {
+        GridCacheGateway<K, V> gate = gate();
+
+        CacheOperationContext prev = onEnter(gate, opCtx);
+
+        try {
+            return delegate.asSet();
         }
         finally {
             onLeave(gate, prev);
