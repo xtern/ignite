@@ -1648,7 +1648,7 @@ public class GatewayProtectedCacheProxy<K, V> extends AsyncSupportAdapter<Ignite
     }
 
     /** {@inheritDoc} */
-    @Override public IgniteSet<K> asSet() {
+    @Override public Set<K> asSet() {
         GridCacheGateway<K, V> gate = gate();
 
         CacheOperationContext prev = onEnter(gate, opCtx);
