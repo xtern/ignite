@@ -2829,7 +2829,7 @@ public abstract class GridCacheMapEntry extends GridMetadataAwareAdapter impleme
                         null,
                         topVer);
 
-                    cctx.dataStructures().onEntryUpdated(key, false, false);
+                    cctx.dataStructures().onEntryUpdated(key, false, true);
                 }
 
                 onUpdateFinished(updateCntr);
