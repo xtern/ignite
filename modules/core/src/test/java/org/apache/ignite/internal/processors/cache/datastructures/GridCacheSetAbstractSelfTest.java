@@ -513,8 +513,10 @@ public abstract class GridCacheSetAbstractSelfTest extends IgniteCollectionAbstr
 
         IgniteSet<Integer> set0 = grid(0).set(SET_NAME, colCfg);
 
+        assert set0.size() == 0 : set0.size();
+
         for (int i = 0; i < 5000; i++)
-            assertTrue(set0.add(i));
+            assertTrue(String.valueOf(i), set0.add(i));
 
         createIterators(set0);
 
@@ -681,6 +683,8 @@ public abstract class GridCacheSetAbstractSelfTest extends IgniteCollectionAbstr
 
                     assertNotNull(set);
 
+                    assert set.collocated() == collocated;
+
                     ThreadLocalRandom rnd = ThreadLocalRandom.current();
 
                     for (int i = 0; i < ITERATIONS; i++) {
@@ -806,6 +810,12 @@ public abstract class GridCacheSetAbstractSelfTest extends IgniteCollectionAbstr
 
         for (int i = 0; i < gridCount(); i++) {
             GridCacheAdapter cache = grid(i).context().cache().internalCache(cctx.name());
+
+            if (!collocated) {
+                assertNull("Internal cache should be destroyed in non-collocated mode: " + cctx.name(), cache);
+
+                continue;
+            }
 
             for (Object e : cache.localEntries(new CachePeekMode[]{CachePeekMode.ALL})) {
                 cnt++;
@@ -1014,6 +1024,7 @@ public abstract class GridCacheSetAbstractSelfTest extends IgniteCollectionAbstr
 
         colCfg.setAtomicityMode(ATOMIC);
         colCfg.setGroupName("grp1");
+        colCfg.setCollocated(true);
 
         IgniteSet set1 = ignite.set("set1", colCfg);
         IgniteSet set2 = ignite.set("set2", colCfg);
