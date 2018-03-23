@@ -42,4 +42,52 @@ public class GridCacheLocalSetSelfTest extends GridCacheSetAbstractSelfTest {
     @Override protected CacheAtomicityMode collectionCacheAtomicityMode() {
         return TRANSACTIONAL;
     }
+
+//    /** */
+//    @Override public void testCleanup() throws Exception {
+////        super.testCleanup();
+//        IgniteCache<Integer, Boolean> locCache = grid(0).createCache(ccfg("localCache0"));
+//
+//        CountDownLatch latch = new CountDownLatch(1);
+//
+//        AtomicInteger cntr = new AtomicInteger(0);
+//
+//        GridTestUtils.runMultiThreadedAsync(() -> {
+//            try {
+//                int key = 0;
+//
+//                while (key < 10_000) {
+//
+//                    if (key == 1000)
+//                        latch.countDown();
+//
+//                    locCache.put(key, true);
+//
+//                    key = cntr.incrementAndGet();
+//                }
+//            }
+//            catch (IllegalStateException ignore) {
+//                // No-op
+//            }
+//            catch (IgniteException e) {
+//                assert (X.hasCause(e, CacheStoppedException.class)) : e;
+//            }
+//            return null;
+//        }, 5, "set-add-thread");
+//
+//        U.await(latch);
+//
+//        locCache.destroy();
+//
+//        System.out.println("cache destroyed");
+//    }
+//
+//    private <k, V> CacheConfiguration<k, V> ccfg(String name) {
+//        CacheConfiguration<k, V> ccfg = new CacheConfiguration<>(name);
+//
+//        ccfg.setCacheMode(collectionCacheMode());
+//        ccfg.setAtomicityMode(collectionCacheAtomicityMode());
+//
+//        return ccfg;
+//    }
 }

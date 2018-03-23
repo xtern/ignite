@@ -258,6 +258,8 @@ public class GridCacheContext<K, V> implements Externalizable {
     /** Statistics enabled flag. */
     private volatile boolean statisticsEnabled;
 
+    public volatile boolean stopping;
+
     /**
      * Empty constructor required for {@link Externalizable}.
      */

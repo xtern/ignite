@@ -135,8 +135,18 @@ public class IgniteTxImplicitSingleStateImpl extends IgniteTxLocalStateAdapter {
 
     /** {@inheritDoc} */
     @Override public GridDhtTopologyFuture topologyReadLock(GridCacheSharedContext cctx, GridFutureAdapter<?> fut) {
-        if (cacheCtx == null || cacheCtx.isLocal())
+        if (cacheCtx == null)
             return cctx.exchange().lastTopologyFuture();
+
+        if (cacheCtx.isLocal()) {
+            if (cacheCtx.stopping) {
+                fut.onDone(new CacheStoppedException(cacheCtx.name()));
+
+                return null;
+            }
+            else
+                return cctx.exchange().lastTopologyFuture();
+        }
 
         cacheCtx.topology().readLock();
 

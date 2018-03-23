@@ -40,10 +40,12 @@ import org.apache.ignite.configuration.CollectionConfiguration;
 import org.apache.ignite.internal.IgniteEx;
 import org.apache.ignite.internal.IgniteInternalFuture;
 import org.apache.ignite.internal.IgniteKernal;
+import org.apache.ignite.internal.processors.cache.CacheStoppedException;
 import org.apache.ignite.internal.processors.cache.GridCacheAdapter;
 import org.apache.ignite.internal.processors.cache.GridCacheContext;
 import org.apache.ignite.internal.processors.cache.query.GridCacheQueryManager;
 import org.apache.ignite.internal.util.lang.GridAbsPredicate;
+import org.apache.ignite.internal.util.typedef.X;
 import org.apache.ignite.internal.util.typedef.internal.U;
 import org.apache.ignite.lang.IgniteCallable;
 import org.apache.ignite.lang.IgniteRunnable;
@@ -790,6 +792,9 @@ public abstract class GridCacheSetAbstractSelfTest extends IgniteCollectionAbstr
                     }
                     catch (IllegalStateException e) {
                         log.info("Set removed: " + e);
+                    }
+                    catch (IgniteException e) {
+                        assert X.hasCause(e, CacheStoppedException.class) : e;
                     }
 
                     return null;
