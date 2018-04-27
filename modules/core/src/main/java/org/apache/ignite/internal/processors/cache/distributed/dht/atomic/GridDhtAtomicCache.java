@@ -1712,7 +1712,7 @@ public class GridDhtAtomicCache<K, V> extends GridDhtCacheAdapter<K, V> {
                 top.readLock();
 
                 try {
-                    if (top.stopping()) {
+                    if (top.stopping() || ctx.kernalContext().discovery().registeredCache(this.name())) {
                         res.addFailedKeys(req.keys(), new CacheStoppedException(name()));
 
                         completionCb.apply(req, res);

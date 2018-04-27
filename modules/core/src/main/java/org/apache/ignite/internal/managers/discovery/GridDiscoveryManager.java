@@ -376,6 +376,8 @@ public class GridDiscoveryManager extends GridManagerAdapter<DiscoverySpi> {
      * @param grpDesc Cache group descriptor.
      */
     public void removeCacheGroup(CacheGroupDescriptor grpDesc) {
+        U.dumpStack(log, grpDesc.groupName());
+
         CacheGroupAffinity rmvd = registeredCacheGrps.remove(grpDesc.groupId());
 
         assert rmvd != null : grpDesc.cacheOrGroupName();
@@ -2542,6 +2544,10 @@ public class GridDiscoveryManager extends GridManagerAdapter<DiscoverySpi> {
             throw new UnsupportedOperationException();
 
         ((IgniteDiscoverySpi)spi).resolveCommunicationFailure(node, err);
+    }
+
+    public boolean registeredCache(String cacheName) {
+        return registeredCaches.containsKey(cacheName);
     }
 
     /** Worker for network segment checks. */

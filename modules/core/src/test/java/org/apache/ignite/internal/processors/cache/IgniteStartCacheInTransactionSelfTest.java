@@ -29,6 +29,7 @@ import org.apache.ignite.cache.CacheAtomicityMode;
 import org.apache.ignite.configuration.CacheConfiguration;
 import org.apache.ignite.configuration.IgniteConfiguration;
 import org.apache.ignite.configuration.NearCacheConfiguration;
+import org.apache.ignite.internal.util.typedef.F;
 import org.apache.ignite.internal.util.typedef.X;
 import org.apache.ignite.spi.discovery.tcp.TcpDiscoverySpi;
 import org.apache.ignite.spi.discovery.tcp.ipfinder.TcpDiscoveryIpFinder;
@@ -280,7 +281,12 @@ public class IgniteStartCacheInTransactionSelfTest extends GridCommonAbstractTes
 
         grpName = "testGroup";
 
-        IgniteCache additionalCache = ignite.createCache(cacheConfiguration("cache1"));
+//        IgniteCache additionalCache = ignite.createCache(cacheConfiguration("cache1"));
+
+//        additionalCache.put("A", "B");
+
+//        additionalCache.destroy();
+
 
         try {
             IgniteCache<Integer, Boolean> cache = ignite.getOrCreateCache(cacheConfiguration("cache2"));
@@ -301,7 +307,7 @@ public class IgniteStartCacheInTransactionSelfTest extends GridCommonAbstractTes
                 catch (Exception e) {
                     boolean rightErrMsg = false;
 
-                    for (Throwable t : X.getThrowableList(e)) {
+                    for (Throwable t : F.concat(false, X.getThrowableList(e), X.getSuppressedList(e))) {
                         if (t.getClass() == IgniteCheckedException.class ||
                             t.getClass() == CacheStoppedException.class ||
                             t.getClass() == IllegalStateException.class) {
@@ -324,7 +330,7 @@ public class IgniteStartCacheInTransactionSelfTest extends GridCommonAbstractTes
         finally {
             grpName = null;
 
-            additionalCache.destroy();
+//            additionalCache.destroy();
         }
     }
 }
