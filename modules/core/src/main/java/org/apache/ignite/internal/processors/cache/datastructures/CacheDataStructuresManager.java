@@ -440,6 +440,8 @@ public class CacheDataStructuresManager extends GridCacheManagerAdapter {
 
                 if (hdr == null)
                     return new GridCacheSetProxy<>(cctx, new IgniteCacheSetImpl<T>(cctx, name));
+                else
+                    compatibilityMode = true;
             }
             else if (create) {
                 hdr = new GridCacheSetHeader(IgniteUuid.randomUuid(), collocated);
