@@ -17,7 +17,6 @@
 
 package org.apache.ignite.internal.processors.cache.datastructures;
 
-import org.apache.ignite.IgniteException;
 import org.apache.ignite.IgniteQueue;
 import org.apache.ignite.IgniteSet;
 import org.apache.ignite.cache.CacheAtomicityMode;
@@ -149,7 +148,7 @@ public abstract class IgniteCollectionAbstractTest extends GridCommonAbstractTes
         if (set instanceof GridCacheSetProxy)
             return GridTestUtils.getFieldValue(set, GridCacheSetProxy.class, "cctx");
         else
-            return GridTestUtils.getFieldValue(set, "ctx");
+            return GridTestUtils.getFieldValue(set, GridCacheSetImpl.class, "ctx");
     }
 
     /**
@@ -162,6 +161,6 @@ public abstract class IgniteCollectionAbstractTest extends GridCommonAbstractTes
         if (set instanceof GridCacheSetProxy)
             impl = ((GridCacheSetProxy)set).delegate();
 
-        return impl instanceof GridCacheSetImpl;
+        return Boolean.TRUE.equals(GridTestUtils.getFieldValue(impl, "compatibilityMode"));
     }
 }
