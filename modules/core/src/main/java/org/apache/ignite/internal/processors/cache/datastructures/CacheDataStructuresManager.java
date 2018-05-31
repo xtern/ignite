@@ -29,6 +29,7 @@ import java.util.Iterator;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.Callable;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -66,11 +67,11 @@ import org.apache.ignite.internal.util.GridSpinBusyLock;
 import org.apache.ignite.internal.util.typedef.internal.CU;
 import org.apache.ignite.internal.util.typedef.internal.U;
 import org.apache.ignite.lang.IgniteFuture;
+import org.apache.ignite.lang.IgniteProductVersion;
 import org.apache.ignite.lang.IgniteUuid;
 import org.apache.ignite.resources.IgniteInstanceResource;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
-import java.util.concurrent.ConcurrentHashMap;
 
 import static org.apache.ignite.cache.CacheMode.PARTITIONED;
 import static org.apache.ignite.internal.GridClosureCallMode.BROADCAST;
@@ -79,6 +80,10 @@ import static org.apache.ignite.internal.GridClosureCallMode.BROADCAST;
  *
  */
 public class CacheDataStructuresManager extends GridCacheManagerAdapter {
+    /** Non collocated IgniteSet will use separate cache if all nodes in cluster is not older then specified version. */
+    // TODO Set current snapshot version before merge.
+    public static final IgniteProductVersion SEPARATE_CACHE_PER_NON_COLLOCATED_SET_SINCE = IgniteProductVersion.fromString("2.5.0");
+
     /** Known classes which are safe to use on server nodes. */
     private static final Collection<Class<?>> KNOWN_CLS = new HashSet<>();
 
@@ -426,7 +431,10 @@ public class CacheDataStructuresManager extends GridCacheManagerAdapter {
             IgniteInternalCache cache = cctx.cache().withNoRetries();
 
             if (create) {
-                hdr = new GridCacheSetHeader(IgniteUuid.randomUuid(), collocated);
+                int hdrVer = U.isOldestNodeVersionAtLeast(SEPARATE_CACHE_PER_NON_COLLOCATED_SET_SINCE,
+                    cctx.grid().cluster().nodes()) ? GridCacheSetHeader.V2 : GridCacheSetHeader.V1;
+
+                hdr = new GridCacheSetHeader(IgniteUuid.randomUuid(), collocated, hdrVer);
 
                 GridCacheSetHeader old = (GridCacheSetHeader)cache.getAndPutIfAbsent(key, hdr);
 
@@ -611,6 +619,10 @@ public class CacheDataStructuresManager extends GridCacheManagerAdapter {
      * @param rmv {@code True} if item was removed.
      */
     private void onSetItemUpdated(SetItemKey key, boolean rmv) {
+        // Items stored in a separate cache don't have identifier.
+        if (key.setId() == null)
+            return;
+
         GridConcurrentHashSet<SetItemKey> set = setDataMap.get(key.setId());
 
         if (set == null) {

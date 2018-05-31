@@ -56,6 +56,7 @@ import static org.apache.ignite.cache.CacheAtomicityMode.TRANSACTIONAL;
 import static org.apache.ignite.cache.CacheMode.LOCAL;
 import static org.apache.ignite.cache.CacheMode.PARTITIONED;
 import static org.apache.ignite.cache.CacheWriteSynchronizationMode.FULL_SYNC;
+import static org.apache.ignite.internal.processors.datastructures.GridCacheSetHeader.V2;
 
 /**
  * Cache set tests.
@@ -513,6 +514,8 @@ public abstract class GridCacheSetAbstractSelfTest extends IgniteCollectionAbstr
 
         IgniteSet<Integer> set0 = grid(0).set(SET_NAME, colCfg);
 
+        assertEquals(0, set0.size());
+
         for (int i = 0; i < 5000; i++)
             assertTrue(set0.add(i));
 
@@ -804,8 +807,16 @@ public abstract class GridCacheSetAbstractSelfTest extends IgniteCollectionAbstr
 
         GridCacheContext cctx = GridTestUtils.getFieldValue(set0, "cctx");
 
+        boolean sharedCacheMode = sharedCacheMode(set0);
+
         for (int i = 0; i < gridCount(); i++) {
             GridCacheAdapter cache = grid(i).context().cache().internalCache(cctx.name());
+
+            if (!sharedCacheMode) {
+                assertNull("Internal cache should be destroyed in non-shared cache mode: " + cctx.name(), cache);
+
+                continue;
+            }
 
             for (Object e : cache.localEntries(new CachePeekMode[]{CachePeekMode.ALL})) {
                 cnt++;
@@ -1003,7 +1014,7 @@ public abstract class GridCacheSetAbstractSelfTest extends IgniteCollectionAbstr
     }
 
     /**
-     * Test that sets within the same group and compatible configurations are stored in the same cache.
+     * Test that collocated sets within the same group and compatible configurations are stored in the same cache.
      *
      * @throws Exception If failed.
      */
@@ -1014,28 +1025,64 @@ public abstract class GridCacheSetAbstractSelfTest extends IgniteCollectionAbstr
 
         colCfg.setAtomicityMode(ATOMIC);
         colCfg.setGroupName("grp1");
+        colCfg.setCollocated(true);
 
         IgniteSet set1 = ignite.set("set1", colCfg);
         IgniteSet set2 = ignite.set("set2", colCfg);
 
-        assert cctx(set1).cacheId() == cctx(set2).cacheId();
+        assertTrue(cctx(set1).cacheId() == cctx(set2).cacheId());
 
-        colCfg.setAtomicityMode(TRANSACTIONAL);
+        colCfg.setCollocated(false);
 
         IgniteSet set3 = ignite.set("set3", colCfg);
         IgniteSet set4 = ignite.set("set4", colCfg);
 
-        assert cctx(set3).cacheId() == cctx(set4).cacheId();
-        assert cctx(set1).cacheId() != cctx(set3).cacheId();
-        assert cctx(set1).groupId() == cctx(set3).groupId();
+        if (sharedCacheMode(set4))
+            assertTrue(cctx(set3).cacheId() == cctx(set4).cacheId());
+        else
+            assertTrue(cctx(set3).cacheId() != cctx(set4).cacheId());
 
-        colCfg.setGroupName("gtp2");
+        assertTrue(cctx(set1).groupId() == cctx(set3).groupId());
+        assertTrue(cctx(set3).groupId() == cctx(set4).groupId());
+
+        colCfg.setAtomicityMode(TRANSACTIONAL);
+        colCfg.setCollocated(true);
 
         IgniteSet set5 = ignite.set("set5", colCfg);
         IgniteSet set6 = ignite.set("set6", colCfg);
 
-        assert cctx(set5).cacheId() == cctx(set6).cacheId();
-        assert cctx(set1).groupId() != cctx(set5).groupId();
+        assertTrue(cctx(set5).cacheId() == cctx(set6).cacheId());
+        assertTrue(cctx(set1).cacheId() != cctx(set5).cacheId());
+        assertTrue(cctx(set1).groupId() == cctx(set5).groupId());
+
+        colCfg.setCollocated(false);
+
+        IgniteSet set7 = ignite.set("set7", colCfg);
+        IgniteSet set8 = ignite.set("set8", colCfg);
+
+        if (sharedCacheMode(set8))
+            assertTrue(cctx(set7).cacheId() == cctx(set8).cacheId());
+        else
+            assertTrue(cctx(set7).cacheId() != cctx(set8).cacheId());
+
+        assertTrue(cctx(set3).cacheId() != cctx(set7).cacheId());
+        assertTrue(cctx(set3).groupId() == cctx(set7).groupId());
+
+        colCfg.setCollocated(true);
+
+        colCfg.setGroupName("gtp2");
+
+        IgniteSet set9 = ignite.set("set9", colCfg);
+        IgniteSet set10 = ignite.set("set10", colCfg);
+
+        assertTrue(cctx(set9).cacheId() == cctx(set10).cacheId());
+        assertTrue(cctx(set1).groupId() != cctx(set9).groupId());
+
+        colCfg.setCollocated(false);
+
+        IgniteSet set11 = ignite.set("set11", colCfg);
+
+        assertTrue(cctx(set3).groupId() != cctx(set11).groupId());
     }
 
     /**

@@ -87,6 +87,7 @@ import static org.apache.ignite.cache.CacheRebalanceMode.SYNC;
 import static org.apache.ignite.cache.CacheWriteSynchronizationMode.FULL_SYNC;
 import static org.apache.ignite.events.EventType.EVT_NODE_FAILED;
 import static org.apache.ignite.events.EventType.EVT_NODE_LEFT;
+import static org.apache.ignite.internal.processors.cache.datastructures.CacheDataStructuresManager.SEPARATE_CACHE_PER_NON_COLLOCATED_SET_SINCE;
 import static org.apache.ignite.internal.processors.datastructures.DataStructureType.ATOMIC_LONG;
 import static org.apache.ignite.internal.processors.datastructures.DataStructureType.ATOMIC_REF;
 import static org.apache.ignite.internal.processors.datastructures.DataStructureType.ATOMIC_SEQ;
@@ -910,18 +911,38 @@ public final class DataStructuresProcessor extends GridProcessorAdapter implemen
     }
 
     /**
+     * Get compatible with collection configuration data structure cache.
+     *
      * @param cfg Collection configuration.
-     * @return Cache name.
      * @param grpName Group name.
+     * @param dsType Data structure type.
+     * @param dsName Data structure name.
+     * @return Data structure cache.
      * @throws IgniteCheckedException If failed.
      */
-    @Nullable private IgniteInternalCache compatibleCache(CollectionConfiguration cfg, String grpName)
+    @Nullable private IgniteInternalCache compatibleCache(CollectionConfiguration cfg, String grpName,
+        DataStructureType dsType, String dsName)
         throws IgniteCheckedException
     {
         String cacheName = DS_CACHE_NAME_PREFIX + cfg.getAtomicityMode() + "_" + cfg.getCacheMode() + "_" +
             cfg.getBackups() + "@" + grpName;
 
         IgniteInternalCache cache = ctx.cache().cache(cacheName);
+
+        // Non collocated mode enabled only for PARTITIONED cache.
+        boolean collocated = cfg.isCollocated() || cfg.getCacheMode() != PARTITIONED;
+
+        if (dsType == DataStructureType.SET && !collocated) {
+            boolean sharedCacheSetFound = cache != null && cache.containsKey(new GridCacheSetHeaderKey(dsName));
+
+            if (!sharedCacheSetFound && U.isOldestNodeVersionAtLeast(SEPARATE_CACHE_PER_NON_COLLOCATED_SET_SINCE,
+                ctx.grid().cluster().nodes())) {
+                cacheName = DS_CACHE_NAME_PREFIX + cfg.getAtomicityMode() + "_" + cfg.getCacheMode() + "_" +
+                    cfg.getBackups() + "_" + dsType.name() + "_" + dsName + "@" + grpName;
+
+                cache = ctx.cache().cache(cacheName);
+            }
+        }
 
         if (cache == null) {
             ctx.cache().dynamicStartCache(cacheConfiguration(cfg, cacheName, grpName),
@@ -1050,7 +1071,7 @@ public final class DataStructuresProcessor extends GridProcessorAdapter implemen
         final IgniteInternalCache cache;
 
         if (create) {
-            cache = compatibleCache(cfg, grpName);
+            cache = compatibleCache(cfg, grpName, type, name);
 
             DistributedCollectionMetadata newVal = new DistributedCollectionMetadata(type, cfg, cache.name());
 
@@ -1096,6 +1117,7 @@ public final class DataStructuresProcessor extends GridProcessorAdapter implemen
             }
         });
     }
+
 
     /**
      * Awaits for processor initialization.
@@ -1541,7 +1563,7 @@ public final class DataStructuresProcessor extends GridProcessorAdapter implemen
             @Override public void applyx(GridCacheSetHeader hdr) throws IgniteCheckedException {
                 hdr = (GridCacheSetHeader) cctx.cache().withNoRetries().getAndRemove(new GridCacheSetHeaderKey(name));
 
-                if (hdr != null)
+                if (hdr != null && (hdr.collocated() || hdr.version() == GridCacheSetHeader.V1))
                     cctx.dataStructures().removeSetData(hdr.id());
             }
         };
