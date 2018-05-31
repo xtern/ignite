@@ -30,6 +30,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.Callable;
+import javax.cache.Cache;
 import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.IgniteCompute;
 import org.apache.ignite.IgniteException;
@@ -469,39 +470,35 @@ public class GridCacheSetImpl<T> extends AbstractCollection<T> implements Ignite
      */
     @SuppressWarnings("unchecked")
     private GridCloseableIterator<T> cacheIterator() {
-        GridCacheContext ctx0 = ctx.isNear() ? ctx.near().dht().context() : ctx;
-
         CacheOperationContext opCtx = ctx.operationContextPerCall();
 
         try {
-            GridCloseableIterator<Map.Entry<T, Object>> iter = ctx0.queries()
-                .createScanQuery(new IgniteBiPredicate() {
-                    @Override public boolean apply(Object k, Object v) {
-                        return k.getClass() == GridCacheSetItemKey.class;
-                    }
-                }, null, false)
-                .keepAll(false)
-                .executeScanQuery();
-
-            return ctx.itHolder().iterator(iter, new CacheIteratorConverter<T, Map.Entry<T, Object>>() {
-                @Override protected T convert(Map.Entry<T, Object> e) {
-                    return (T)((SetItemKey)e.getKey()).item();
-                }
-
-                @Override protected void remove(T item) {
-                    CacheOperationContext prev = ctx.gate().enter(opCtx);
-
-                    try {
-                        cache.remove(itemKey(item));
-                    }
-                    catch (IgniteCheckedException e) {
-                        throw U.convertException(e);
-                    }
-                    finally {
-                        ctx.gate().leave(prev);
-                    }
+            Iterator iter = ctx.cache().scanIterator(false, new IgniteBiPredicate<Object, Object>() {
+                @Override public boolean apply(Object k, Object v) {
+                    return k.getClass() == GridCacheSetItemKey.class;
                 }
             });
+
+            return ctx.itHolder().iterator((GridCloseableIterator)iter,
+                new CacheIteratorConverter<T, Cache.Entry<T, Object>>() {
+                    @Override protected T convert(Cache.Entry<T, Object> e) {
+                        return (T)((SetItemKey)e.getKey()).item();
+                    }
+
+                    @Override protected void remove(T item) {
+                        CacheOperationContext prev = ctx.gate().enter(opCtx);
+
+                        try {
+                            cache.remove(itemKey(item));
+                        }
+                        catch (IgniteCheckedException e) {
+                            throw U.convertException(e);
+                        }
+                        finally {
+                            ctx.gate().leave(prev);
+                        }
+                    }
+                });
         }
         catch (IgniteCheckedException e) {
             throw U.convertException(e);
