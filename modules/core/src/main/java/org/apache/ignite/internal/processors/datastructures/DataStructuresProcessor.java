@@ -26,8 +26,14 @@ import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.CountDownLatch;
+import javax.cache.configuration.CacheEntryListenerConfiguration;
+import javax.cache.configuration.Factory;
+import javax.cache.event.CacheEntryCreatedListener;
 import javax.cache.event.CacheEntryEvent;
+import javax.cache.event.CacheEntryEventFilter;
+import javax.cache.event.CacheEntryListener;
 import javax.cache.event.CacheEntryListenerException;
+import javax.cache.event.CacheEntryRemovedListener;
 import javax.cache.event.CacheEntryUpdatedListener;
 import javax.cache.event.EventType;
 import org.apache.ignite.IgniteAtomicLong;
@@ -72,6 +78,7 @@ import org.apache.ignite.internal.util.lang.IgnitePredicateX;
 import org.apache.ignite.internal.util.typedef.CI1;
 import org.apache.ignite.internal.util.typedef.CIX1;
 import org.apache.ignite.internal.util.typedef.CX1;
+import org.apache.ignite.internal.util.typedef.F;
 import org.apache.ignite.internal.util.typedef.T2;
 import org.apache.ignite.internal.util.typedef.X;
 import org.apache.ignite.internal.util.typedef.internal.A;
@@ -131,7 +138,7 @@ public final class DataStructuresProcessor extends GridProcessorAdapter implemen
     private final AtomicConfiguration dfltAtomicCfg;
 
     /** Map of continuous query IDs. */
-    private final ConcurrentHashMap<Integer, UUID> qryIdMap = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<Integer, CacheEntryListenerConfiguration> qryIdMap = new ConcurrentHashMap<>();
 
     /** Listener. */
     private final GridLocalEventListener lsnr = new GridLocalEventListener() {
@@ -206,15 +213,29 @@ public final class DataStructuresProcessor extends GridProcessorAdapter implemen
         if (!qryIdMap.containsKey(cctx.cacheId())) {
             synchronized (this) {
                 if (!qryIdMap.containsKey(cctx.cacheId())) {
-                    qryIdMap.put(cctx.cacheId(),
-                        cctx.continuousQueries().executeInternalQuery(
-                            new DataStructuresEntryListener(),
-                            new DataStructuresEntryFilter(),
-                            cctx.isReplicated() && cctx.affinityNode(),
-                            false,
-                            false,
-                            true
-                        ));
+
+                    CacheEntryListenerConfiguration cfg = new CacheEntryListenerConfiguration() {
+
+                        @Override public Factory<CacheEntryListener> getCacheEntryListenerFactory() {
+                            return DataStructuresEntryListener::new;
+                        }
+
+                        @Override public boolean isOldValueRequired() {
+                            return true;
+                        }
+
+                        @Override public Factory<CacheEntryEventFilter> getCacheEntryEventFilterFactory() {
+                            return DataStructuresEntryFilter::new;
+                        }
+
+                        @Override public boolean isSynchronous() {
+                            return true;
+                        }
+                    };
+
+                    cctx.continuousQueries().executeJCacheQuery(cfg, false, false, true);
+
+                    qryIdMap.put(cctx.cacheId(), cfg);
                 }
             }
         }
@@ -242,16 +263,22 @@ public final class DataStructuresProcessor extends GridProcessorAdapter implemen
             initLatch = null;
         }
 
-        Iterator<Map.Entry<Integer, UUID>> iter = qryIdMap.entrySet().iterator();
+        Iterator<Map.Entry<Integer, CacheEntryListenerConfiguration>> iter = qryIdMap.entrySet().iterator();
 
         while (iter.hasNext()) {
-            Map.Entry<Integer, UUID> e = iter.next();
+            Map.Entry<Integer, CacheEntryListenerConfiguration> e = iter.next();
 
             iter.remove();
 
             GridCacheContext cctx = ctx.cache().context().cacheContext(e.getKey());
 
-            cctx.continuousQueries().cancelInternalQuery(e.getValue());
+            try {
+                cctx.continuousQueries().cancelJCacheQuery(e.getValue());
+            }
+            catch (IgniteCheckedException ex) {
+                throw U.convertException(ex);
+            }
+            //cancelInternalQuery();
         }
     }
 
@@ -1387,117 +1414,136 @@ public final class DataStructuresProcessor extends GridProcessorAdapter implemen
      *
      */
     private class DataStructuresEntryListener implements
-        CacheEntryUpdatedListener<GridCacheInternalKey, GridCacheInternal> {
+        CacheEntryUpdatedListener<GridCacheInternalKey, GridCacheInternal>,
+        CacheEntryCreatedListener<GridCacheInternalKey, GridCacheInternal>,
+        CacheEntryRemovedListener<GridCacheInternalKey, GridCacheInternal> {
         /** {@inheritDoc} */
         @Override public void onUpdated(
             Iterable<CacheEntryEvent<? extends GridCacheInternalKey, ? extends GridCacheInternal>> evts)
-            throws CacheEntryListenerException
-        {
-            for (CacheEntryEvent<? extends GridCacheInternalKey, ? extends GridCacheInternal> evt : evts) {
-                if (evt.getEventType() == EventType.CREATED || evt.getEventType() == EventType.UPDATED) {
-                    GridCacheInternal val0 = evt.getValue();
+            throws CacheEntryListenerException {
 
-                    if (val0 instanceof GridCacheCountDownLatchValue) {
-                        final GridCacheInternalKey key = evt.getKey();
+            F.forEach(evts, this::onUpdate);
 
-                        // Notify latch on changes.
-                        final GridCacheRemovable latch = dsMap.get(key);
+        }
 
-                        GridCacheCountDownLatchValue val = (GridCacheCountDownLatchValue)val0;
+        /** {@inheritDoc} */
+        @Override public void onCreated(
+            Iterable<CacheEntryEvent<? extends GridCacheInternalKey, ? extends GridCacheInternal>> evts) throws CacheEntryListenerException {
+            F.forEach(evts, this::onUpdate);
+        }
 
-                        if (latch instanceof GridCacheCountDownLatchEx) {
-                            final GridCacheCountDownLatchEx latch0 = (GridCacheCountDownLatchEx)latch;
+        /**
+         * @param evt Event.
+         */
+        private void onUpdate(CacheEntryEvent<? extends GridCacheInternalKey, ? extends GridCacheInternal> evt) {
+            GridCacheInternal val0 = evt.getValue();
 
-                            latch0.onUpdate(val.get());
+            if (val0 instanceof GridCacheCountDownLatchValue) {
+                final GridCacheInternalKey key = evt.getKey();
 
-                            if (val.get() == 0 && val.autoDelete()) {
-                                dsMap.remove(key);
+                // Notify latch on changes.
+                final GridCacheRemovable latch = dsMap.get(key);
 
-                                IgniteInternalFuture<?> rmvFut = ctx.closure().runLocalSafe(new GPR() {
-                                    @Override public void run() {
-                                        try {
-                                            removeCountDownLatch(latch0.name(), key.groupName());
-                                        }
-                                        catch (IgniteCheckedException e) {
-                                            U.error(log, "Failed to remove count down latch: " + latch0.name(), e);
-                                        }
-                                        finally {
-                                            ctx.cache().context().txContextReset();
-                                        }
-                                    }
-                                });
+                GridCacheCountDownLatchValue val = (GridCacheCountDownLatchValue)val0;
 
-                                rmvFut.listen(new CI1<IgniteInternalFuture<?>>() {
-                                    @Override public void apply(IgniteInternalFuture<?> f) {
-                                        try {
-                                            f.get();
-                                        }
-                                        catch (IgniteCheckedException e) {
-                                            U.error(log, "Failed to remove count down latch: " + latch0.name(), e);
-                                        }
+                if (latch instanceof GridCacheCountDownLatchEx) {
+                    final GridCacheCountDownLatchEx latch0 = (GridCacheCountDownLatchEx)latch;
 
-                                        latch.onRemoved();
-                                    }
-                                });
+                    latch0.onUpdate(val.get());
+
+                    if (val.get() == 0 && val.autoDelete()) {
+                        dsMap.remove(key);
+
+                        IgniteInternalFuture<?> rmvFut = ctx.closure().runLocalSafe(new GPR() {
+                            @Override public void run() {
+                                try {
+                                    removeCountDownLatch(latch0.name(), key.groupName());
+                                }
+                                catch (IgniteCheckedException e) {
+                                    U.error(log, "Failed to remove count down latch: " + latch0.name(), e);
+                                }
+                                finally {
+                                    ctx.cache().context().txContextReset();
+                                }
                             }
-                        }
-                        else if (latch != null) {
-                            U.error(log, "Failed to cast object " +
-                                "[expected=" + IgniteCountDownLatch.class.getSimpleName() +
-                                ", actual=" + latch.getClass() + ", value=" + latch + ']');
-                        }
-                    }
-                    else if (val0 instanceof GridCacheSemaphoreState) {
-                        GridCacheInternalKey key = evt.getKey();
+                        });
 
-                        // Notify semaphore on changes.
-                        final GridCacheRemovable sem = dsMap.get(key);
+                        rmvFut.listen(new CI1<IgniteInternalFuture<?>>() {
+                            @Override public void apply(IgniteInternalFuture<?> f) {
+                                try {
+                                    f.get();
+                                }
+                                catch (IgniteCheckedException e) {
+                                    U.error(log, "Failed to remove count down latch: " + latch0.name(), e);
+                                }
 
-                        GridCacheSemaphoreState val = (GridCacheSemaphoreState)val0;
-
-                        if (sem instanceof GridCacheSemaphoreEx) {
-                            final GridCacheSemaphoreEx semaphore0 = (GridCacheSemaphoreEx)sem;
-
-                            semaphore0.onUpdate(val);
-                        }
-                        else if (sem != null) {
-                            U.error(log, "Failed to cast object " +
-                                    "[expected=" + IgniteSemaphore.class.getSimpleName() +
-                                    ", actual=" + sem.getClass() + ", value=" + sem + ']');
-                        }
-                    }
-                    else if (val0 instanceof GridCacheLockState) {
-                        GridCacheInternalKey key = evt.getKey();
-
-                        // Notify reentrant lock on changes.
-                        final GridCacheRemovable reentrantLock = dsMap.get(key);
-
-                        GridCacheLockState val = (GridCacheLockState)val0;
-
-                        if (reentrantLock instanceof GridCacheLockEx) {
-                            final GridCacheLockEx lock0 = (GridCacheLockEx)reentrantLock;
-
-                            lock0.onUpdate(val);
-                        }
-                        else if (reentrantLock != null) {
-                            U.error(log, "Failed to cast object " +
-                                "[expected=" + IgniteLock.class.getSimpleName() +
-                                ", actual=" + reentrantLock.getClass() + ", value=" + reentrantLock + ']');
-                        }
+                                latch.onRemoved();
+                            }
+                        });
                     }
                 }
-                else {
-                    assert evt.getEventType() == EventType.REMOVED : evt;
-
-                    GridCacheInternal key = evt.getKey();
-
-                    // Entry's val is null if entry deleted.
-                    GridCacheRemovable obj = dsMap.remove(key);
-
-                    if (obj != null)
-                        obj.onRemoved();
+                else if (latch != null) {
+                    U.error(log, "Failed to cast object " +
+                        "[expected=" + IgniteCountDownLatch.class.getSimpleName() +
+                        ", actual=" + latch.getClass() + ", value=" + latch + ']');
                 }
             }
+            else if (val0 instanceof GridCacheSemaphoreState) {
+                GridCacheInternalKey key = evt.getKey();
+
+                // Notify semaphore on changes.
+                final GridCacheRemovable sem = dsMap.get(key);
+
+                GridCacheSemaphoreState val = (GridCacheSemaphoreState)val0;
+
+                if (sem instanceof GridCacheSemaphoreEx) {
+                    final GridCacheSemaphoreEx semaphore0 = (GridCacheSemaphoreEx)sem;
+
+                    semaphore0.onUpdate(val);
+                }
+                else if (sem != null) {
+                    U.error(log, "Failed to cast object " +
+                        "[expected=" + IgniteSemaphore.class.getSimpleName() +
+                        ", actual=" + sem.getClass() + ", value=" + sem + ']');
+                }
+            }
+            else if (val0 instanceof GridCacheLockState) {
+                GridCacheInternalKey key = evt.getKey();
+
+                // Notify reentrant lock on changes.
+                final GridCacheRemovable reentrantLock = dsMap.get(key);
+
+                GridCacheLockState val = (GridCacheLockState)val0;
+
+                if (reentrantLock instanceof GridCacheLockEx) {
+                    final GridCacheLockEx lock0 = (GridCacheLockEx)reentrantLock;
+
+                    lock0.onUpdate(val);
+                }
+                else if (reentrantLock != null) {
+                    U.error(log, "Failed to cast object " +
+                        "[expected=" + IgniteLock.class.getSimpleName() +
+                        ", actual=" + reentrantLock.getClass() + ", value=" + reentrantLock + ']');
+                }
+            }
+
+        }
+
+        /** {@inheritDoc} */
+        @Override public void onRemoved(
+            Iterable<CacheEntryEvent<? extends GridCacheInternalKey, ? extends GridCacheInternal>> evts) throws CacheEntryListenerException {
+
+            F.forEach(evts, evt -> {
+                assert evt.getEventType() == EventType.REMOVED : evt;
+
+                GridCacheInternal key = evt.getKey();
+
+                // Entry's val is null if entry deleted.
+                GridCacheRemovable obj = dsMap.remove(key);
+
+                if (obj != null)
+                    obj.onRemoved();
+            });
         }
 
         /** {@inheritDoc} */
