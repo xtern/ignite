@@ -587,7 +587,20 @@ public class CacheContinuousQueryManager extends GridCacheManagerAdapter {
      */
     public void executeJCacheQuery(CacheEntryListenerConfiguration cfg, boolean onStart, boolean keepBinary)
         throws IgniteCheckedException {
-        JCacheQuery lsnr = new JCacheQuery(cfg, onStart, keepBinary);
+        executeJCacheQuery(cfg, onStart, keepBinary, false);
+    }
+
+
+    /**
+     * @param cfg Listener configuration.
+     * @param onStart Whether listener is created on node start.
+     * @param keepBinary Keep binary flag.
+     * @param internal Internal flag.
+     * @throws IgniteCheckedException If failed.
+     */
+    public void executeJCacheQuery(CacheEntryListenerConfiguration cfg, boolean onStart, boolean keepBinary,
+        boolean internal) throws IgniteCheckedException {
+        JCacheQuery lsnr = new JCacheQuery(cfg, onStart, keepBinary, internal);
 
         JCacheQuery old = jCacheLsnrs.putIfAbsent(cfg, lsnr);
 
@@ -927,16 +940,29 @@ public class CacheContinuousQueryManager extends GridCacheManagerAdapter {
         private final boolean keepBinary;
 
         /** */
+        private final boolean internal;
+
+        /** */
         private volatile UUID routineId;
 
         /**
          * @param cfg Listener configuration.
          * @param onStart {@code True} if executed on cache start.
+         * @param keepBinary {@code True} to keep binary.
          */
         private JCacheQuery(CacheEntryListenerConfiguration cfg, boolean onStart, boolean keepBinary) {
+            this(cfg, onStart, keepBinary, false);
+        }
+
+        /**
+         * @param cfg Listener configuration.
+         * @param onStart {@code True} if executed on cache start.
+         */
+        private JCacheQuery(CacheEntryListenerConfiguration cfg, boolean onStart, boolean keepBinary, boolean internal) {
             this.cfg = cfg;
             this.onStart = onStart;
             this.keepBinary = keepBinary;
+            this.internal = internal;
         }
 
         /**
@@ -1019,7 +1045,7 @@ public class CacheContinuousQueryManager extends GridCacheManagerAdapter {
                 ContinuousQuery.DFLT_PAGE_SIZE,
                 ContinuousQuery.DFLT_TIME_INTERVAL,
                 ContinuousQuery.DFLT_AUTO_UNSUBSCRIBE,
-                false,
+                internal,
                 false,
                 false,
                 keepBinary,
