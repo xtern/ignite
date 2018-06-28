@@ -1593,6 +1593,7 @@ public class IgniteCacheProxyImpl<K, V> extends AsyncSupportAdapter<IgniteCache<
 
     /** {@inheritDoc} */
     @Override public void close() {
+        System.out.println("!!!~ close1 "+getName());
         closeAsync().get();
     }
 

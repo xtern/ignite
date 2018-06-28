@@ -17,6 +17,8 @@
 
 package org.apache.ignite.internal.processors.cache;
 
+import java.io.Closeable;
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
@@ -35,6 +37,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.stream.Collectors;
+import javax.cache.configuration.CacheEntryListenerConfiguration;
 import javax.management.MBeanServer;
 import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.IgniteException;
@@ -612,6 +615,32 @@ public class GridCacheProcessor extends GridProcessorAdapter {
     private void cleanup(GridCacheContext cctx) {
         CacheConfiguration cfg = cctx.config();
 
+        for (CacheEntryListenerConfiguration<?, ?> c:
+            (Iterable<CacheEntryListenerConfiguration<?, ?>>) cfg.getCacheEntryListenerConfigurations()) {
+
+            if (c.getCacheEntryListenerFactory() instanceof Closeable) {
+                try {
+                    ((Closeable) c.getCacheEntryListenerFactory()).close();
+                }
+                catch (IOException e) {
+                    // No-op.
+                }
+            }
+
+            if (c.getCacheEntryEventFilterFactory() instanceof Closeable) {
+                try {
+                    ((Closeable) c.getCacheEntryListenerFactory()).close();
+                }
+                catch (IOException e) {
+                    // No-op.
+                }
+            }
+        }
+
+        cleanup(cfg, cfg.getCacheLoaderFactory(), false);
+        cleanup(cfg, cfg.getCacheStoreFactory(), false);
+        cleanup(cfg, cfg.getCacheStoreSessionListenerFactories(), false);
+        cleanup(cfg, cfg.getCacheWriterFactory(), false);
         cleanup(cfg, cfg.getEvictionPolicyFactory(), false);
         cleanup(cfg, cfg.getEvictionPolicy(), false);
         cleanup(cfg, cfg.getAffinity(), false);
@@ -666,6 +695,14 @@ public class GridCacheProcessor extends GridProcessorAdapter {
 
             try {
                 ctx.resource().cleanupGeneric(rsrc);
+                if (rsrc instanceof Closeable) {
+                    try {
+                        ((Closeable) rsrc).close();
+                    }
+                    catch (IOException e) {
+                        // No-op.
+                    }
+                }
             }
             catch (IgniteCheckedException e) {
                 U.error(log, "Failed to cleanup resource: " + rsrc, e);
@@ -1312,6 +1349,7 @@ public class GridCacheProcessor extends GridProcessorAdapter {
             }
         }
         finally {
+            System.out.println("!!!~ close cache "+ctx.name());
             cleanup(ctx);
         }
     }
