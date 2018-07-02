@@ -1624,6 +1624,8 @@ public class IgniteCacheProxyImpl<K, V> extends AsyncSupportAdapter<IgniteCache<
         try {
             CacheOperationContext opCtx = ctx.operationContextPerCall();
 
+//            ctx.config().addCacheEntryListenerConfiguration(lsnrCfg);
+
             ctx.continuousQueries().executeJCacheQuery(lsnrCfg, false, opCtx != null && opCtx.isKeepBinary());
         }
         catch (IgniteCheckedException | IgniteException e) {

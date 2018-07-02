@@ -47,9 +47,12 @@ public final class CloseableFactory<T> implements Factory<T>, Closeable {
 
             ((Closeable)origin).close();
         } else {
+            if (set.isEmpty())
+                System.out.println(">xxx> nothing to cleanup");
+            else
             for (Closeable obj : set) {
                 try {
-                    U.dumpStack("obj close " + obj);
+                    System.out.println("obj close " + obj);
                     obj.close();
                 }
                 catch (IOException e) {

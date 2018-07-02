@@ -17,6 +17,7 @@
 
 package org.apache.ignite.internal.processors.cache.query.continuous;
 
+import java.io.Closeable;
 import java.io.Externalizable;
 import java.io.IOException;
 import java.io.ObjectInput;
@@ -34,6 +35,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import javax.cache.Cache;
 import javax.cache.configuration.CacheEntryListenerConfiguration;
 import javax.cache.configuration.Factory;
+import javax.cache.configuration.MutableCacheEntryListenerConfiguration;
 import javax.cache.event.CacheEntryCreatedListener;
 import javax.cache.event.CacheEntryEvent;
 import javax.cache.event.CacheEntryEventFilter;
@@ -63,6 +65,7 @@ import org.apache.ignite.internal.processors.cache.distributed.dht.atomic.GridDh
 import org.apache.ignite.internal.processors.cache.persistence.CacheDataRow;
 import org.apache.ignite.internal.processors.continuous.GridContinuousHandler;
 import org.apache.ignite.internal.processors.timeout.GridTimeoutProcessor;
+import org.apache.ignite.internal.util.CloseableFactory;
 import org.apache.ignite.internal.util.tostring.GridToStringInclude;
 import org.apache.ignite.internal.util.typedef.CI2;
 import org.apache.ignite.internal.util.typedef.F;
@@ -181,6 +184,8 @@ public class CacheContinuousQueryManager extends GridCacheManagerAdapter {
     /** {@inheritDoc} */
     @Override protected void onKernalStop0(boolean cancel) {
         super.onKernalStop0(cancel);
+
+        System.out.println("jCacheLsnrs: " + jCacheLsnrs.keySet());
 
         for (JCacheQuery lsnr : jCacheLsnrs.values()) {
             try {
@@ -639,8 +644,9 @@ public class CacheContinuousQueryManager extends GridCacheManagerAdapter {
 
         if (lsnr != null)
             lsnr.cancel();
-        else
-            System.out.println(">xxx> lsnr " + lsnr);
+        else {
+            System.out.println(">xxx> lsnr not found " + cfg + ", but we have: " + jCacheLsnrs.keySet());
+        }
     }
 
     /**
@@ -972,10 +978,20 @@ public class CacheContinuousQueryManager extends GridCacheManagerAdapter {
          */
         @SuppressWarnings("unchecked")
         void execute() throws IgniteCheckedException {
-            if (!onStart)
-                cctx.config().addCacheEntryListenerConfiguration(cfg);
+            CacheEntryListenerConfiguration cfg0 = cfg;
+            if (!onStart) {
+                cfg0 = new MutableCacheEntryListenerConfiguration<>(
+                    cfg.getCacheEntryListenerFactory() == null ? null : new CloseableFactory<>(cfg.getCacheEntryListenerFactory()),
+                    cfg.getCacheEntryEventFilterFactory() == null ? null : new CloseableFactory<>(cfg.getCacheEntryEventFilterFactory()),
+                    cfg.isOldValueRequired(),
+                    cfg.isSynchronous()
+                );
 
-            CacheEntryListener locLsnrImpl = (CacheEntryListener)cfg.getCacheEntryListenerFactory().create();
+                cctx.config().addCacheEntryListenerConfiguration(cfg0);
+            }
+
+
+            CacheEntryListener locLsnrImpl = (CacheEntryListener)cfg0.getCacheEntryListenerFactory().create();
 
             if (locLsnrImpl == null)
                 throw new IgniteCheckedException("Local CacheEntryListener is mandatory and can't be null.");

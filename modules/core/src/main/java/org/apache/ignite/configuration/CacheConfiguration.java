@@ -2187,15 +2187,23 @@ public class CacheConfiguration<K, V> extends MutableConfiguration<K, V> {
             Factory<CacheEntryEventFilter<? super K, ? super V>> eventFilterFactory =
                 cacheEntryLsnrCfg.getCacheEntryEventFilterFactory();
 
-            if ((entryListenerFactory == null && eventFilterFactory == null) ||
-                    (entryListenerFactory instanceof Closeable && eventFilterFactory instanceof Closeable)
-                )
+            if (entryListenerFactory instanceof Closeable || eventFilterFactory instanceof Closeable) {
+
+//                System.out.println(">xxx> add " + cacheEntryLsnrCfg);
                 return super.addCacheEntryListenerConfiguration(cacheEntryLsnrCfg);
+            }
+//            if ((entryListenerFactory == null && eventFilterFactory == null) ||
+//                    (entryListenerFactory instanceof Closeable && eventFilterFactory instanceof Closeable)
+//                )
+//                return super.addCacheEntryListenerConfiguration(cacheEntryLsnrCfg);
             else {
-                System.out.println(">xxx> create closeable " + entryListenerFactory);
-                return super.addCacheEntryListenerConfiguration(new MutableCacheEntryListenerConfiguration<>(
-                    entryListenerFactory == null ? null : new CloseableFactory<>(entryListenerFactory),
-                    eventFilterFactory == null ? null : new CloseableFactory<>(eventFilterFactory),
+//                assert !(entryListenerFactory instanceof Closeable);
+//                assert !(eventFilterFactory instanceof Closeable);
+
+                System.out.println(">xxx> create closeable entryListener " + entryListenerFactory);
+                return super.addCacheEntryListenerConfiguration(cacheEntryLsnrCfg = new MutableCacheEntryListenerConfiguration<>(
+                    entryListenerFactory == null ? null : entryListenerFactory instanceof Closeable ? entryListenerFactory : new CloseableFactory<>(entryListenerFactory),
+                    eventFilterFactory == null ? null : eventFilterFactory instanceof Closeable ? eventFilterFactory : new CloseableFactory<>(eventFilterFactory),
                     cacheEntryLsnrCfg.isOldValueRequired(),
                     cacheEntryLsnrCfg.isSynchronous()
                 ));
