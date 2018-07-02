@@ -412,7 +412,8 @@ public class CacheConfiguration<K, V> extends MutableConfiguration<K, V> {
         affMapper = cc.getAffinityMapper();
         atomicityMode = cc.getAtomicityMode();
         backups = cc.getBackups();
-        cacheLoaderFactory = cc.getCacheLoaderFactory();
+        if (cc.getCacheLoaderFactory() != null)
+        setCacheLoaderFactory(cc.getCacheLoaderFactory());
         cacheMode = cc.getCacheMode();
         cacheWriterFactory = cc.getCacheWriterFactory();
         cpOnRead = cc.isCopyOnRead();
@@ -420,8 +421,9 @@ public class CacheConfiguration<K, V> extends MutableConfiguration<K, V> {
         eagerTtl = cc.isEagerTtl();
         evictFilter = cc.getEvictionFilter();
         evictPlc = cc.getEvictionPolicy();
+        //setEvictionPolicyFactory(cc.getEvictionPolicyFactory());
         evictPlcFactory = cc.getEvictionPolicyFactory();
-        expiryPolicyFactory = cc.getExpiryPolicyFactory();
+        setExpiryPolicyFactory(cc.getExpiryPolicyFactory());
         grpName = cc.getGroupName();
         indexedTypes = cc.getIndexedTypes();
         interceptor = cc.getInterceptor();
@@ -2190,6 +2192,7 @@ public class CacheConfiguration<K, V> extends MutableConfiguration<K, V> {
                 )
                 return super.addCacheEntryListenerConfiguration(cacheEntryLsnrCfg);
             else {
+                System.out.println(">xxx> create closeable " + entryListenerFactory);
                 return super.addCacheEntryListenerConfiguration(new MutableCacheEntryListenerConfiguration<>(
                     entryListenerFactory == null ? null : new CloseableFactory<>(entryListenerFactory),
                     eventFilterFactory == null ? null : new CloseableFactory<>(eventFilterFactory),
@@ -2317,8 +2320,12 @@ public class CacheConfiguration<K, V> extends MutableConfiguration<K, V> {
             }
         }
 
-        if (!(factory instanceof Closeable))
+        if (!(factory instanceof Closeable)) {
+            System.out.println(">xxx> set closeable factory: " + factory);
             factory = new CloseableFactory<>(factory);
+        }
+        else
+            System.out.println(">xxx> set already closeable: " + factory);
 
         super.setExpiryPolicyFactory(factory);
 

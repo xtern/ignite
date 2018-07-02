@@ -184,6 +184,7 @@ public class CacheContinuousQueryManager extends GridCacheManagerAdapter {
 
         for (JCacheQuery lsnr : jCacheLsnrs.values()) {
             try {
+                System.out.println(">xxx> cacncel " + lsnr);
                 lsnr.cancel();
             }
             catch (IgniteCheckedException e) {
@@ -638,6 +639,8 @@ public class CacheContinuousQueryManager extends GridCacheManagerAdapter {
 
         if (lsnr != null)
             lsnr.cancel();
+        else
+            System.out.println(">xxx> lsnr " + lsnr);
     }
 
     /**
@@ -1062,6 +1065,7 @@ public class CacheContinuousQueryManager extends GridCacheManagerAdapter {
             if (routineId0 != null)
                 cctx.kernalContext().continuous().stopRoutine(routineId0).get();
 
+            System.out.println(">xxx> removeCacheEntryListenerConfiguration " + cfg);
             cctx.config().removeCacheEntryListenerConfiguration(cfg);
         }
     }

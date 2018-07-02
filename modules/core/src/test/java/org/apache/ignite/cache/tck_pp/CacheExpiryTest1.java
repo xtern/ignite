@@ -54,99 +54,99 @@ import static org.junit.Assert.assertThat;
 import static org.junit.Assert.assertTrue;
 
 public class CacheExpiryTest1 extends CacheExpiryTest {
-    /**
-     * Rule used to exclude tests
-     */
-    @Rule
-    public ExcludeListExcluder rule = new ExcludeListExcluder(this.getClass());
-
-    private ExpiryPolicyServer expiryPolicyServer;
-    private ExpiryPolicyClient expiryPolicyClient;
-
-    @Before
-    public void setUp() throws IOException {
-        //establish and open a ExpiryPolicyServer to handle cache
-        //cache loading requests from a ExpiryPolicyClient
-        expiryPolicyServer = new ExpiryPolicyServer(10005);
-        expiryPolicyServer.open();
-
-        //establish a ExpiryPolicyClient that a Cache can use for computing expiry policy
-        //(via the ExpiryPolicyServer)
-        expiryPolicyClient =
-            new ExpiryPolicyClient(expiryPolicyServer.getInetAddress(), expiryPolicyServer.getPort());
-
-        cacheEntryListenerServer = new CacheEntryListenerServer<Integer, Integer>(10011, Integer.class, Integer.class);
-        cacheEntryListenerServer.open();
-        cacheEntryListerClient =
-            new CacheEntryListenerClient<>(cacheEntryListenerServer.getInetAddress(), cacheEntryListenerServer.getPort());
-    }
-
-    @Override
-    protected MutableConfiguration<Integer, Integer> newMutableConfiguration() {
-        return new MutableConfiguration<Integer, Integer>().setTypes(Integer.class, Integer.class);
-    }
-
-    @Override
-    protected MutableConfiguration<Integer, Integer> extraSetup(MutableConfiguration<Integer, Integer> configuration) {
-        listener = new CacheTestSupport.MyCacheEntryListener<Integer, Integer>(true);
-
-        //establish a CacheEntryListenerClient that a Cache can use for CacheEntryListening
-        //(via the CacheEntryListenerServer)
-
-        listenerConfiguration =
-            new MutableCacheEntryListenerConfiguration<>(FactoryBuilder.factoryOf(cacheEntryListerClient), null, true, true);
-        cacheEntryListenerServer.addCacheEventListener(listener);
-        return configuration.addCacheEntryListenerConfiguration(listenerConfiguration);
-    }
-
-
-    @After
-    public void cleanupAfterEachTest() throws InterruptedException {
-        for (String cacheName : getCacheManager().getCacheNames()) {
-            getCacheManager().destroyCache(cacheName);
-        }
-        expiryPolicyServer.close();
-        expiryPolicyServer = null;
-
-        //close the server
-        cacheEntryListenerServer.close();
-        cacheEntryListenerServer = null;
-    }
-
-
-    @Test
-    public void putShouldCallGetExpiry() {
-        CacheExpiryTest.CountingExpiryPolicy expiryPolicy = new CacheExpiryTest.CountingExpiryPolicy();
-        expiryPolicyServer.setExpiryPolicy(expiryPolicy);
-
-        MutableConfiguration<Integer, Integer> config = new MutableConfiguration<>();
-
-        config.setExpiryPolicyFactory(FactoryBuilder.factoryOf(expiryPolicyClient));
-
-        Cache<Integer, Integer> cache = getCacheManager().createCache(getTestCacheName(), config);
-
-        cache.containsKey(1);
-
-        assertThat(expiryPolicy.getCreationCount(), is(0));
-        assertThat(expiryPolicy.getAccessCount(), is(0));
-        assertThat(expiryPolicy.getUpdatedCount(), is(0));
-
-        cache.put(1, 1);
+//    /**
+//     * Rule used to exclude tests
+//     */
+//    @Rule
+//    public ExcludeListExcluder rule = new ExcludeListExcluder(this.getClass());
 //
-//        assertThat(expiryPolicy.getCreationCount(), greaterThanOrEqualTo(1));
-//        assertThat(expiryPolicy.getAccessCount(), is(0));
-//        assertThat(expiryPolicy.getUpdatedCount(), is(0));
-//        expiryPolicy.resetCount();
+//    private ExpiryPolicyServer expiryPolicyServer;
+//    private ExpiryPolicyClient expiryPolicyClient;
 //
-//        cache.put(1, 1);
+//    @Before
+//    public void setUp() throws IOException {
+//        //establish and open a ExpiryPolicyServer to handle cache
+//        //cache loading requests from a ExpiryPolicyClient
+//        expiryPolicyServer = new ExpiryPolicyServer(10005);
+//        expiryPolicyServer.open();
+//
+//        //establish a ExpiryPolicyClient that a Cache can use for computing expiry policy
+//        //(via the ExpiryPolicyServer)
+//        expiryPolicyClient =
+//            new ExpiryPolicyClient(expiryPolicyServer.getInetAddress(), expiryPolicyServer.getPort());
+//
+//        cacheEntryListenerServer = new CacheEntryListenerServer<Integer, Integer>(10011, Integer.class, Integer.class);
+//        cacheEntryListenerServer.open();
+//        cacheEntryListerClient =
+//            new CacheEntryListenerClient<>(cacheEntryListenerServer.getInetAddress(), cacheEntryListenerServer.getPort());
+//    }
+//
+//    @Override
+//    protected MutableConfiguration<Integer, Integer> newMutableConfiguration() {
+//        return new MutableConfiguration<Integer, Integer>().setTypes(Integer.class, Integer.class);
+//    }
+//
+//    @Override
+//    protected MutableConfiguration<Integer, Integer> extraSetup(MutableConfiguration<Integer, Integer> configuration) {
+//        listener = new CacheTestSupport.MyCacheEntryListener<Integer, Integer>(true);
+//
+//        //establish a CacheEntryListenerClient that a Cache can use for CacheEntryListening
+//        //(via the CacheEntryListenerServer)
+//
+//        listenerConfiguration =
+//            new MutableCacheEntryListenerConfiguration<>(FactoryBuilder.factoryOf(cacheEntryListerClient), null, true, true);
+//        cacheEntryListenerServer.addCacheEventListener(listener);
+//        return configuration.addCacheEntryListenerConfiguration(listenerConfiguration);
+//    }
+//
+//
+//    @After
+//    public void cleanupAfterEachTest() throws InterruptedException {
+//        for (String cacheName : getCacheManager().getCacheNames()) {
+//            getCacheManager().destroyCache(cacheName);
+//        }
+//        expiryPolicyServer.close();
+//        expiryPolicyServer = null;
+//
+//        //close the server
+//        cacheEntryListenerServer.close();
+//        cacheEntryListenerServer = null;
+//    }
+//
+//
+//    @Test
+//    public void putShouldCallGetExpiry() {
+//        CacheExpiryTest.CountingExpiryPolicy expiryPolicy = new CacheExpiryTest.CountingExpiryPolicy();
+//        expiryPolicyServer.setExpiryPolicy(expiryPolicy);
+//
+//        MutableConfiguration<Integer, Integer> config = new MutableConfiguration<>();
+//
+//        config.setExpiryPolicyFactory(FactoryBuilder.factoryOf(expiryPolicyClient));
+//
+//        Cache<Integer, Integer> cache = getCacheManager().createCache(getTestCacheName(), config);
+//
+//        cache.containsKey(1);
 //
 //        assertThat(expiryPolicy.getCreationCount(), is(0));
 //        assertThat(expiryPolicy.getAccessCount(), is(0));
-//        assertThat(expiryPolicy.getUpdatedCount(), greaterThanOrEqualTo(1));
-//        expiryPolicy.resetCount();
-    }
-
-
-    private CacheEntryListenerServer<Integer, Integer> cacheEntryListenerServer;
-    private CacheEntryListenerClient<Integer, Integer> cacheEntryListerClient;
+//        assertThat(expiryPolicy.getUpdatedCount(), is(0));
+//
+//        cache.put(1, 1);
+////
+////        assertThat(expiryPolicy.getCreationCount(), greaterThanOrEqualTo(1));
+////        assertThat(expiryPolicy.getAccessCount(), is(0));
+////        assertThat(expiryPolicy.getUpdatedCount(), is(0));
+////        expiryPolicy.resetCount();
+////
+////        cache.put(1, 1);
+////
+////        assertThat(expiryPolicy.getCreationCount(), is(0));
+////        assertThat(expiryPolicy.getAccessCount(), is(0));
+////        assertThat(expiryPolicy.getUpdatedCount(), greaterThanOrEqualTo(1));
+////        expiryPolicy.resetCount();
+//    }
+//
+//
+//    private CacheEntryListenerServer<Integer, Integer> cacheEntryListenerServer;
+//    private CacheEntryListenerClient<Integer, Integer> cacheEntryListerClient;
 }

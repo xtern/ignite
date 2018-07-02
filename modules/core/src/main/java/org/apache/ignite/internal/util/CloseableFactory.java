@@ -5,6 +5,7 @@ import java.io.IOException;
 import java.util.Set;
 import java.util.concurrent.ConcurrentSkipListSet;
 import javax.cache.configuration.Factory;
+import org.apache.ignite.internal.util.typedef.internal.U;
 
 /** */
 public final class CloseableFactory<T> implements Factory<T>, Closeable {
@@ -27,19 +28,28 @@ public final class CloseableFactory<T> implements Factory<T>, Closeable {
     @Override public T create() {
         T val = origin.create();
 
-        if (val != null && val instanceof Closeable)
-            set.add((Closeable) val);
+        if (val != null && val instanceof Closeable) {
+            System.out.println("add closeable " + val);
+
+            set.add((Closeable)val);
+        }
+        else
+            if (val != null)
+                System.out.println("not closeable " + val);
 
         return val;
     }
 
     /** {@inheritDoc} */
     @Override public void close() throws IOException {
-        if (origin instanceof Closeable)
-            ((Closeable) origin).close();
-        else {
+        if (origin instanceof Closeable) {
+            System.out.println(">xxx> origin close: " + origin);
+
+            ((Closeable)origin).close();
+        } else {
             for (Closeable obj : set) {
                 try {
+                    U.dumpStack("obj close " + obj);
                     obj.close();
                 }
                 catch (IOException e) {

@@ -17,6 +17,7 @@
 
 package org.apache.ignite.internal.processors.cache;
 
+import java.io.Closeable;
 import java.io.Externalizable;
 import java.io.IOException;
 import java.io.ObjectInput;
@@ -1634,6 +1635,17 @@ public class IgniteCacheProxyImpl<K, V> extends AsyncSupportAdapter<IgniteCache<
     @Override public void deregisterCacheEntryListener(CacheEntryListenerConfiguration<K, V> lsnrCfg) {
         try {
             ctx.continuousQueries().cancelJCacheQuery(lsnrCfg);
+//            if (lsnrCfg.getCacheEntryListenerFactory() instanceof Closeable) {
+//                try {
+//                    ((Closeable)lsnrCfg.getCacheEntryListenerFactory()).close();
+//                }
+//                catch (IOException e) {
+//                    e.printStackTrace();
+//                }
+//            }
+//            else {
+//                System.out.println("not closeable: " + lsnrCfg.getCacheEntryListenerFactory());
+//            }
         }
         catch (IgniteCheckedException | IgniteException e) {
             throw cacheException(e);

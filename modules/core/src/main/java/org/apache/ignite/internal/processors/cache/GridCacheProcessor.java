@@ -618,8 +618,12 @@ public class GridCacheProcessor extends GridProcessorAdapter {
         for (CacheEntryListenerConfiguration<?, ?> c:
             (Iterable<CacheEntryListenerConfiguration<?, ?>>) cfg.getCacheEntryListenerConfigurations()) {
 
+            System.out.println(">xxx> cleanup event lsnr cfg " + c);
+
             if (c.getCacheEntryListenerFactory() instanceof Closeable) {
                 try {
+                    System.out.println(">xxx> close " + c.getCacheEntryListenerFactory());
+
                     ((Closeable) c.getCacheEntryListenerFactory()).close();
                 }
                 catch (IOException e) {
@@ -641,6 +645,7 @@ public class GridCacheProcessor extends GridProcessorAdapter {
         cleanup(cfg, cfg.getCacheStoreFactory(), false);
         cleanup(cfg, cfg.getCacheStoreSessionListenerFactories(), false);
         cleanup(cfg, cfg.getCacheWriterFactory(), false);
+        cleanup(cfg, cfg.getExpiryPolicyFactory(), false);
         cleanup(cfg, cfg.getEvictionPolicyFactory(), false);
         cleanup(cfg, cfg.getEvictionPolicy(), false);
         cleanup(cfg, cfg.getAffinity(), false);
