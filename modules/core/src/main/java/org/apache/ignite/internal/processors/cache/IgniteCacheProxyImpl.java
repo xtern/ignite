@@ -17,7 +17,6 @@
 
 package org.apache.ignite.internal.processors.cache;
 
-import java.io.Closeable;
 import java.io.Externalizable;
 import java.io.IOException;
 import java.io.ObjectInput;
@@ -1594,7 +1593,6 @@ public class IgniteCacheProxyImpl<K, V> extends AsyncSupportAdapter<IgniteCache<
 
     /** {@inheritDoc} */
     @Override public void close() {
-        System.out.println("!!!~ close1 "+getName());
         closeAsync().get();
     }
 
@@ -1624,8 +1622,6 @@ public class IgniteCacheProxyImpl<K, V> extends AsyncSupportAdapter<IgniteCache<
         try {
             CacheOperationContext opCtx = ctx.operationContextPerCall();
 
-//            ctx.config().addCacheEntryListenerConfiguration(lsnrCfg);
-
             ctx.continuousQueries().executeJCacheQuery(lsnrCfg, false, opCtx != null && opCtx.isKeepBinary());
         }
         catch (IgniteCheckedException | IgniteException e) {
@@ -1637,17 +1633,6 @@ public class IgniteCacheProxyImpl<K, V> extends AsyncSupportAdapter<IgniteCache<
     @Override public void deregisterCacheEntryListener(CacheEntryListenerConfiguration<K, V> lsnrCfg) {
         try {
             ctx.continuousQueries().cancelJCacheQuery(lsnrCfg);
-//            if (lsnrCfg.getCacheEntryListenerFactory() instanceof Closeable) {
-//                try {
-//                    ((Closeable)lsnrCfg.getCacheEntryListenerFactory()).close();
-//                }
-//                catch (IOException e) {
-//                    e.printStackTrace();
-//                }
-//            }
-//            else {
-//                System.out.println("not closeable: " + lsnrCfg.getCacheEntryListenerFactory());
-//            }
         }
         catch (IgniteCheckedException | IgniteException e) {
             throw cacheException(e);

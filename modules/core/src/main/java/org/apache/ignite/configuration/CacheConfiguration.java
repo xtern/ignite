@@ -421,7 +421,7 @@ public class CacheConfiguration<K, V> extends MutableConfiguration<K, V> {
         evictFilter = cc.getEvictionFilter();
         evictPlc = cc.getEvictionPolicy();
         evictPlcFactory = cc.getEvictionPolicyFactory();
-        setExpiryPolicyFactory(cc.getExpiryPolicyFactory());
+        expiryPolicyFactory = cc.getExpiryPolicyFactory();
         grpName = cc.getGroupName();
         indexedTypes = cc.getIndexedTypes();
         interceptor = cc.getInterceptor();
@@ -626,25 +626,7 @@ public class CacheConfiguration<K, V> extends MutableConfiguration<K, V> {
      */
     public CacheConfiguration<K, V> setEvictionPolicyFactory(
         @Nullable Factory<? extends EvictionPolicy<? super K, ? super V>> evictPlcFactory) {
-        if (this.evictPlcFactory != null && this.evictPlcFactory instanceof Closeable) {
-            try {
-                System.out.println(">xxx> try close");
-
-                ((Closeable) this.evictPlcFactory).close();
-            }
-            catch (IOException e) {
-                // No-op.
-            }
-        }
-
-        if (evictPlcFactory instanceof Closeable) {
-            System.out.println(">xxx> closeable");
-            this.evictPlcFactory = evictPlcFactory;
-        }
-        else {
-            System.out.println(">xxx> closeable factory");
-            this.evictPlcFactory = new CloseableFactory<>(evictPlcFactory);
-        }
+        this.evictPlcFactory = evictPlcFactory;
 
         return this;
     }
@@ -912,19 +894,7 @@ public class CacheConfiguration<K, V> extends MutableConfiguration<K, V> {
     @SuppressWarnings("unchecked")
     public CacheConfiguration<K, V> setCacheStoreFactory(
         Factory<? extends CacheStore<? super K, ? super V>> storeFactory) {
-        if (this.storeFactory instanceof Closeable) {
-            try {
-                ((Closeable) this.storeFactory).close();
-            }
-            catch (IOException e) {
-                // No-op.
-            }
-        }
-
-        if (storeFactory instanceof Closeable)
-            this.storeFactory = storeFactory;
-        else
-            this.storeFactory = new CloseableFactory<>(storeFactory);
+        this.storeFactory = storeFactory;
 
         return this;
     }
@@ -2145,24 +2115,6 @@ public class CacheConfiguration<K, V> extends MutableConfiguration<K, V> {
      */
     public CacheConfiguration<K, V> setCacheStoreSessionListenerFactories(
         Factory<? extends CacheStoreSessionListener>... storeSesLsnrs) {
-        if (this.storeSesLsnrs != null) {
-            for (Factory<? extends CacheStoreSessionListener> factory : this.storeSesLsnrs) {
-                if (factory instanceof Closeable) {
-                    try {
-                        ((Closeable) factory).close();
-                    }
-                    catch (IOException e) {
-                        // No-op.
-                    }
-                }
-            }
-        }
-
-        for (int i = 0; i < storeSesLsnrs.length; i++) {
-            if (!(storeSesLsnrs[i] instanceof Closeable))
-                storeSesLsnrs[i] = new CloseableFactory<>(storeSesLsnrs[i]);
-        }
-
         this.storeSesLsnrs = storeSesLsnrs;
 
         return this;
@@ -2291,24 +2243,6 @@ public class CacheConfiguration<K, V> extends MutableConfiguration<K, V> {
 
     /** {@inheritDoc} */
     @Override public CacheConfiguration<K, V> setExpiryPolicyFactory(Factory<? extends ExpiryPolicy> factory) {
-        if (factory != null) {
-            if (super.getExpiryPolicyFactory() instanceof Closeable) {
-                try {
-                    ((Closeable)super.getExpiryPolicyFactory()).close();
-                }
-                catch (IOException e) {
-                    // No-op.
-                }
-            }
-
-            if (!(factory instanceof Closeable)) {
-                System.out.println(">xxx> set closeable factory: " + factory);
-                factory = new CloseableFactory<>(factory);
-            }
-            else
-                System.out.println(">xxx> set already closeable: " + factory);
-        }
-
         super.setExpiryPolicyFactory(factory);
 
         return this;

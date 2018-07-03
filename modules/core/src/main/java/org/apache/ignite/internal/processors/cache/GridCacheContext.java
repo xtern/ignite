@@ -298,6 +298,7 @@ public class GridCacheContext<K, V> implements Externalizable {
      * @param drMgr Data center replication manager.
      * @param rslvrMgr Conflict resolution manager.
      * @param pluginMgr Cache plugin manager.
+     * @param expiryPlc Expiry policy.
      */
     @SuppressWarnings({"unchecked"})
     public GridCacheContext(
@@ -325,7 +326,8 @@ public class GridCacheContext<K, V> implements Externalizable {
         GridCacheDrManager drMgr,
         CacheConflictResolutionManager<K, V> rslvrMgr,
         CachePluginManager pluginMgr,
-        GridCacheAffinityManager affMgr
+        GridCacheAffinityManager affMgr,
+        ExpiryPolicy expiryPlc
     ) {
         assert ctx != null;
         assert sharedCtx != null;
@@ -369,6 +371,7 @@ public class GridCacheContext<K, V> implements Externalizable {
         this.rslvrMgr = add(rslvrMgr);
         this.pluginMgr = add(pluginMgr);
         this.affMgr = add(affMgr);
+        this.expiryPlc = expiryPlc;
 
         log = ctx.log(getClass());
 
@@ -381,13 +384,6 @@ public class GridCacheContext<K, V> implements Externalizable {
         cacheIdBoxed = cacheId;
 
         plc = cacheType.ioPolicy();
-
-        Factory<ExpiryPolicy> factory = cacheCfg.getExpiryPolicyFactory();
-
-        expiryPlc = factory != null ? factory.create() : null;
-
-        if (expiryPlc instanceof EternalExpiryPolicy)
-            expiryPlc = null;
 
         itHolder = new CacheWeakQueryIteratorsHolder(log);
 
