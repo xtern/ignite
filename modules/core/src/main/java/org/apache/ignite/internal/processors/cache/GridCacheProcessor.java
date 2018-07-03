@@ -36,6 +36,7 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.CountDownLatch;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 import javax.cache.configuration.CacheEntryListenerConfiguration;
 import javax.management.MBeanServer;
@@ -130,6 +131,7 @@ import org.apache.ignite.internal.processors.security.SecurityContext;
 import org.apache.ignite.internal.processors.timeout.GridTimeoutObject;
 import org.apache.ignite.internal.suggestions.GridPerformanceSuggestions;
 import org.apache.ignite.internal.util.F0;
+import org.apache.ignite.internal.util.GridConcurrentHashSet;
 import org.apache.ignite.internal.util.future.GridCompoundFuture;
 import org.apache.ignite.internal.util.future.GridFinishedFuture;
 import org.apache.ignite.internal.util.future.GridFutureAdapter;
@@ -255,6 +257,9 @@ public class GridCacheProcessor extends GridProcessorAdapter {
 
     /** MBean group for cache group metrics */
     private final String CACHE_GRP_METRICS_MBEAN_GRP = "Cache groups";
+
+    /** TODO */
+    private final ConcurrentMap<String, Set> closeableResources = new ConcurrentHashMap<>();
 
     /**
      * @param ctx Kernal context.
@@ -606,6 +611,18 @@ public class GridCacheProcessor extends GridProcessorAdapter {
             ctx.resource().injectCacheName(rsrc, cfg.getName());
 
             registerMbean(rsrc, cfg.getName(), near);
+
+            if (rsrc instanceof Closeable) {
+                String name = cfg.getName() + "@" + cfg.getGroupName();
+
+                Set<Closeable> rsrcs = closeableResources.computeIfAbsent(name, new Function<String, Set>() {
+                    @Override public Set apply(String s) {
+                        return new HashSet<>();
+                    }
+                });
+
+                rsrcs.add((Closeable)rsrc);
+            }
         }
     }
 
@@ -614,6 +631,21 @@ public class GridCacheProcessor extends GridProcessorAdapter {
      */
     private void cleanup(GridCacheContext cctx) {
         CacheConfiguration cfg = cctx.config();
+
+        String name = cfg.getName() + "@" + cfg.getGroupName();
+
+        Set<Closeable> rsrcs = closeableResources.remove(name);
+
+        if (rsrcs != null)
+            for (Closeable rsrc : rsrcs) {
+                try {
+                    System.out.println(">xxx> close rsrc " + rsrc);
+                    rsrc.close();
+                }
+                catch (IOException e) {
+                    log.warning("Unable to close resource: " + e.getMessage());
+                }
+            }
 
         for (CacheEntryListenerConfiguration<?, ?> c:
             (Iterable<CacheEntryListenerConfiguration<?, ?>>) cfg.getCacheEntryListenerConfigurations()) {
@@ -700,15 +732,6 @@ public class GridCacheProcessor extends GridProcessorAdapter {
 
             try {
                 ctx.resource().cleanupGeneric(rsrc);
-
-                if (rsrc instanceof Closeable) {
-                    try {
-                        ((Closeable) rsrc).close();
-                    }
-                    catch (IOException e) {
-                        log.warning("Failed to close resource: " + e.getMessage());
-                    }
-                }
             }
             catch (IgniteCheckedException e) {
                 U.error(log, "Failed to cleanup resource: " + rsrc, e);

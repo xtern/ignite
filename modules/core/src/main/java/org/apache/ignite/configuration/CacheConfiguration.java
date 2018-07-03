@@ -912,7 +912,7 @@ public class CacheConfiguration<K, V> extends MutableConfiguration<K, V> {
     @SuppressWarnings("unchecked")
     public CacheConfiguration<K, V> setCacheStoreFactory(
         Factory<? extends CacheStore<? super K, ? super V>> storeFactory) {
-        if (this.storeFactory != null && this.storeFactory instanceof Closeable) {
+        if (this.storeFactory instanceof Closeable) {
             try {
                 ((Closeable) this.storeFactory).close();
             }

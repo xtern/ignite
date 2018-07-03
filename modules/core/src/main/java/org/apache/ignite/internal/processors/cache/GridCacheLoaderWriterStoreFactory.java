@@ -17,25 +17,16 @@
 
 package org.apache.ignite.internal.processors.cache;
 
-import java.io.Closeable;
-import java.io.IOException;
-import java.util.ArrayList;
-import java.util.HashSet;
-import java.util.Iterator;
-import java.util.List;
-import java.util.Set;
 import javax.cache.configuration.Factory;
 import javax.cache.integration.CacheLoader;
 import javax.cache.integration.CacheWriter;
 import org.apache.ignite.cache.store.CacheStore;
-import org.apache.ignite.internal.util.GridConcurrentHashSet;
-import org.apache.ignite.internal.util.typedef.internal.U;
 import org.jetbrains.annotations.Nullable;
 
 /**
  *
  */
-class GridCacheLoaderWriterStoreFactory<K, V> implements Factory<CacheStore<K, V>>, Closeable {
+class GridCacheLoaderWriterStoreFactory<K, V> implements Factory<CacheStore<K, V>> {
     /** */
     private static final long serialVersionUID = 0L;
 
@@ -44,9 +35,6 @@ class GridCacheLoaderWriterStoreFactory<K, V> implements Factory<CacheStore<K, V
 
     /** */
     private final Factory<CacheWriter<K, V>> writerFactory;
-
-    /** */
-    private final Set<Closeable> rsrc = new GridConcurrentHashSet<>();
 
     /**
      * @param ldrFactory Loader factory.
@@ -66,11 +54,7 @@ class GridCacheLoaderWriterStoreFactory<K, V> implements Factory<CacheStore<K, V
 
         CacheWriter<K, V> writer = writerFactory == null ? null : writerFactory.create();
 
-        GridCacheLoaderWriterStore<K, V> cacheStore = new GridCacheLoaderWriterStore<>(ldr, writer);
-
-        rsrc.add(cacheStore);
-
-        return cacheStore;
+        return new GridCacheLoaderWriterStore<>(ldr, writer);
     }
 
     /**
@@ -85,16 +69,5 @@ class GridCacheLoaderWriterStoreFactory<K, V> implements Factory<CacheStore<K, V
      */
     Factory<CacheWriter<K, V>> writerFactory() {
         return writerFactory;
-    }
-
-    /** {@inheritDoc} */
-    @Override public void close() throws IOException {
-        for (Iterator<Closeable> iter = rsrc.iterator(); iter.hasNext(); ) {
-            Closeable res = iter.next();
-
-            res.close();
-
-            iter.remove();
-        }
     }
 }
