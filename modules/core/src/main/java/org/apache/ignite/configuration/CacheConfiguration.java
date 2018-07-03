@@ -412,8 +412,7 @@ public class CacheConfiguration<K, V> extends MutableConfiguration<K, V> {
         affMapper = cc.getAffinityMapper();
         atomicityMode = cc.getAtomicityMode();
         backups = cc.getBackups();
-        if (cc.getCacheLoaderFactory() != null)
-        setCacheLoaderFactory(cc.getCacheLoaderFactory());
+        cacheLoaderFactory = cc.getCacheLoaderFactory();
         cacheMode = cc.getCacheMode();
         cacheWriterFactory = cc.getCacheWriterFactory();
         cpOnRead = cc.isCopyOnRead();
@@ -421,7 +420,6 @@ public class CacheConfiguration<K, V> extends MutableConfiguration<K, V> {
         eagerTtl = cc.isEagerTtl();
         evictFilter = cc.getEvictionFilter();
         evictPlc = cc.getEvictionPolicy();
-        //setEvictionPolicyFactory(cc.getEvictionPolicyFactory());
         evictPlcFactory = cc.getEvictionPolicyFactory();
         setExpiryPolicyFactory(cc.getExpiryPolicyFactory());
         grpName = cc.getGroupName();
@@ -2278,18 +2276,6 @@ public class CacheConfiguration<K, V> extends MutableConfiguration<K, V> {
 
     /** {@inheritDoc} */
     @Override public CacheConfiguration<K, V> setCacheLoaderFactory(Factory<? extends CacheLoader<K, V>> factory) {
-        if (super.getCacheLoaderFactory() != null && super.getCacheLoaderFactory() instanceof Closeable) {
-            try {
-                ((Closeable) super.getCacheLoaderFactory()).close();
-            }
-            catch (IOException e) {
-                // No-op.
-            }
-        }
-
-        if (!(factory instanceof Closeable))
-            factory = new CloseableFactory<>(factory);
-
         super.setCacheLoaderFactory(factory);
 
         return this;
@@ -2298,18 +2284,6 @@ public class CacheConfiguration<K, V> extends MutableConfiguration<K, V> {
     /** {@inheritDoc} */
     @Override public CacheConfiguration<K, V> setCacheWriterFactory(
         Factory<? extends CacheWriter<? super K, ? super V>> factory) {
-        if (super.getCacheWriterFactory() != null && super.getCacheWriterFactory() instanceof Closeable) {
-            try {
-                ((Closeable) super.getCacheWriterFactory()).close();
-            }
-            catch (IOException e) {
-                // No-op.
-            }
-        }
-
-        if (!(factory instanceof Closeable))
-            factory = new CloseableFactory<>(factory);
-
         super.setCacheWriterFactory(factory);
 
         return this;
@@ -2317,23 +2291,23 @@ public class CacheConfiguration<K, V> extends MutableConfiguration<K, V> {
 
     /** {@inheritDoc} */
     @Override public CacheConfiguration<K, V> setExpiryPolicyFactory(Factory<? extends ExpiryPolicy> factory) {
-        System.out.println(">xxx> set factory");
-        if (super.getExpiryPolicyFactory() != null && super.getExpiryPolicyFactory() instanceof Closeable) {
-            try {
-                ((Closeable) super.getExpiryPolicyFactory()).close();
+        if (factory != null) {
+            if (super.getExpiryPolicyFactory() instanceof Closeable) {
+                try {
+                    ((Closeable)super.getExpiryPolicyFactory()).close();
+                }
+                catch (IOException e) {
+                    // No-op.
+                }
             }
-            catch (IOException e) {
-                // No-op.
-                System.out.println(">xxx> set factory close exception");
-            }
-        }
 
-        if (!(factory instanceof Closeable)) {
-            System.out.println(">xxx> set closeable factory: " + factory);
-            factory = new CloseableFactory<>(factory);
+            if (!(factory instanceof Closeable)) {
+                System.out.println(">xxx> set closeable factory: " + factory);
+                factory = new CloseableFactory<>(factory);
+            }
+            else
+                System.out.println(">xxx> set already closeable: " + factory);
         }
-        else
-            System.out.println(">xxx> set already closeable: " + factory);
 
         super.setExpiryPolicyFactory(factory);
 

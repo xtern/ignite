@@ -700,12 +700,13 @@ public class GridCacheProcessor extends GridProcessorAdapter {
 
             try {
                 ctx.resource().cleanupGeneric(rsrc);
+
                 if (rsrc instanceof Closeable) {
                     try {
                         ((Closeable) rsrc).close();
                     }
                     catch (IOException e) {
-                        // No-op.
+                        log.warning("Failed to close resource: " + e.getMessage());
                     }
                 }
             }
