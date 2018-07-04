@@ -17,6 +17,7 @@
 
 package org.apache.ignite.internal.processors.cache.query.continuous;
 
+import java.io.Closeable;
 import java.io.Externalizable;
 import java.io.IOException;
 import java.io.ObjectInput;
@@ -952,6 +953,9 @@ public class CacheContinuousQueryManager extends GridCacheManagerAdapter {
         private final boolean keepBinary;
 
         /** */
+        private final CacheEntryListener locLsnrImpl;
+
+        /** */
         private volatile UUID routineId;
 
         /**
@@ -962,6 +966,8 @@ public class CacheContinuousQueryManager extends GridCacheManagerAdapter {
             this.cfg = cfg;
             this.onStart = onStart;
             this.keepBinary = keepBinary;
+            this.locLsnrImpl = cfg != null && cfg.getCacheEntryListenerFactory() != null ?
+                (CacheEntryListener)cfg.getCacheEntryListenerFactory().create() : null;
         }
 
         /**
@@ -971,8 +977,6 @@ public class CacheContinuousQueryManager extends GridCacheManagerAdapter {
         void execute() throws IgniteCheckedException {
             if (!onStart)
                 cctx.config().addCacheEntryListenerConfiguration(cfg);
-
-            CacheEntryListener locLsnrImpl = (CacheEntryListener)cfg.getCacheEntryListenerFactory().create();
 
             if (locLsnrImpl == null)
                 throw new IgniteCheckedException("Local CacheEntryListener is mandatory and can't be null.");
@@ -1063,6 +1067,15 @@ public class CacheContinuousQueryManager extends GridCacheManagerAdapter {
                 cctx.kernalContext().continuous().stopRoutine(routineId0).get();
 
             cctx.config().removeCacheEntryListenerConfiguration(cfg);
+
+            if (locLsnrImpl instanceof Closeable) {
+                try {
+                    ((Closeable)locLsnrImpl).close();
+                }
+                catch (IOException e) {
+                    log.warning("Unable to close resource: " + e.getMessage(), e);
+                }
+            }
         }
     }
 
