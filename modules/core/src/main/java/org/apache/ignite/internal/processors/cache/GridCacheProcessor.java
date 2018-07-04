@@ -18,7 +18,6 @@
 package org.apache.ignite.internal.processors.cache;
 
 import java.io.Closeable;
-import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
@@ -36,10 +35,9 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.CountDownLatch;
-import java.util.function.Function;
 import java.util.stream.Collectors;
-import javax.cache.expiry.EternalExpiryPolicy;
-import javax.cache.expiry.ExpiryPolicy;
+import javax.cache.integration.CacheLoader;
+import javax.cache.integration.CacheWriter;
 import javax.management.MBeanServer;
 import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.IgniteException;
@@ -132,7 +130,6 @@ import org.apache.ignite.internal.processors.security.SecurityContext;
 import org.apache.ignite.internal.processors.timeout.GridTimeoutObject;
 import org.apache.ignite.internal.suggestions.GridPerformanceSuggestions;
 import org.apache.ignite.internal.util.F0;
-import org.apache.ignite.internal.util.GridConcurrentHashSet;
 import org.apache.ignite.internal.util.future.GridCompoundFuture;
 import org.apache.ignite.internal.util.future.GridFinishedFuture;
 import org.apache.ignite.internal.util.future.GridFutureAdapter;
@@ -258,9 +255,6 @@ public class GridCacheProcessor extends GridProcessorAdapter {
 
     /** MBean group for cache group metrics */
     private final String CACHE_GRP_METRICS_MBEAN_GRP = "Cache groups";
-
-    /** Resources to clean up when cache is destroyed. */
-    private final ConcurrentMap<String, Set> closeableResources = new ConcurrentHashMap<>();
 
     /**
      * @param ctx Kernal context.
@@ -612,26 +606,6 @@ public class GridCacheProcessor extends GridProcessorAdapter {
             ctx.resource().injectCacheName(rsrc, cfg.getName());
 
             registerMbean(rsrc, cfg.getName(), near);
-
-            registerCloseableResource(cfg, rsrc);
-        }
-    }
-
-    /**
-     * @param cfg Cache configuration.
-     * @param rsrc Resource to register.
-     */
-    private void registerCloseableResource(CacheConfiguration cfg, Object rsrc) {
-        if (rsrc instanceof Closeable) {
-            String name = cfg.getName() + "@" + cfg.getGroupName();
-
-            Set<Closeable> rsrcs = closeableResources.computeIfAbsent(name, new Function<String, Set>() {
-                @Override public Set apply(String name) {
-                    return new GridConcurrentHashSet<>();
-                }
-            });
-
-            rsrcs.add((Closeable)rsrc);
         }
     }
 
@@ -659,19 +633,6 @@ public class GridCacheProcessor extends GridProcessorAdapter {
         if (nearCfg != null) {
             cleanup(cfg, nearCfg.getNearEvictionPolicyFactory(), true);
             cleanup(cfg, nearCfg.getNearEvictionPolicy(), true);
-        }
-
-        Set<Closeable> rsrcs = closeableResources.remove(cfg.getName() + "@" + cfg.getGroupName());
-
-        if (rsrcs != null) {
-            for (Closeable rsrc : rsrcs) {
-                try {
-                    rsrc.close();
-                }
-                catch (IOException e) {
-                    log.warning("Unable to close resource: " + e.getMessage(), e);
-                }
-            }
         }
 
         cctx.cleanup();
@@ -1493,10 +1454,20 @@ public class GridCacheProcessor extends GridProcessorAdapter {
             suggestOptimizations(cfg, cfgStore != null);
 
         Collection<Object> toPrepare = new ArrayList<>();
+        List<Closeable> rsrcs = new ArrayList<>();
 
         if (cfgStore instanceof GridCacheLoaderWriterStore) {
-            toPrepare.add(((GridCacheLoaderWriterStore)cfgStore).loader());
-            toPrepare.add(((GridCacheLoaderWriterStore)cfgStore).writer());
+            CacheLoader ldr = ((GridCacheLoaderWriterStore)cfgStore).loader();
+            CacheWriter writer = ((GridCacheLoaderWriterStore)cfgStore).writer();
+
+            toPrepare.add(ldr);
+            toPrepare.add(writer);
+
+            if (ldr instanceof Closeable)
+                rsrcs.add((Closeable)ldr);
+
+            if (writer instanceof Closeable)
+                rsrcs.add((Closeable)writer);
         }
         else
             toPrepare.add(cfgStore);
@@ -1520,13 +1491,6 @@ public class GridCacheProcessor extends GridProcessorAdapter {
         CacheStoreManager storeMgr = pluginMgr.createComponent(CacheStoreManager.class);
 
         storeMgr.initialize(cfgStore, sesHolders);
-
-        ExpiryPolicy expiryPlc = cfg.getExpiryPolicyFactory() != null ? cfg.getExpiryPolicyFactory().create() : null;
-
-        if (expiryPlc instanceof EternalExpiryPolicy)
-            expiryPlc = null;
-
-        registerCloseableResource(cfg, expiryPlc);
 
         GridCacheContext<?, ?> cacheCtx = new GridCacheContext(
             ctx,
@@ -1552,7 +1516,7 @@ public class GridCacheProcessor extends GridProcessorAdapter {
             rslvrMgr,
             pluginMgr,
             affMgr,
-            expiryPlc
+            rsrcs
         );
 
         cacheCtx.statisticsEnabled(desc.cacheConfiguration().isStatisticsEnabled());
@@ -1685,7 +1649,7 @@ public class GridCacheProcessor extends GridProcessorAdapter {
                 rslvrMgr,
                 pluginMgr,
                 affMgr,
-                expiryPlc
+                null
             );
 
             cacheCtx.statisticsEnabled(desc.cacheConfiguration().isStatisticsEnabled());

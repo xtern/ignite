@@ -17,6 +17,7 @@
 
 package org.apache.ignite.internal.processors.cache;
 
+import java.io.Closeable;
 import java.io.Externalizable;
 import java.io.IOException;
 import java.io.InvalidObjectException;
@@ -34,6 +35,8 @@ import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ThreadLocalRandom;
 import javax.cache.Cache;
+import javax.cache.configuration.Factory;
+import javax.cache.expiry.EternalExpiryPolicy;
 import javax.cache.expiry.ExpiryPolicy;
 import javax.cache.processor.EntryProcessorResult;
 import org.apache.ignite.IgniteCheckedException;
@@ -269,6 +272,9 @@ public class GridCacheContext<K, V> implements Externalizable {
     /** Local node's MAC address. */
     private String locMacs;
 
+    /** */
+    private final List<Closeable> closeableResources = new ArrayList<>(0);
+
     /**
      * Empty constructor required for {@link Externalizable}.
      */
@@ -296,7 +302,7 @@ public class GridCacheContext<K, V> implements Externalizable {
      * @param drMgr Data center replication manager.
      * @param rslvrMgr Conflict resolution manager.
      * @param pluginMgr Cache plugin manager.
-     * @param expiryPlc Expiry policy.
+     * @param rsrcs Closeable resources.
      */
     @SuppressWarnings({"unchecked"})
     public GridCacheContext(
@@ -325,7 +331,7 @@ public class GridCacheContext<K, V> implements Externalizable {
         CacheConflictResolutionManager<K, V> rslvrMgr,
         CachePluginManager pluginMgr,
         GridCacheAffinityManager affMgr,
-        ExpiryPolicy expiryPlc
+        Collection<Closeable> rsrcs
     ) {
         assert ctx != null;
         assert sharedCtx != null;
@@ -369,7 +375,6 @@ public class GridCacheContext<K, V> implements Externalizable {
         this.rslvrMgr = add(rslvrMgr);
         this.pluginMgr = add(pluginMgr);
         this.affMgr = add(affMgr);
-        this.expiryPlc = expiryPlc;
 
         log = ctx.log(getClass());
 
@@ -382,6 +387,19 @@ public class GridCacheContext<K, V> implements Externalizable {
         cacheIdBoxed = cacheId;
 
         plc = cacheType.ioPolicy();
+
+        Factory<ExpiryPolicy> factory = cacheCfg.getExpiryPolicyFactory();
+
+        expiryPlc = factory != null ? factory.create() : null;
+
+        if (expiryPlc instanceof EternalExpiryPolicy)
+            expiryPlc = null;
+
+        if (expiryPlc instanceof Closeable)
+            closeableResources.add((Closeable) expiryPlc);
+
+        if (rsrcs != null)
+            closeableResources.addAll(rsrcs);
 
         itHolder = new CacheWeakQueryIteratorsHolder(log);
 
@@ -2005,6 +2023,16 @@ public class GridCacheContext<K, V> implements Externalizable {
         dataStructuresMgr = null;
         cacheObjCtx = null;
 
+        for (Closeable rs : closeableResources) {
+            try {
+                rs.close();
+            }
+            catch (IOException e) {
+                log.warning("Unable to close resource: " + e.getMessage(), e);
+            }
+        }
+
+        closeableResources.clear();
         mgrs.clear();
     }
 
