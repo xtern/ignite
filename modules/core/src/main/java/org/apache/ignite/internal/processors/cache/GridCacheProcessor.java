@@ -615,22 +615,23 @@ public class GridCacheProcessor extends GridProcessorAdapter {
 
             registerMbean(rsrc, cfg.getName(), near);
 
-            if (rsrc instanceof Closeable)
-                registerCloseableResource(cfg, (Closeable)rsrc);
+            registerCloseableResource(cfg, rsrc);
         }
     }
 
     /** todo */
-    private void registerCloseableResource(CacheConfiguration cfg, Closeable rsrc) {
-        String name = cfg.getName() + "@" + cfg.getGroupName();
+    private void registerCloseableResource(CacheConfiguration cfg, Object rsrc) {
+        if (rsrc instanceof Closeable) {
+            String name = cfg.getName() + "@" + cfg.getGroupName();
 
-        Set<Closeable> rsrcs = closeableResources.computeIfAbsent(name, new Function<String, Set>() {
-            @Override public Set apply(String s) {
-                return new HashSet<>();
-            }
-        });
+            Set<Closeable> rsrcs = closeableResources.computeIfAbsent(name, new Function<String, Set>() {
+                @Override public Set apply(String name) {
+                    return new GridConcurrentHashSet<>();
+                }
+            });
 
-        rsrcs.add(rsrc);
+            rsrcs.add((Closeable)rsrc);
+        }
     }
 
     /**
@@ -1551,8 +1552,7 @@ public class GridCacheProcessor extends GridProcessorAdapter {
         if (expiryPlc instanceof EternalExpiryPolicy)
             expiryPlc = null;
 
-        if (expiryPlc instanceof Closeable)
-            registerCloseableResource(cfg, (Closeable)expiryPlc);
+        registerCloseableResource(cfg, expiryPlc);
 
         GridCacheContext<?, ?> cacheCtx = new GridCacheContext(
             ctx,
