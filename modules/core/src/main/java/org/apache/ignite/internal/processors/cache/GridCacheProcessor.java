@@ -38,8 +38,6 @@ import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.function.Function;
 import java.util.stream.Collectors;
-import javax.cache.configuration.CacheEntryListenerConfiguration;
-import javax.cache.configuration.Factory;
 import javax.cache.expiry.EternalExpiryPolicy;
 import javax.cache.expiry.ExpiryPolicy;
 import javax.management.MBeanServer;
@@ -261,7 +259,7 @@ public class GridCacheProcessor extends GridProcessorAdapter {
     /** MBean group for cache group metrics */
     private final String CACHE_GRP_METRICS_MBEAN_GRP = "Cache groups";
 
-    /** TODO */
+    /** Resources to clean up when cache is destroyed. */
     private final ConcurrentMap<String, Set> closeableResources = new ConcurrentHashMap<>();
 
     /**
@@ -619,7 +617,10 @@ public class GridCacheProcessor extends GridProcessorAdapter {
         }
     }
 
-    /** todo */
+    /**
+     * @param cfg Cache configuration.
+     * @param rsrc Resource to register.
+     */
     private void registerCloseableResource(CacheConfiguration cfg, Object rsrc) {
         if (rsrc instanceof Closeable) {
             String name = cfg.getName() + "@" + cfg.getGroupName();
@@ -644,39 +645,13 @@ public class GridCacheProcessor extends GridProcessorAdapter {
 
         Set<Closeable> rsrcs = closeableResources.remove(name);
 
-        if (rsrcs != null)
+        if (rsrcs != null) {
             for (Closeable rsrc : rsrcs) {
                 try {
-                    System.out.println(">xxx> close rsrc " + rsrc);
                     rsrc.close();
                 }
                 catch (IOException e) {
-                    log.warning("Unable to close resource: " + e.getMessage());
-                }
-            }
-
-        for (CacheEntryListenerConfiguration<?, ?> c:
-            (Iterable<CacheEntryListenerConfiguration<?, ?>>) cfg.getCacheEntryListenerConfigurations()) {
-
-            System.out.println(">xxx> cleanup event lsnr cfg " + c);
-
-            if (c.getCacheEntryListenerFactory() instanceof Closeable) {
-                try {
-                    System.out.println(">xxx> close " + c.getCacheEntryListenerFactory());
-
-                    ((Closeable) c.getCacheEntryListenerFactory()).close();
-                }
-                catch (IOException e) {
-                    // No-op.
-                }
-            }
-
-            if (c.getCacheEntryEventFilterFactory() instanceof Closeable) {
-                try {
-                    ((Closeable) c.getCacheEntryListenerFactory()).close();
-                }
-                catch (IOException e) {
-                    // No-op.
+                    log.warning("Unable to close resource: " + e.getMessage(), e);
                 }
             }
         }
@@ -1381,7 +1356,6 @@ public class GridCacheProcessor extends GridProcessorAdapter {
             }
         }
         finally {
-            System.out.println("!!!~ close cache "+ctx.name());
             cleanup(ctx);
         }
     }

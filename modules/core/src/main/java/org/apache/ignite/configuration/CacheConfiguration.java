@@ -17,8 +17,6 @@
 
 package org.apache.ignite.configuration;
 
-import java.io.Closeable;
-import java.io.IOException;
 import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -29,10 +27,7 @@ import javax.cache.CacheException;
 import javax.cache.configuration.CacheEntryListenerConfiguration;
 import javax.cache.configuration.CompleteConfiguration;
 import javax.cache.configuration.Factory;
-import javax.cache.configuration.MutableCacheEntryListenerConfiguration;
 import javax.cache.configuration.MutableConfiguration;
-import javax.cache.event.CacheEntryEventFilter;
-import javax.cache.event.CacheEntryListener;
 import javax.cache.expiry.ExpiryPolicy;
 import javax.cache.integration.CacheLoader;
 import javax.cache.integration.CacheWriter;
@@ -57,7 +52,6 @@ import org.apache.ignite.cache.store.CacheStoreSessionListener;
 import org.apache.ignite.cluster.ClusterNode;
 import org.apache.ignite.internal.binary.BinaryContext;
 import org.apache.ignite.internal.processors.query.QueryUtils;
-import org.apache.ignite.internal.util.CloseableFactory;
 import org.apache.ignite.internal.util.typedef.F;
 import org.apache.ignite.internal.util.typedef.internal.A;
 import org.apache.ignite.internal.util.typedef.internal.S;
@@ -2131,33 +2125,7 @@ public class CacheConfiguration<K, V> extends MutableConfiguration<K, V> {
     @Override public MutableConfiguration<K, V> addCacheEntryListenerConfiguration(
         CacheEntryListenerConfiguration<K, V> cacheEntryLsnrCfg) {
         synchronized (this) {
-            Factory<CacheEntryListener<? super K, ? super V>> entryListenerFactory =
-                cacheEntryLsnrCfg.getCacheEntryListenerFactory();
-
-            Factory<CacheEntryEventFilter<? super K, ? super V>> eventFilterFactory =
-                cacheEntryLsnrCfg.getCacheEntryEventFilterFactory();
-
-            if (entryListenerFactory instanceof Closeable || eventFilterFactory instanceof Closeable) {
-
-//                System.out.println(">xxx> add " + cacheEntryLsnrCfg);
-                return super.addCacheEntryListenerConfiguration(cacheEntryLsnrCfg);
-            }
-//            if ((entryListenerFactory == null && eventFilterFactory == null) ||
-//                    (entryListenerFactory instanceof Closeable && eventFilterFactory instanceof Closeable)
-//                )
-//                return super.addCacheEntryListenerConfiguration(cacheEntryLsnrCfg);
-            else {
-//                assert !(entryListenerFactory instanceof Closeable);
-//                assert !(eventFilterFactory instanceof Closeable);
-
-                System.out.println(">xxx> create closeable entryListener " + entryListenerFactory);
-                return super.addCacheEntryListenerConfiguration(cacheEntryLsnrCfg = new MutableCacheEntryListenerConfiguration<>(
-                    entryListenerFactory == null ? null : entryListenerFactory instanceof Closeable ? entryListenerFactory : new CloseableFactory<>(entryListenerFactory),
-                    eventFilterFactory == null ? null : eventFilterFactory instanceof Closeable ? eventFilterFactory : new CloseableFactory<>(eventFilterFactory),
-                    cacheEntryLsnrCfg.isOldValueRequired(),
-                    cacheEntryLsnrCfg.isSynchronous()
-                ));
-            }
+            return super.addCacheEntryListenerConfiguration(cacheEntryLsnrCfg);
         }
     }
 
@@ -2165,24 +2133,6 @@ public class CacheConfiguration<K, V> extends MutableConfiguration<K, V> {
     @Override public MutableConfiguration<K, V> removeCacheEntryListenerConfiguration(
         CacheEntryListenerConfiguration<K, V> cacheEntryLsnrCfg) {
         synchronized (this) {
-            if (cacheEntryLsnrCfg.getCacheEntryEventFilterFactory() instanceof Closeable) {
-                try {
-                    ((Closeable) cacheEntryLsnrCfg.getCacheEntryEventFilterFactory()).close();
-                }
-                catch (IOException e) {
-                    // No-op.
-                }
-            }
-
-            if (cacheEntryLsnrCfg.getCacheEntryListenerFactory() instanceof Closeable) {
-                try {
-                    ((Closeable) cacheEntryLsnrCfg.getCacheEntryListenerFactory()).close();
-                }
-                catch (IOException e) {
-                    // No-op.
-                }
-            }
-
             return super.removeCacheEntryListenerConfiguration(cacheEntryLsnrCfg);
         }
     }
