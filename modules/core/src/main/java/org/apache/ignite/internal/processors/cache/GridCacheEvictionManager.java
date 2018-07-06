@@ -17,6 +17,8 @@
 
 package org.apache.ignite.internal.processors.cache;
 
+import java.io.Closeable;
+import java.io.IOException;
 import java.util.Collection;
 import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.cache.eviction.EvictionFilter;
@@ -87,6 +89,12 @@ public class GridCacheEvictionManager extends GridCacheManagerAdapter implements
         try {
             if (log.isDebugEnabled())
                 log.debug("Eviction manager stopped on node: " + cctx.nodeId());
+
+            if (plc instanceof Closeable)
+                ((Closeable)plc).close();
+        }
+        catch (IOException e) {
+            log.warning("Unable to close resource: " + e.getMessage(), e);
         }
         finally {
             stopped = true;
