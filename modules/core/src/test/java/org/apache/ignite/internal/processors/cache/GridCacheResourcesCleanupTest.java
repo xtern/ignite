@@ -25,6 +25,9 @@ import java.util.List;
 import java.util.Map;
 import javax.cache.Cache;
 import javax.cache.configuration.Factory;
+import javax.cache.event.CacheEntryEvent;
+import javax.cache.event.CacheEntryEventFilter;
+import javax.cache.event.CacheEntryListenerException;
 import javax.cache.integration.CacheLoader;
 import javax.cache.integration.CacheLoaderException;
 import javax.cache.integration.CacheWriter;
@@ -33,10 +36,14 @@ import org.apache.ignite.Ignite;
 import org.apache.ignite.IgniteCache;
 import org.apache.ignite.cache.eviction.EvictableEntry;
 import org.apache.ignite.cache.eviction.EvictionPolicy;
+import org.apache.ignite.cache.query.ContinuousQuery;
+import org.apache.ignite.cache.query.QueryCursor;
+import org.apache.ignite.cache.query.ScanQuery;
 import org.apache.ignite.cache.store.CacheStore;
 import org.apache.ignite.cache.store.CacheStoreSession;
 import org.apache.ignite.cache.store.CacheStoreSessionListener;
 import org.apache.ignite.configuration.CacheConfiguration;
+import org.apache.ignite.internal.util.typedef.internal.U;
 import org.apache.ignite.lang.IgniteBiInClosure;
 import org.apache.ignite.testframework.junits.common.GridCommonAbstractTest;
 import org.jetbrains.annotations.Nullable;
@@ -98,6 +105,33 @@ public class GridCacheResourcesCleanupTest extends GridCommonAbstractTest {
     /** */
     public void testCacheStoreCleanup() throws Exception {
         testResourcesCleanup(cfg().setCacheStoreFactory(factoryOf(new CloseableCacheStore<>())));
+    }
+
+    /** */
+    public void testContinuousQueryRemoteFilterCleanup() throws Exception {
+        Ignite node = grid(0);
+
+        IgniteCache<Integer, String> cache = node.createCache(cfg());
+
+        ContinuousQuery<Integer, String> qry = new ContinuousQuery<>();
+
+        qry.setLocalListener((evts) -> {});
+
+        qry.setRemoteFilterFactory(factoryOf(new CloseableRemoteFilter<>()));
+
+        assertEquals(0, refs.size());
+
+        cache.query(qry);
+
+//        try (QueryCursor<Cache.Entry<Integer, String>> cur = cache.query(qry)) {
+//        }
+
+        node.destroyCache(DFLT_CACHE);
+
+        assertTrue("No objects was created.", refs.size() > 0);
+
+        for (CloseableResource obj : refs)
+            assertTrue("Was not closed: " + obj, obj.closed());
     }
 
     /**
@@ -166,9 +200,11 @@ public class GridCacheResourcesCleanupTest extends GridCommonAbstractTest {
 
         /** {@inheritDoc} */
         @Override public void close() {
+//            U.dumpStack("close resource: " + this);
+
             assert !closed : closed;
 
-//            U.dumpStack("close resource: " + this);
+
 
             closed = true;
         }
@@ -249,35 +285,36 @@ public class GridCacheResourcesCleanupTest extends GridCommonAbstractTest {
 
         /** {@inheritDoc} */
         @Override public void write(Cache.Entry<? extends k, ? extends V> entry) throws CacheWriterException {
-
         }
 
         /** {@inheritDoc} */
-        @Override public void writeAll(Collection<Cache.Entry<? extends k, ? extends V>> entries) throws CacheWriterException {
-
+        @Override public void writeAll(
+            Collection<Cache.Entry<? extends k, ? extends V>> entries) throws CacheWriterException {
         }
 
         /** {@inheritDoc} */
         @Override public void delete(Object key) throws CacheWriterException {
-
         }
 
         /** {@inheritDoc} */
         @Override public void deleteAll(Collection<?> keys) throws CacheWriterException {
-
         }
     }
 
     /** */
     static class CloseableCacheStoreSessionListener extends CloseableResource implements CacheStoreSessionListener {
         /** {@inheritDoc} */
-        @Override public void onSessionStart(CacheStoreSession ses) {
-
-        }
+        @Override public void onSessionStart(CacheStoreSession ses) {}
 
         /** {@inheritDoc} */
-        @Override public void onSessionEnd(CacheStoreSession ses, boolean commit) {
+        @Override public void onSessionEnd(CacheStoreSession ses, boolean commit) {}
+    }
 
+    /** */
+    static class CloseableRemoteFilter<K, V> extends CloseableResource implements CacheEntryEventFilter<K, V> {
+        /** {@inheritDoc} */
+        @Override public boolean evaluate(CacheEntryEvent ignore) throws CacheEntryListenerException {
+            return true;
         }
     }
 }

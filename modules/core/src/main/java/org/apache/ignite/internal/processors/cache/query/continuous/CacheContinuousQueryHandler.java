@@ -447,6 +447,8 @@ public class CacheContinuousQueryHandler<K, V> implements GridContinuousHandler 
             @Override public void onUnregister() {
                 if (filter instanceof PlatformContinuousQueryFilter)
                     ((PlatformContinuousQueryFilter)filter).onQueryUnregister();
+//
+//                CacheContinuousQueryHandler.this.unregister(routineId, ctx);
             }
 
             @Override public void cleanupBackupQueue(Map<Integer, Long> updateCntrs) {
@@ -650,13 +652,13 @@ public class CacheContinuousQueryHandler<K, V> implements GridContinuousHandler 
 
     /** {@inheritDoc} */
     @Override public void unregister(UUID routineId, GridKernalContext ctx) {
-        assert routineId != null;
+//        assert routineId != null;
         assert ctx != null;
 
         GridCacheAdapter<K, V> cache = ctx.cache().internalCache(cacheName);
 
         if (cache != null)
-            cache.context().continuousQueries().unregisterListener(internal, routineId);
+            cache.context().continuousQueries().unregisterListener(internal, routineId == null ? this.routineId : routineId);
     }
 
     /**

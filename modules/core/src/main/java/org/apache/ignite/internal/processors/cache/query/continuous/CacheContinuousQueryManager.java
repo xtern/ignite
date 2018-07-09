@@ -25,9 +25,11 @@ import java.io.ObjectOutput;
 import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.Map;
 import java.util.NoSuchElementException;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -192,6 +194,14 @@ public class CacheContinuousQueryManager extends GridCacheManagerAdapter {
                     log.debug("Failed to stop JCache entry listener: " + e.getMessage());
             }
         }
+
+//        assert lsnrs.keySet().size() == 0;
+
+//        for (UUID uid : new HashSet<>(lsnrs.keySet()))
+//            unregisterListener(false, uid);
+//
+//        for (UUID uid : new HashSet<>(intLsnrs.keySet()))
+//            unregisterListener(true, uid);
     }
 
     /**

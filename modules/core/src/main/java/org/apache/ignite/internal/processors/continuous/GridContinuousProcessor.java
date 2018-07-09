@@ -703,8 +703,14 @@ public class GridContinuousProcessor extends GridProcessorAdapter {
 
             GridContinuousHandler hnd = entry.getValue().hnd;
 
-            if (hnd.isQuery() && F.eq(ctx.name(), hnd.cacheName()))
+            if (hnd.isQuery() && F.eq(ctx.name(), hnd.cacheName())) {
+
+                System.out.println(">xxx> unregister " + hnd);
+
+                hnd.unregister(null, this.ctx);
+
                 it.remove();
+            }
         }
     }
 
