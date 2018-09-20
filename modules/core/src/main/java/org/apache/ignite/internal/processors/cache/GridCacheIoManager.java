@@ -1116,15 +1116,23 @@ public class GridCacheIoManager extends GridCacheSharedManagerAdapter {
         if (msg.error() != null && cctx.kernalContext().isStopping())
             return false;
 
-        if (msg.messageId() < 0)
-            // Generate and set message ID.
-            msg.messageId(idGen.incrementAndGet());
+        asdas
 
-        if (destNodeId == null || !cctx.localNodeId().equals(destNodeId)) {
-            msg.prepareMarshal(cctx);
+        try {
+            if (msg.messageId() < 0)
+                // Generate and set message ID.
+                msg.messageId(idGen.incrementAndGet());
 
-            if (msg instanceof GridCacheDeployable && msg.addDeploymentInfo())
-                cctx.deploy().prepare((GridCacheDeployable)msg);
+            if (destNodeId == null || !cctx.localNodeId().equals(destNodeId)) {
+                msg.prepareMarshal(cctx);
+
+                if (msg instanceof GridCacheDeployable && msg.addDeploymentInfo())
+                    cctx.deploy().prepare((GridCacheDeployable)msg);
+            }
+        } catch (RuntimeException e) {
+            log.error(e.getMessage(), e);//.printStackTrace();
+
+            return false;
         }
 
         return true;

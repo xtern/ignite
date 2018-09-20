@@ -403,7 +403,7 @@ public class GridNearAtomicSingleUpdateFuture extends GridNearAtomicAbstractUpda
     @Override protected void mapOnTopology() {
         AffinityTopologyVersion topVer;
 
-        if (cache.topology().stopping()) {
+        if (cache.topology().stopping() || cache.context().gate().isStopped()) {
             completeFuture(null,new CacheStoppedException(
                 cache.name()),
                 null);

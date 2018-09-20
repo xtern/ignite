@@ -1757,7 +1757,7 @@ public class GridDhtAtomicCache<K, V> extends GridDhtCacheAdapter<K, V> {
                         top.readLock();
 
                         try {
-                            if (top.stopping()) {
+                            if (top.stopping() || context().gate().isStopped()) {
                                 res.addFailedKeys(req.keys(), new CacheStoppedException(name()));
 
                                 completionCb.apply(req, res);

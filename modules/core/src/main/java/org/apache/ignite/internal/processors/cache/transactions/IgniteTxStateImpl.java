@@ -287,7 +287,7 @@ public class IgniteTxStateImpl extends IgniteTxLocalStateAdapter {
 
         nonLocCtx.topology().readLock();
 
-        if (nonLocCtx.topology().stopping()) {
+        if (nonLocCtx.topology().stopping() || nonLocCtx.gate().isStopped()) {
             fut.onDone(new CacheStoppedException(nonLocCtx.name()));
 
             return null;

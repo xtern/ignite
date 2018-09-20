@@ -24,6 +24,7 @@ import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.cache.CacheAtomicityMode;
 import org.apache.ignite.cache.CacheMode;
 import org.apache.ignite.configuration.CacheConfiguration;
+import org.apache.ignite.internal.util.typedef.F;
 import org.apache.ignite.internal.util.typedef.X;
 import org.apache.ignite.testframework.GridTestUtils;
 import org.apache.ignite.testframework.junits.common.GridCommonAbstractTest;
@@ -124,7 +125,11 @@ public abstract class IgniteCachePutOnDestroyTest extends GridCommonAbstractTest
                     }
                 }
                 catch (Exception e) {
-                    assertTrue(X.getFullStackTrace(e), hasCacheStoppedMessage(e));
+                    if (!hasCacheStoppedMessage(e)) {
+
+                        //assertTrue(X.getFullStackTrace(e), );
+                        fail("fuck off");
+                    }
                 }
 
                 return null;
@@ -142,13 +147,30 @@ public abstract class IgniteCachePutOnDestroyTest extends GridCommonAbstractTest
      * @return {@code True} if exception (or cause) is instance of {@link CacheStoppedException} or
      * {@link IllegalStateException} and message contains "cache" and "stopped" keywords.
      */
-    private boolean hasCacheStoppedMessage(Exception e) {
+    private boolean hasCacheStoppedMessage(Throwable e) {
         for (Throwable t : X.getThrowableList(e)) {
             if (t.getClass() == CacheStoppedException.class || t.getClass() == IllegalStateException.class) {
                 String errMsg = t.getMessage().toLowerCase();
 
                 if (errMsg.contains("cache") && errMsg.contains("stopped"))
                     return true;
+
+//                for (Throwable t0 : X.getSuppressedList(t))
+//                    if (hasCacheStoppedMessage(t0))
+//                        return true;
+            }
+        }
+
+        for (Throwable t : X.getSuppressedList(e)) {
+            if (t.getClass() == CacheStoppedException.class || t.getClass() == IllegalStateException.class) {
+                String errMsg = t.getMessage().toLowerCase();
+
+                if (errMsg.contains("cache") && errMsg.contains("stopped"))
+                    return true;
+
+//                for (Throwable t0 : X.getSuppressedList(t))
+//                    if (hasCacheStoppedMessage(t0))
+//                        return true;
             }
         }
 
