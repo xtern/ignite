@@ -19,6 +19,8 @@ package org.apache.ignite.internal;
 
 import java.util.HashSet;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Supplier;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -26,7 +28,7 @@ import org.apache.ignite.IgniteCache;
 import org.apache.ignite.configuration.ExecutorConfiguration;
 import org.apache.ignite.configuration.IgniteConfiguration;
 import org.apache.ignite.internal.util.typedef.F;
-import org.apache.ignite.testframework.GridStringLogger;
+import org.apache.ignite.testframework.ListeningTestLogger;
 import org.apache.ignite.testframework.junits.common.GridCommonAbstractTest;
 import org.apache.ignite.testframework.junits.common.GridCommonTest;
 
@@ -43,7 +45,7 @@ public class GridNodeMetricsLogSelfTest extends GridCommonAbstractTest {
     private static final String CUSTOM_EXECUTOR_1 = "Custom executor 1";
 
     /** */
-    private GridStringLogger strLog = new GridStringLogger(false, this.log);
+    private ListeningTestLogger strLog = new ListeningTestLogger(false, this.log);
 
     /** {@inheritDoc} */
     @SuppressWarnings({"unchecked"})
@@ -69,7 +71,7 @@ public class GridNodeMetricsLogSelfTest extends GridCommonAbstractTest {
     @Override protected void beforeTest() throws Exception {
         strLog.reset();
 
-        strLog.logLength(300_000);
+//        strLog.logLength(300_000);
 
         startGrids(2);
     }
@@ -78,6 +80,10 @@ public class GridNodeMetricsLogSelfTest extends GridCommonAbstractTest {
      * @throws Exception If failed.
      */
     public void testNodeMetricsLog() throws Exception {
+
+        Supplier<Integer> cmn = strLog.listenConditionHits(this::checkMessage);
+        Supplier<Integer> mem = strLog.listenConditionHits(this::checkMemoryMetrics);
+
         IgniteCache<Integer, String> cache1 = grid(0).createCache("TestCache1");
         IgniteCache<Integer, String> cache2 = grid(1).createCache("TestCache2");
 
@@ -90,35 +96,53 @@ public class GridNodeMetricsLogSelfTest extends GridCommonAbstractTest {
         assertEquals("one", cache1.get(1));
         assertEquals("two", cache2.get(2));
 
-        String logOutput = strLog.toString();
+//        String logOutput = strLog.toString();
 
-        checkNodeMetricsFormat(logOutput);
-
-        checkMemoryMetrics(logOutput);
+//        checkNodeMetricsFormat(logOutput);
+        assertTrue(cmn.get() > 0);
+        assertTrue(mem.get() > 0);
     }
 
     /**
      * Check node metrics format.
      *
-     * @param fullLog Logging output.
+     * @param msg Logging message.
      */
-    protected void checkNodeMetricsFormat(String fullLog) {
-        String msg = "Metrics are missing in the log or have an unexpected format";
+    protected boolean checkMessage(String msg) {
+        if (msg.contains("Metrics for local node (to disable set 'metricsLogFrequency' to 0)")) {
+            String msg0 = "Metrics are missing in the log or have an unexpected format";
 
-        // Don't check the format strictly, but check that all expected metrics are present.
-        assertTrue(msg, fullLog.contains("Metrics for local node (to disable set 'metricsLogFrequency' to 0)"));
-        assertTrue(msg, fullLog.matches("(?s).*Node \\[id=.*, name=.*, uptime=.*].*"));
-        assertTrue(msg, fullLog.matches("(?s).*H/N/C \\[hosts=.*, nodes=.*, CPUs=.*].*"));
-        assertTrue(msg, fullLog.matches("(?s).*CPU \\[cur=.*, avg=.*, GC=.*].*"));
-        assertTrue(msg, fullLog.matches("(?s).*PageMemory \\[pages=.*].*"));
-        assertTrue(msg, fullLog.matches("(?s).*Heap \\[used=.*, free=.*, comm=.*].*"));
-        assertTrue(msg, fullLog.matches("(?s).*Off-heap \\[used=.*, free=.*, comm=.*].*"));
-        assertTrue(msg, fullLog.matches("(?s).* region \\[used=.*, free=.*, comm=.*].*"));
-        assertTrue(msg, fullLog.matches("(?s).*Outbound messages queue \\[size=.*].*"));
-        assertTrue(msg, fullLog.matches("(?s).*Public thread pool \\[active=.*, idle=.*, qSize=.*].*"));
-        assertTrue(msg, fullLog.matches("(?s).*System thread pool \\[active=.*, idle=.*, qSize=.*].*"));
-        assertTrue(msg, fullLog.matches("(?s).*" + CUSTOM_EXECUTOR_0 + " \\[active=.*, idle=.*, qSize=.*].*"));
-        assertTrue(msg, fullLog.matches("(?s).*" + CUSTOM_EXECUTOR_1 + " \\[active=.*, idle=.*, qSize=.*].*"));
+            // Don't check the format strictly, but check that all expected metrics are present.
+            //assertTrue(msg0, msg.contains("Metrics for local node (to disable set 'metricsLogFrequency' to 0)"));
+
+            //asdas
+
+            assertTrue(msg0, msg.matches("(?s).*Node \\[id=.*, name=.*, uptime=.*].*"));
+
+
+
+            assertTrue(msg0, msg.matches("(?s).*H/N/C \\[hosts=.*, nodes=.*, CPUs=.*].*"));
+            assertTrue(msg0, msg.matches("(?s).*CPU \\[cur=.*, avg=.*, GC=.*].*"));
+            assertTrue(msg0, msg.matches("(?s).*PageMemory \\[pages=.*].*"));
+            assertTrue(msg0, msg.matches("(?s).*Heap \\[used=.*, free=.*, comm=.*].*"));
+            assertTrue(msg0, msg.matches("(?s).*Off-heap \\[used=.*, free=.*, comm=.*].*"));
+            assertTrue(msg0, msg.matches("(?s).* region \\[used=.*, free=.*, comm=.*].*"));
+            assertTrue(msg0, msg.matches("(?s).*Outbound messages queue \\[size=.*].*"));
+            assertTrue(msg0, msg.matches("(?s).*Public thread pool \\[active=.*, idle=.*, qSize=.*].*"));
+            assertTrue(msg0, msg.matches("(?s).*System thread pool \\[active=.*, idle=.*, qSize=.*].*"));
+            assertTrue(msg0, msg.matches("(?s).*" + CUSTOM_EXECUTOR_0 + " \\[active=.*, idle=.*, qSize=.*].*"));
+            assertTrue(msg0, msg.matches("(?s).*" + CUSTOM_EXECUTOR_1 + " \\[active=.*, idle=.*, qSize=.*].*"));
+
+            assertTrue("false should be true!", false);
+
+            return true;
+        }
+
+        return false;
+    }
+
+    private void msgCheck(String msg2check, String errMsg, AtomicReference<String> errStr) {
+
     }
 
     /**
@@ -126,7 +150,7 @@ public class GridNodeMetricsLogSelfTest extends GridCommonAbstractTest {
      *
      * @param logOutput Logging output.
      */
-    protected  void checkMemoryMetrics(String logOutput) {
+    protected  boolean checkMemoryMetrics(String logOutput) {
         boolean summaryFmtMatches = false;
 
         Set<String> regions = new HashSet<>();
@@ -158,12 +182,16 @@ public class GridNodeMetricsLogSelfTest extends GridCommonAbstractTest {
                 regions.add(regName.trim());
         }
 
-        assertTrue("Off-heap metrics have unexpected format.", summaryFmtMatches);
+        if (summaryFmtMatches) {
+            Set<String> expRegions = grid(0).context().cache().context().database().dataRegions().stream()
+                .map(v -> v.config().getName().trim())
+                .collect(Collectors.toSet());
 
-        Set<String> expRegions = grid(0).context().cache().context().database().dataRegions().stream()
-            .map(v -> v.config().getName().trim())
-            .collect(Collectors.toSet());
+            assertEquals("Off-heap per-region metrics have unexpected format.", expRegions, regions);
 
-        assertEquals("Off-heap per-region metrics have unexpected format.", expRegions, regions);
+            return true;
+        }
+
+        return false;
     }
 }

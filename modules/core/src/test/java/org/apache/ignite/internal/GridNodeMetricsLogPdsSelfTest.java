@@ -67,17 +67,17 @@ public class GridNodeMetricsLogPdsSelfTest extends GridNodeMetricsLogSelfTest {
         cleanPersistenceDir();
     }
 
+//    /** {@inheritDoc} */
+//    @Override protected void checkNodeMetricsFormat(String logOutput) {
+//        super.checkNodeMetricsFormat(logOutput);
+//
+//        String msg = "Metrics are missing in the log or have an unexpected format";
+//
+//        assertTrue(msg, logOutput.matches("(?s).*Ignite persistence \\[used=.*].*"));
+//    }
+
     /** {@inheritDoc} */
-    @Override protected void checkNodeMetricsFormat(String logOutput) {
-        super.checkNodeMetricsFormat(logOutput);
-
-        String msg = "Metrics are missing in the log or have an unexpected format";
-
-        assertTrue(msg, logOutput.matches("(?s).*Ignite persistence \\[used=.*].*"));
-    }
-
-    /** {@inheritDoc} */
-    @Override protected void checkMemoryMetrics(String logOutput) {
+    @Override protected boolean checkMemoryMetrics(String logOutput) {
         super.checkMemoryMetrics(logOutput);
 
         boolean summaryFmtMatches = false;
@@ -118,5 +118,7 @@ public class GridNodeMetricsLogPdsSelfTest extends GridNodeMetricsLogSelfTest {
             .collect(Collectors.toSet());
 
         assertEquals(expRegions, regions);
+
+        return false;
     }
 }
