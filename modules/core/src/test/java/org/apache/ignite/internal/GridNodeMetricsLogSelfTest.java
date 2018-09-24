@@ -80,7 +80,8 @@ public class GridNodeMetricsLogSelfTest extends GridCommonAbstractTest {
      * @throws Exception If failed.
      */
     public void testNodeMetricsLog() throws Exception {
-        Supplier<Integer> cmn = strLog.listenConditionHits(this::checkNodeMetricsFormat);
+        Supplier<Integer> cmn = strLog.listenConditionHits(msg -> msg.contains("qqq"));
+
         Supplier<Integer> mem = strLog.listenConditionHits(this::checkMemoryMetrics);
 
         IgniteCache<Integer, String> cache1 = grid(0).createCache("TestCache1");

@@ -23,6 +23,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.function.Supplier;
+import java.util.regex.Pattern;
 import org.apache.ignite.Ignite;
 import org.apache.ignite.IgniteCache;
 import org.apache.ignite.binary.BinaryInvalidTypeException;
@@ -174,9 +175,28 @@ public class BinaryTypeMismatchLoggingTest extends GridCommonAbstractTest {
 
         String capturedMessages = this.capture.toString();
 
-        capture.listen(
-            substr("Key-value pair is not inserted into any SQL table [cacheName=binary, " + MESSAGE_PAYLOAD_VALUE + "]", 1).
-            substr("Value type(s) are specified via CacheConfiguration.indexedTypes or CacheConfiguration.queryEntities"))
+        capture.listener().  // <- возвращает билдер
+
+
+            onMessage() // <-- Добавляет цепочку для каждого сообщения, иначе цепочка для всего лога
+            .chain() // <- добавляет признак последовательного вызова
+            .substr("one time").times(1) // <-- подстрока должна быть встречена один раз
+            .substr("not present").absent()
+            .substr("sometimes")
+
+            .listen(); // <-- возвращает какую-то херь у которой надо вызвать check()/get()/validate()
+
+        //capture.match("\\d+")
+
+        //<-- Добавляет цепочку для каждого сообщения, иначе цепочка для всего лога
+
+        capture.listener().
+            .chain()
+            .substr
+            .match(Pattern.compile("\\d+"))
+
+            .substr("substr").times(1) // <-- подстрока должна быть встречена один раз
+            .substr("Value type(s) are specified via CacheConfiguration.indexedTypes or CacheConfiguration.queryEntities").times(1);
 
         assertContainsExactlyOnce(capturedMessages,
             "Key-value pair is not inserted into any SQL table [cacheName=binary, " + MESSAGE_PAYLOAD_VALUE + "]");
