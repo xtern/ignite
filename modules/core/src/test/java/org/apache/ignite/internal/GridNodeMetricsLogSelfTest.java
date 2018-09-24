@@ -80,8 +80,7 @@ public class GridNodeMetricsLogSelfTest extends GridCommonAbstractTest {
      * @throws Exception If failed.
      */
     public void testNodeMetricsLog() throws Exception {
-
-        Supplier<Integer> cmn = strLog.listenConditionHits(this::checkMessage);
+        Supplier<Integer> cmn = strLog.listenConditionHits(this::checkNodeMetricsFormat);
         Supplier<Integer> mem = strLog.listenConditionHits(this::checkMemoryMetrics);
 
         IgniteCache<Integer, String> cache1 = grid(0).createCache("TestCache1");
@@ -99,8 +98,8 @@ public class GridNodeMetricsLogSelfTest extends GridCommonAbstractTest {
 //        String logOutput = strLog.toString();
 
 //        checkNodeMetricsFormat(logOutput);
-        assertTrue(cmn.get() > 0);
-        assertTrue(mem.get() > 0);
+        assertTrue(String.valueOf(cmn.get()), cmn.get() > 0);
+        assertTrue(String.valueOf(mem.get()), mem.get() > 0);
     }
 
     /**
@@ -108,7 +107,7 @@ public class GridNodeMetricsLogSelfTest extends GridCommonAbstractTest {
      *
      * @param msg Logging message.
      */
-    protected boolean checkMessage(String msg) {
+    protected boolean checkNodeMetricsFormat(String msg) {
         if (msg.contains("Metrics for local node (to disable set 'metricsLogFrequency' to 0)")) {
             String msg0 = "Metrics are missing in the log or have an unexpected format";
 
@@ -118,9 +117,6 @@ public class GridNodeMetricsLogSelfTest extends GridCommonAbstractTest {
             //asdas
 
             assertTrue(msg0, msg.matches("(?s).*Node \\[id=.*, name=.*, uptime=.*].*"));
-
-
-
             assertTrue(msg0, msg.matches("(?s).*H/N/C \\[hosts=.*, nodes=.*, CPUs=.*].*"));
             assertTrue(msg0, msg.matches("(?s).*CPU \\[cur=.*, avg=.*, GC=.*].*"));
             assertTrue(msg0, msg.matches("(?s).*PageMemory \\[pages=.*].*"));
@@ -133,16 +129,12 @@ public class GridNodeMetricsLogSelfTest extends GridCommonAbstractTest {
             assertTrue(msg0, msg.matches("(?s).*" + CUSTOM_EXECUTOR_0 + " \\[active=.*, idle=.*, qSize=.*].*"));
             assertTrue(msg0, msg.matches("(?s).*" + CUSTOM_EXECUTOR_1 + " \\[active=.*, idle=.*, qSize=.*].*"));
 
-            assertTrue("false should be true!", false);
+//            assertTrue("false should be true!", false);
 
             return true;
         }
 
         return false;
-    }
-
-    private void msgCheck(String msg2check, String errMsg, AtomicReference<String> errStr) {
-
     }
 
     /**

@@ -67,57 +67,62 @@ public class GridNodeMetricsLogPdsSelfTest extends GridNodeMetricsLogSelfTest {
         cleanPersistenceDir();
     }
 
-//    /** {@inheritDoc} */
-//    @Override protected void checkNodeMetricsFormat(String logOutput) {
-//        super.checkNodeMetricsFormat(logOutput);
-//
-//        String msg = "Metrics are missing in the log or have an unexpected format";
-//
-//        assertTrue(msg, logOutput.matches("(?s).*Ignite persistence \\[used=.*].*"));
-//    }
+    /** {@inheritDoc} */
+    @Override protected boolean checkNodeMetricsFormat(String logOutput) {
+        if (super.checkNodeMetricsFormat(logOutput)) {
+            assertTrue("Metrics are missing in the log or have an unexpected format",
+                logOutput.matches("(?s).*Ignite persistence \\[used=.*].*"));
+
+            return true;
+        }
+
+        return false;
+    }
 
     /** {@inheritDoc} */
     @Override protected boolean checkMemoryMetrics(String logOutput) {
-        super.checkMemoryMetrics(logOutput);
-
         boolean summaryFmtMatches = false;
 
-        Set<String> regions = new HashSet<>();
+        if (super.checkMemoryMetrics(logOutput)) {
+            Set<String> regions = new HashSet<>();
 
-        Pattern ptrn = Pattern.compile("(?m).{2,}( {3}(?<name>.+) region|Ignite persistence) " +
-            "\\[used=(?<used>[-.\\d]+|" + UNKNOWN_SIZE + ")?.*]");
+            Pattern ptrn = Pattern.compile("(?m).{2,}( {3}(?<name>.+) region|Ignite persistence) " +
+                "\\[used=(?<used>[-.\\d]+|" + UNKNOWN_SIZE + ")?.*]");
 
-        Matcher matcher = ptrn.matcher(logOutput);
+            Matcher matcher = ptrn.matcher(logOutput);
 
-        while (matcher.find()) {
-            String subj = logOutput.substring(matcher.start(), matcher.end());
+            while (matcher.find()) {
+                String subj = logOutput.substring(matcher.start(), matcher.end());
 
-            assertFalse("\"used\" cannot be empty: " + subj, F.isEmpty(matcher.group("used")));
+                assertFalse("\"used\" cannot be empty: " + subj, F.isEmpty(matcher.group("used")));
 
-            String usedSize = matcher.group("used");
+                String usedSize = matcher.group("used");
 
-            // TODO https://issues.apache.org/jira/browse/IGNITE-9455
-            // TODO The actual value of the metric should be printed when this issue is solved.
-            int used = UNKNOWN_SIZE.equals(usedSize) ? 0 : Integer.parseInt(usedSize);
+                // TODO https://issues.apache.org/jira/browse/IGNITE-9455
+                // TODO The actual value of the metric should be printed when this issue is solved.
+                int used = UNKNOWN_SIZE.equals(usedSize) ? 0 : Integer.parseInt(usedSize);
 
-            assertTrue(used + " should be non negative: " + subj, used >= 0);
+                assertTrue(used + " should be non negative: " + subj, used >= 0);
 
-            String regName = matcher.group("name");
+                String regName = matcher.group("name");
 
-            if (F.isEmpty(regName))
-                summaryFmtMatches = true;
-            else
-                regions.add(regName);
+                if (F.isEmpty(regName))
+                    summaryFmtMatches = true;
+                else
+                    regions.add(regName);
+            }
+
+            assertTrue("Persistence metrics have unexpected format.", summaryFmtMatches);
+
+            Set<String> expRegions = grid(0).context().cache().context().database().dataRegions().stream()
+                .filter(v -> v.config().isPersistenceEnabled())
+                .map(v -> v.config().getName().trim())
+                .collect(Collectors.toSet());
+
+            assertEquals(expRegions, regions);
+
+            return true;
         }
-
-        assertTrue("Persistence metrics have unexpected format.", summaryFmtMatches);
-
-        Set<String> expRegions = grid(0).context().cache().context().database().dataRegions().stream()
-            .filter(v -> v.config().isPersistenceEnabled())
-            .map(v -> v.config().getName().trim())
-            .collect(Collectors.toSet());
-
-        assertEquals(expRegions, regions);
 
         return false;
     }

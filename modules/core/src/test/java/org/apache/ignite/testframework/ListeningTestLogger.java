@@ -85,7 +85,7 @@ public class ListeningTestLogger implements IgniteLogger {
             if (t instanceof RuntimeException)
                 throw (RuntimeException) t;
 
-            assert false;
+            assert t == null : t;
         }
 
     }
