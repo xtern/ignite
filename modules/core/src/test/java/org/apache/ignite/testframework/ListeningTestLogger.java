@@ -17,25 +17,13 @@
 
 package org.apache.ignite.testframework;
 
-import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
-import java.util.function.Predicate;
-import java.util.function.Supplier;
-import java.util.regex.Pattern;
-import java.util.regex.PatternSyntaxException;
 import org.apache.ignite.IgniteLogger;
-import org.apache.ignite.internal.util.typedef.CI1;
 import org.apache.ignite.internal.util.typedef.X;
-import org.apache.ignite.lang.IgniteInClosure;
-import org.apache.ignite.lang.IgnitePredicate;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
-
-import static org.junit.Assert.fail;
 
 /**
  * Implementation of {@link org.apache.ignite.IgniteLogger} that performs any actions when certain message is logged.
@@ -55,7 +43,7 @@ public class ListeningTestLogger implements IgniteLogger {
     /**
      * Log messages listeners.
      */
-    private final List<IgniteInClosure<String>> lsnrs = new CopyOnWriteArrayList<>();
+    private final List<Consumer<String>> lsnrs = new CopyOnWriteArrayList<>();
 
     /**
      * Default constructor.
@@ -81,48 +69,28 @@ public class ListeningTestLogger implements IgniteLogger {
     }
 
     /**
-     * Register log message listener, that will be executed when certain pattern appears in a log message.
+     * todo
      *
-     * @param substr todo
-     * @throws PatternSyntaxException If the expression's syntax is invalid.
+     * @param lsnr Message listener.
      */
-    public LogListenerChainBuilder contains(@NotNull String substr) {
-        return new LogListenerChainBuilderImpl().andContains(substr);
-    }
-
-    /**
-     * Register log message listener, that will be executed when certain pattern appears in a log message.
-     *
-     * @param regexp todo
-     * @throws PatternSyntaxException If the expression's syntax is invalid.
-     */
-    public LogListenerChainBuilder match(@NotNull String regexp) {
-        return new LogListenerChainBuilderImpl().andMatch(regexp);
+    public void register(@NotNull Consumer<String> lsnr) {
+        lsnrs.add(lsnr);
     }
 
     /**
      * todo
-     * Register log message listener, that will be executed when certain pattern appears in a log message.
-     *
-     * @param pred Listener to execute when {@code regex} expression occurs in a log message.
-     * @throws PatternSyntaxException If the expression's syntax is invalid.
-     */
-    public LogListenerChainBuilder filter(@NotNull IgnitePredicate<String> pred) {
-        return new LogListenerChainBuilderImpl().andFilter(pred);
-    }
-
-    /**
      *
      * @param lsnr Message listener.
      */
-    public void listen(@NotNull Consumer<String> lsnr) {
-        lsnrs.add(lsnr);
+    public boolean unregister(@NotNull Consumer<String> lsnr) {
+        //format.matches("q");
+        return lsnrs.remove(lsnr);
     }
 
     /**
      * Clears all listeners.
      */
-    public void reset() {
+    public void clear() {
         lsnrs.clear();
     }
 
@@ -217,114 +185,9 @@ public class ListeningTestLogger implements IgniteLogger {
         if (msg == null)
             return;
 
-        for (IgniteInClosure<String> lsnr : lsnrs)
-            lsnr.apply(msg);
+        for (Consumer<String> lsnr : lsnrs)
+            lsnr.accept(msg);
     }
-
-    public interface LogListenerChainBuilder {
-        public LogListenerChainBuilder andContains(String substr);
-
-        public LogListenerChainBuilder andMatch(String regexp);
-
-        public LogListenerChainBuilder andFilter(IgnitePredicate<String> pred);
-
-        public LogListenerChainBuilder times(int n);
-
-        public LogListenerChainBuilder orError(String msg);
-
-        public LogListenerChain listen();
-    }
-
-    /** */
-    private class LogListenerChainBuilderImpl implements LogListenerChainBuilder {
-        /** */
-        private final CompositeMessageListener lsnr = new CompositeMessageListener();
-
-        /** */
-        private Node prev;
-
-        private void addLast(Node node) {
-            if (prev != null)
-                lsnr.add(prev.listener());
-
-            prev = node;
-        }
-
-        /** {@inheritDoc} */
-        @Override public LogListenerChainBuilder andContains(String substr) {
-            addLast(new Node(substr, msg -> msg.contains(substr)));
-
-            return this;
-        }
-
-        /** {@inheritDoc} */
-        @Override public LogListenerChainBuilder andMatch(String regexp) {
-            // todo compile pattern
-            addLast(new Node(regexp, msg -> msg.matches(regexp)));
-
-            return this;
-        }
-
-        /** {@inheritDoc} */
-        @Override public LogListenerChainBuilder andFilter(IgnitePredicate<String> pred) {
-            addLast(new Node(null, pred));
-
-            return this;
-        }
-
-        /** {@inheritDoc} */
-        @Override public LogListenerChain listen() {
-            addLast(null);
-
-            ListeningTestLogger.this.listen(lsnr);
-
-            return lsnr;
-        }
-
-        /** {@inheritDoc} */
-        @Override public LogListenerChainBuilder times(int n) {
-            if (prev != null)
-                prev.times = n;
-
-            return this;
-        }
-
-        /** {@inheritDoc} */
-        @Override public LogListenerChainBuilder orError(String msg) {
-            if (prev != null)
-                prev.msg = msg;
-
-            return this;
-        }
-
-        /** */
-        final class Node {
-            /** */
-            final String subj;
-
-            /** */
-            final IgnitePredicate<String> pred;
-
-            /** */
-            Integer times;
-
-            /** */
-            String msg;
-
-            /** */
-            Node(String subj, IgnitePredicate<String> pred) {
-                this.subj = subj;
-                this.pred = pred;
-            }
-
-            /** */
-            LogMessageListener listener() {
-                return new LogMessageListener(pred, subj, times, msg);
-            }
-        }
-    }
-
-
 
 
 }

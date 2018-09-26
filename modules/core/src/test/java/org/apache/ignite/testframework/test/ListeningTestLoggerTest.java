@@ -20,6 +20,8 @@ package org.apache.ignite.testframework.test;
 import org.apache.ignite.configuration.IgniteConfiguration;
 import org.apache.ignite.internal.IgniteVersionUtils;
 import org.apache.ignite.testframework.ListeningTestLogger;
+import org.apache.ignite.testframework.LogListener;
+import org.apache.ignite.testframework.LogListenerBuilder;
 import org.apache.ignite.testframework.LogListenerChain;
 import org.apache.ignite.testframework.junits.common.GridCommonAbstractTest;
 
@@ -45,7 +47,9 @@ public class ListeningTestLoggerTest extends GridCommonAbstractTest {
     public void testIgniteVersionLogging() throws Exception {
         int gridCnt = 4;
 
-        LogListenerChain r = log.contains(IgniteVersionUtils.VER_STR).listen();
+        LogListener lsnr = new LogListenerBuilder().matches(IgniteVersionUtils.VER_STR).build();
+
+        log.register(lsnr);
 
         try {
             startGridsMultiThreaded(gridCnt);
@@ -53,7 +57,7 @@ public class ListeningTestLoggerTest extends GridCommonAbstractTest {
 //            assertTrue(r.get() + " < " + gridCnt, r.get() >= gridCnt);
 //
 //            assertEquals(0, r.get() % gridCnt);
-            r.check();
+            lsnr.check();
         } finally {
             stopAllGrids();
         }

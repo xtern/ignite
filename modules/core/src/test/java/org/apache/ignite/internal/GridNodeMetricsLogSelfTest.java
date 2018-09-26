@@ -27,6 +27,8 @@ import org.apache.ignite.configuration.ExecutorConfiguration;
 import org.apache.ignite.configuration.IgniteConfiguration;
 import org.apache.ignite.internal.util.typedef.F;
 import org.apache.ignite.testframework.ListeningTestLogger;
+import org.apache.ignite.testframework.LogListener;
+import org.apache.ignite.testframework.LogListenerBuilder;
 import org.apache.ignite.testframework.LogListenerChain;
 import org.apache.ignite.testframework.junits.common.GridCommonAbstractTest;
 import org.apache.ignite.testframework.junits.common.GridCommonTest;
@@ -68,7 +70,7 @@ public class GridNodeMetricsLogSelfTest extends GridCommonAbstractTest {
 
     /** {@inheritDoc} */
     @Override protected void beforeTest() throws Exception {
-        strLog.reset();
+        strLog.clear();
 
 //        strLog.logLength(300_000);
 
@@ -79,10 +81,17 @@ public class GridNodeMetricsLogSelfTest extends GridCommonAbstractTest {
      * @throws Exception If failed.
      */
     public void testNodeMetricsLog() throws Exception {
-         LogListenerChain chain = strLog
-             .filter(this::checkNodeMetricsFormat)
-             .andFilter(this::checkMemoryMetrics)
-             .listen();
+
+        LogListener lsnr = new LogListenerBuilder()
+            .matches(this::checkNodeMetricsFormat)
+            .matches(this::checkMemoryMetrics)
+            .build();
+
+        strLog.register(lsnr);
+//         LogListenerChain chain = strLog
+//             .filter(this::checkNodeMetricsFormat)
+//             .andFilter(this::checkMemoryMetrics)
+//             .listen();
         //listenConditionHits(msg -> msg.contains("qqq"));
 
 //        Supplier<Integer> mem = strLog.listenConditionHits(this::checkMemoryMetrics);
@@ -102,7 +111,7 @@ public class GridNodeMetricsLogSelfTest extends GridCommonAbstractTest {
 //        String logOutput = strLog.toString();
 
 //        checkNodeMetricsFormat(logOutput);
-        chain.check();
+        lsnr.check();
     }
 
     /**
