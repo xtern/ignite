@@ -19,8 +19,6 @@ package org.apache.ignite.internal;
 
 import java.util.HashSet;
 import java.util.Set;
-import java.util.concurrent.atomic.AtomicReference;
-import java.util.function.Supplier;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -29,6 +27,7 @@ import org.apache.ignite.configuration.ExecutorConfiguration;
 import org.apache.ignite.configuration.IgniteConfiguration;
 import org.apache.ignite.internal.util.typedef.F;
 import org.apache.ignite.testframework.ListeningTestLogger;
+import org.apache.ignite.testframework.LogListenerChain;
 import org.apache.ignite.testframework.junits.common.GridCommonAbstractTest;
 import org.apache.ignite.testframework.junits.common.GridCommonTest;
 
@@ -80,9 +79,13 @@ public class GridNodeMetricsLogSelfTest extends GridCommonAbstractTest {
      * @throws Exception If failed.
      */
     public void testNodeMetricsLog() throws Exception {
-        Supplier<Integer> cmn = strLog.listenConditionHits(msg -> msg.contains("qqq"));
+         LogListenerChain chain = strLog
+             .filter(this::checkNodeMetricsFormat)
+             .andFilter(this::checkMemoryMetrics)
+             .listen();
+        //listenConditionHits(msg -> msg.contains("qqq"));
 
-        Supplier<Integer> mem = strLog.listenConditionHits(this::checkMemoryMetrics);
+//        Supplier<Integer> mem = strLog.listenConditionHits(this::checkMemoryMetrics);
 
         IgniteCache<Integer, String> cache1 = grid(0).createCache("TestCache1");
         IgniteCache<Integer, String> cache2 = grid(1).createCache("TestCache2");
@@ -99,8 +102,7 @@ public class GridNodeMetricsLogSelfTest extends GridCommonAbstractTest {
 //        String logOutput = strLog.toString();
 
 //        checkNodeMetricsFormat(logOutput);
-        assertTrue(String.valueOf(cmn.get()), cmn.get() > 0);
-        assertTrue(String.valueOf(mem.get()), mem.get() > 0);
+        chain.check();
     }
 
     /**
@@ -130,7 +132,7 @@ public class GridNodeMetricsLogSelfTest extends GridCommonAbstractTest {
             assertTrue(msg0, msg.matches("(?s).*" + CUSTOM_EXECUTOR_0 + " \\[active=.*, idle=.*, qSize=.*].*"));
             assertTrue(msg0, msg.matches("(?s).*" + CUSTOM_EXECUTOR_1 + " \\[active=.*, idle=.*, qSize=.*].*"));
 
-//            assertTrue("false should be true!", false);
+            assertTrue("false should be true!", false);
 
             return true;
         }

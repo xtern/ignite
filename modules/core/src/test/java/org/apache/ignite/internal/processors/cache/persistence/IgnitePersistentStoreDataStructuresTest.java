@@ -21,6 +21,7 @@ import java.util.concurrent.TimeUnit;
 import org.apache.ignite.Ignite;
 import org.apache.ignite.IgniteAtomicLong;
 import org.apache.ignite.IgniteAtomicSequence;
+import org.apache.ignite.IgniteCache;
 import org.apache.ignite.IgniteCountDownLatch;
 import org.apache.ignite.IgniteLock;
 import org.apache.ignite.IgniteQueue;
@@ -146,25 +147,36 @@ public class IgnitePersistentStoreDataStructuresTest extends GridCommonAbstractT
 
         ignite.active(true);
 
-        IgniteAtomicSequence sequence = ignite.atomicSequence("testSequence", 0, true);
+        IgniteCache cache = ignite.getOrCreateCache("testCache");
 
-        int i = 0;
+        ignite.active(false);
 
-        while (i < 1000) {
-            sequence.incrementAndGet();
-
-            i++;
-        }
-
-        stopAllGrids();
-
-        ignite = startGrids(4);
+        assert cache.get("key") == null;
 
         ignite.active(true);
 
-        sequence = ignite.atomicSequence("testSequence", 0, false);
-
-        assertTrue(sequence.incrementAndGet() > i);
+//
+//        IgniteAtomicSequence sequence = ignite.atomicSequence("testSequence", 0, true);
+//
+//        int i = 0;
+//
+//        while (i < 1000) {
+//            sequence.incrementAndGet();
+//
+//            i++;
+//        }
+//
+//        stopAllGrids();
+//
+//        ignite = startGrids(4);
+//
+//
+//
+//        ignite.active(true);
+//
+//        sequence = ignite.atomicSequence("testSequence", 0, false);
+//
+//        assertTrue(sequence.incrementAndGet() > i);
     }
 
     /**

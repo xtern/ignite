@@ -22,8 +22,6 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.concurrent.Callable;
-import java.util.function.Supplier;
-import java.util.regex.Pattern;
 import org.apache.ignite.Ignite;
 import org.apache.ignite.IgniteCache;
 import org.apache.ignite.binary.BinaryInvalidTypeException;
@@ -33,9 +31,9 @@ import org.apache.ignite.cache.query.annotations.QuerySqlField;
 import org.apache.ignite.configuration.CacheConfiguration;
 import org.apache.ignite.internal.IgniteEx;
 import org.apache.ignite.internal.processors.GridProcessorAdapter;
-import org.apache.ignite.testframework.GridStringLogger;
 import org.apache.ignite.testframework.GridTestUtils;
 import org.apache.ignite.testframework.ListeningTestLogger;
+import org.apache.ignite.testframework.LogListenerChain;
 import org.apache.ignite.testframework.junits.common.GridCommonAbstractTest;
 
 
@@ -162,6 +160,13 @@ public class BinaryTypeMismatchLoggingTest extends GridCommonAbstractTest {
     public void testValueWriteCreateTable() throws Exception {
         Ignite ignite = startGridWithLogCapture();
 
+        LogListenerChain chain = capture
+            .contains("Key-value pair is not inserted into any SQL table [cacheName=binary, " + MESSAGE_PAYLOAD_VALUE + "]").times(1)
+            .andContains("Value type(s) are specified via CacheConfiguration.indexedTypes or CacheConfiguration.queryEntities").times(1)
+            .andContains("Make sure that same type(s) used when adding Object or BinaryObject to cache").times(1)
+            .andContains("Otherwise, entries will 1be stored in cache, but not appear as SQL Table rows").times(1).orError("Ass!!")
+            .listen();
+
         IgniteCache def = ignite.createCache("default");
 
         def.query(new SqlFieldsQuery("CREATE TABLE binary (id INT PRIMARY KEY, str VARCHAR) " +
@@ -173,39 +178,34 @@ public class BinaryTypeMismatchLoggingTest extends GridCommonAbstractTest {
 
         assertEquals(0, countRows(binary));
 
-        String capturedMessages = this.capture.toString();
+//        String capturedMessages = this.capture.toString();
 
-        capture.listener().  // <- возвращает билдер
-
-
-            onMessage() // <-- Добавляет цепочку для каждого сообщения, иначе цепочка для всего лога
-            .chain() // <- добавляет признак последовательного вызова
-            .substr("one time").times(1) // <-- подстрока должна быть встречена один раз
-            .substr("not present").absent()
-            .substr("sometimes")
-
-            .listen(); // <-- возвращает какую-то херь у которой надо вызвать check()/get()/validate()
+//        capture.listener().  // <- возвращает билдер
+//
+//
+//            onMessage() // <-- Добавляет цепочку для каждого сообщения, иначе цепочка для всего лога
+//            .chain() // <- добавляет признак последовательного вызова
+//            .substr("one time").times(1) // <-- подстрока должна быть встречена один раз
+//            .substr("not present").absent()
+//            .substr("sometimes")
+//
+//            .listen(); // <-- возвращает какую-то херь у которой надо вызвать check()/get()/validate()
 
         //capture.match("\\d+")
 
         //<-- Добавляет цепочку для каждого сообщения, иначе цепочка для всего лога
 
-        capture.listener().
-            .chain()
-            .substr
-            .match(Pattern.compile("\\d+"))
+//        capture.listener().
+//            .chain()
+//            .substr
+//            .match(Pattern.compile("\\d+"))
+//
+//            .substr("substr").times(1) // <-- подстрока должна быть встречена один раз
+//            .substr("Value type(s) are specified via CacheConfiguration.indexedTypes or CacheConfiguration.queryEntities").times(1);
 
-            .substr("substr").times(1) // <-- подстрока должна быть встречена один раз
-            .substr("Value type(s) are specified via CacheConfiguration.indexedTypes or CacheConfiguration.queryEntities").times(1);
 
-        assertContainsExactlyOnce(capturedMessages,
-            "Key-value pair is not inserted into any SQL table [cacheName=binary, " + MESSAGE_PAYLOAD_VALUE + "]");
-        assertContainsExactlyOnce(capturedMessages,
-            "Value type(s) are specified via CacheConfiguration.indexedTypes or CacheConfiguration.queryEntities");
-        assertContainsExactlyOnce(capturedMessages,
-            "Make sure that same type(s) used when adding Object or BinaryObject to cache");
-        assertContainsExactlyOnce(capturedMessages,
-            "Otherwise, entries will be stored in cache, but not appear as SQL Table rows");
+
+        chain.check();
     }
 
     /**
@@ -238,46 +238,46 @@ public class BinaryTypeMismatchLoggingTest extends GridCommonAbstractTest {
     public void testEntryWriteCreateTable() throws Exception {
         Ignite ignite = startGridWithLogCapture();
 
-        asyncResult = capture.listen(substr("substr").times(1));
-
-        asyncResult.check();
-
-
-
-        //Result res = capture.listen("substr").hits().and("qqq").match()
-
-        Supplier<Integer> res = capture.listenSubstringHits(MESSAGE_PAYLOAD_VALUE);
-
-        IgniteCache def = ignite.createCache("default");
-
-        def.query(new SqlFieldsQuery("CREATE TABLE binary (id INT PRIMARY KEY, str VARCHAR) " +
-            "WITH \"cache_name=binary, key_type=IdKey, value_type=Payload\"").setSchema("PUBLIC"));
-
-        IgniteCache<Integer, Payload> binary = ignite.cache("binary");
-        binary.put(1, new Payload("foo"));
-        binary.put(2, new Payload("bar"));
-
-        assertEquals(0, countRows(binary));
-
-        //assertContainsExactlyOnce(capture.toString(), MESSAGE_PAYLOAD_VALUE);
-
-        assertEquals(1, res.get().intValue());
-
-        capture.reset();
-
-        res = capture.listenSubstringHits(MESSAGE_PAYLOAD_VALUE);
-
-        def.query(new SqlFieldsQuery("CREATE TABLE binary2 (id INT PRIMARY KEY, str VARCHAR) " +
-            "WITH \"cache_name=binary2, key_type=IdKey, value_type=Payload\"").setSchema("PUBLIC"));
-
-        IgniteCache<Integer, Payload> binary2 = ignite.cache("binary2");
-        binary2.put(1, new Payload("foo"));
-        binary2.put(2, new Payload("bar"));
-
-        assertEquals(0, countRows(binary2));
-
-        //assertContainsExactlyOnce(capture.toString(), MESSAGE_PAYLOAD_VALUE);
-        assertEquals(1, res.get().intValue());
+//        asyncResult = capture.listen(substr("substr").times(1));
+//
+//        asyncResult.check();
+//
+//
+//
+//        //Result res = capture.listen("substr").hits().and("qqq").match()
+//
+//        Supplier<Integer> res = capture.listenSubstringHits(MESSAGE_PAYLOAD_VALUE);
+//
+//        IgniteCache def = ignite.createCache("default");
+//
+//        def.query(new SqlFieldsQuery("CREATE TABLE binary (id INT PRIMARY KEY, str VARCHAR) " +
+//            "WITH \"cache_name=binary, key_type=IdKey, value_type=Payload\"").setSchema("PUBLIC"));
+//
+//        IgniteCache<Integer, Payload> binary = ignite.cache("binary");
+//        binary.put(1, new Payload("foo"));
+//        binary.put(2, new Payload("bar"));
+//
+//        assertEquals(0, countRows(binary));
+//
+//        //assertContainsExactlyOnce(capture.toString(), MESSAGE_PAYLOAD_VALUE);
+//
+//        assertEquals(1, res.get().intValue());
+//
+//        capture.reset();
+//
+//        res = capture.listenSubstringHits(MESSAGE_PAYLOAD_VALUE);
+//
+//        def.query(new SqlFieldsQuery("CREATE TABLE binary2 (id INT PRIMARY KEY, str VARCHAR) " +
+//            "WITH \"cache_name=binary2, key_type=IdKey, value_type=Payload\"").setSchema("PUBLIC"));
+//
+//        IgniteCache<Integer, Payload> binary2 = ignite.cache("binary2");
+//        binary2.put(1, new Payload("foo"));
+//        binary2.put(2, new Payload("bar"));
+//
+//        assertEquals(0, countRows(binary2));
+//
+//        //assertContainsExactlyOnce(capture.toString(), MESSAGE_PAYLOAD_VALUE);
+//        assertEquals(1, res.get().intValue());
     }
 
     /**

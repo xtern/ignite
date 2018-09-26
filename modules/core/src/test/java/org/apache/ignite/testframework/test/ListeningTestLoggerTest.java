@@ -17,10 +17,10 @@
 
 package org.apache.ignite.testframework.test;
 
-import java.util.function.Supplier;
 import org.apache.ignite.configuration.IgniteConfiguration;
 import org.apache.ignite.internal.IgniteVersionUtils;
 import org.apache.ignite.testframework.ListeningTestLogger;
+import org.apache.ignite.testframework.LogListenerChain;
 import org.apache.ignite.testframework.junits.common.GridCommonAbstractTest;
 
 /**
@@ -45,14 +45,15 @@ public class ListeningTestLoggerTest extends GridCommonAbstractTest {
     public void testIgniteVersionLogging() throws Exception {
         int gridCnt = 4;
 
-        Supplier<Integer> r = log.listenSubstringHits(IgniteVersionUtils.VER_STR);
+        LogListenerChain r = log.contains(IgniteVersionUtils.VER_STR).listen();
 
         try {
             startGridsMultiThreaded(gridCnt);
 
-            assertTrue(r.get() + " < " + gridCnt, r.get() >= gridCnt);
-
-            assertEquals(0, r.get() % gridCnt);
+//            assertTrue(r.get() + " < " + gridCnt, r.get() >= gridCnt);
+//
+//            assertEquals(0, r.get() % gridCnt);
+            r.check();
         } finally {
             stopAllGrids();
         }

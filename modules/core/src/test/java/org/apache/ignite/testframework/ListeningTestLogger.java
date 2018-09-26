@@ -17,10 +17,13 @@
 
 package org.apache.ignite.testframework;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
+import java.util.function.Predicate;
 import java.util.function.Supplier;
 import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
@@ -32,80 +35,13 @@ import org.apache.ignite.lang.IgnitePredicate;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import static org.junit.Assert.fail;
+
 /**
  * Implementation of {@link org.apache.ignite.IgniteLogger} that performs any actions when certain message is logged.
  * It can be useful in tests to ensure that a specific message was (or was not) printed to the log.
  */
 public class ListeningTestLogger implements IgniteLogger {
-    /** */
-    public static class LogMessageListener implements CI1<String>, Supplier<Integer> {
-        /** */
-        private final IgnitePredicate<String> pred;
-
-        /** */
-        private final AtomicReference<Throwable> err = new AtomicReference<>();
-
-        /** */
-        private AtomicInteger appliedCntr = new AtomicInteger();
-
-        /** */
-        protected LogMessageListener(IgnitePredicate<String> pred) {
-            this.pred = pred;
-        }
-
-        /** {@inheritDoc} */
-        @Override public void apply(String msg) {
-            if (err.get() != null)
-                return;
-
-            try {
-                boolean applied = pred.apply(msg);
-
-                if (applied)
-                    appliedCntr.incrementAndGet();
-            } catch (Throwable t) {
-                err.compareAndSet(null, t);
-            }
-        }
-
-
-        /** {@inheritDoc} */
-        @Override public Integer get() {
-            errCheck();
-
-            return appliedCntr.get();
-        }
-
-        private void errCheck() {
-            Throwable t = err.get();
-
-            if (t instanceof Error)
-                throw (Error) t;
-
-            if (t instanceof RuntimeException)
-                throw (RuntimeException) t;
-
-            assert t == null : t;
-        }
-
-    }
-
-    /** */
-    private static class StringContainsPredicate implements IgnitePredicate<String> {
-        /** */
-        private final String subj;
-
-        /** */
-        StringContainsPredicate(String subj) {
-            this.subj = subj;
-        }
-
-        /** {@inheritDoc} */
-        @Override public boolean apply(String msg) {
-            return msg.contains(subj);
-        }
-    }
-
     /**
      * If set to {@code true}, enables debug and trace log messages processing.
      */
@@ -150,12 +86,18 @@ public class ListeningTestLogger implements IgniteLogger {
      * @param substr todo
      * @throws PatternSyntaxException If the expression's syntax is invalid.
      */
-    public Supplier<Integer> listenSubstringHits(@NotNull String substr) {
-        LogMessageListener res = new LogMessageListener(new StringContainsPredicate(substr));
+    public LogListenerChainBuilder contains(@NotNull String substr) {
+        return new LogListenerChainBuilderImpl().andContains(substr);
+    }
 
-        lsnrs.add(res);
-
-        return res;
+    /**
+     * Register log message listener, that will be executed when certain pattern appears in a log message.
+     *
+     * @param regexp todo
+     * @throws PatternSyntaxException If the expression's syntax is invalid.
+     */
+    public LogListenerChainBuilder match(@NotNull String regexp) {
+        return new LogListenerChainBuilderImpl().andMatch(regexp);
     }
 
     /**
@@ -165,19 +107,15 @@ public class ListeningTestLogger implements IgniteLogger {
      * @param pred Listener to execute when {@code regex} expression occurs in a log message.
      * @throws PatternSyntaxException If the expression's syntax is invalid.
      */
-    public Supplier<Integer> listenConditionHits(@NotNull IgnitePredicate<String> pred) {
-        LogMessageListener lsnr = new LogMessageListener(pred);
-
-        lsnrs.add(lsnr);
-
-        return lsnr;
+    public LogListenerChainBuilder filter(@NotNull IgnitePredicate<String> pred) {
+        return new LogListenerChainBuilderImpl().andFilter(pred);
     }
 
     /**
      *
      * @param lsnr Message listener.
      */
-    public void listen(@NotNull IgniteInClosure<String> lsnr) {
+    public void listen(@NotNull Consumer<String> lsnr) {
         lsnrs.add(lsnr);
     }
 
@@ -282,4 +220,111 @@ public class ListeningTestLogger implements IgniteLogger {
         for (IgniteInClosure<String> lsnr : lsnrs)
             lsnr.apply(msg);
     }
+
+    public interface LogListenerChainBuilder {
+        public LogListenerChainBuilder andContains(String substr);
+
+        public LogListenerChainBuilder andMatch(String regexp);
+
+        public LogListenerChainBuilder andFilter(IgnitePredicate<String> pred);
+
+        public LogListenerChainBuilder times(int n);
+
+        public LogListenerChainBuilder orError(String msg);
+
+        public LogListenerChain listen();
+    }
+
+    /** */
+    private class LogListenerChainBuilderImpl implements LogListenerChainBuilder {
+        /** */
+        private final CompositeMessageListener lsnr = new CompositeMessageListener();
+
+        /** */
+        private Node prev;
+
+        private void addLast(Node node) {
+            if (prev != null)
+                lsnr.add(prev.listener());
+
+            prev = node;
+        }
+
+        /** {@inheritDoc} */
+        @Override public LogListenerChainBuilder andContains(String substr) {
+            addLast(new Node(substr, msg -> msg.contains(substr)));
+
+            return this;
+        }
+
+        /** {@inheritDoc} */
+        @Override public LogListenerChainBuilder andMatch(String regexp) {
+            // todo compile pattern
+            addLast(new Node(regexp, msg -> msg.matches(regexp)));
+
+            return this;
+        }
+
+        /** {@inheritDoc} */
+        @Override public LogListenerChainBuilder andFilter(IgnitePredicate<String> pred) {
+            addLast(new Node(null, pred));
+
+            return this;
+        }
+
+        /** {@inheritDoc} */
+        @Override public LogListenerChain listen() {
+            addLast(null);
+
+            ListeningTestLogger.this.listen(lsnr);
+
+            return lsnr;
+        }
+
+        /** {@inheritDoc} */
+        @Override public LogListenerChainBuilder times(int n) {
+            if (prev != null)
+                prev.times = n;
+
+            return this;
+        }
+
+        /** {@inheritDoc} */
+        @Override public LogListenerChainBuilder orError(String msg) {
+            if (prev != null)
+                prev.msg = msg;
+
+            return this;
+        }
+
+        /** */
+        final class Node {
+            /** */
+            final String subj;
+
+            /** */
+            final IgnitePredicate<String> pred;
+
+            /** */
+            Integer times;
+
+            /** */
+            String msg;
+
+            /** */
+            Node(String subj, IgnitePredicate<String> pred) {
+                this.subj = subj;
+                this.pred = pred;
+            }
+
+            /** */
+            LogMessageListener listener() {
+                return new LogMessageListener(pred, subj, times, msg);
+            }
+        }
+    }
+
+
+
+
 }
