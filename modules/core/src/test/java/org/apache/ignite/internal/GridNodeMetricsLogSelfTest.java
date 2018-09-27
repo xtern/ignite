@@ -28,8 +28,6 @@ import org.apache.ignite.configuration.IgniteConfiguration;
 import org.apache.ignite.internal.util.typedef.F;
 import org.apache.ignite.testframework.ListeningTestLogger;
 import org.apache.ignite.testframework.LogListener;
-import org.apache.ignite.testframework.LogListenerBuilder;
-import org.apache.ignite.testframework.LogListenerChain;
 import org.apache.ignite.testframework.junits.common.GridCommonAbstractTest;
 import org.apache.ignite.testframework.junits.common.GridCommonTest;
 
@@ -82,10 +80,7 @@ public class GridNodeMetricsLogSelfTest extends GridCommonAbstractTest {
      */
     public void testNodeMetricsLog() throws Exception {
 
-        LogListener lsnr = new LogListenerBuilder()
-            .matches(this::checkNodeMetricsFormat)
-            .matches(this::checkMemoryMetrics)
-            .build();
+        LogListener lsnr = LogListener.matches("11").build();
 
         strLog.register(lsnr);
 

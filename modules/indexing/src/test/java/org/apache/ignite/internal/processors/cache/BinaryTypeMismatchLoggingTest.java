@@ -34,8 +34,6 @@ import org.apache.ignite.internal.processors.GridProcessorAdapter;
 import org.apache.ignite.testframework.GridTestUtils;
 import org.apache.ignite.testframework.ListeningTestLogger;
 import org.apache.ignite.testframework.LogListener;
-import org.apache.ignite.testframework.LogListenerBuilder;
-import org.apache.ignite.testframework.LogListenerChain;
 import org.apache.ignite.testframework.junits.common.GridCommonAbstractTest;
 
 
@@ -162,11 +160,11 @@ public class BinaryTypeMismatchLoggingTest extends GridCommonAbstractTest {
     public void testValueWriteCreateTable() throws Exception {
         Ignite ignite = startGridWithLogCapture();
 
-        LogListener lsnr = new LogListenerBuilder()
+        LogListener lsnr = LogListener
             .matches("Key-value pair is not inserted into any SQL table [cacheName=binary, " + MESSAGE_PAYLOAD_VALUE + "]").times(1)
-            .matches("Value type(s) are specified via CacheConfiguration.indexedTypes or CacheConfiguration.queryEntities").times(1)
-            .matches("Make sure that same type(s) used when adding Object or BinaryObject to cache").times(1)
-            .matches("Otherwise, entries will 1be stored in cache, but not appear as SQL Table rows").times(1).orError("Ass!!")
+            .andMatches("Value type(s) are specified via CacheConfiguration.indexedTypes or CacheConfiguration.queryEntities").times(1)
+            .andMatches("Make sure that same type(s) used when adding Object or BinaryObject to cache").times(1)
+            .andMatches("Otherwise, entries will 1be stored in cache, but not appear as SQL Table rows").times(1).orError("Ass!!")
             .build();
 
         capture.register(lsnr);
