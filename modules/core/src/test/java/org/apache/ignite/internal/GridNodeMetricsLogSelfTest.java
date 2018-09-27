@@ -88,13 +88,6 @@ public class GridNodeMetricsLogSelfTest extends GridCommonAbstractTest {
             .build();
 
         strLog.register(lsnr);
-//         LogListenerChain chain = strLog
-//             .filter(this::checkNodeMetricsFormat)
-//             .andFilter(this::checkMemoryMetrics)
-//             .listen();
-        //listenConditionHits(msg -> msg.contains("qqq"));
-
-//        Supplier<Integer> mem = strLog.listenConditionHits(this::checkMemoryMetrics);
 
         IgniteCache<Integer, String> cache1 = grid(0).createCache("TestCache1");
         IgniteCache<Integer, String> cache2 = grid(1).createCache("TestCache2");
