@@ -167,7 +167,7 @@ public class BinaryTypeMismatchLoggingTest extends GridCommonAbstractTest {
             .andMatches("Otherwise, entries will 1be stored in cache, but not appear as SQL Table rows").times(1).orError("Ass!!")
             .build();
 
-        capture.register(lsnr);
+        capture.registerListener(lsnr);
 
         IgniteCache def = ignite.createCache("default");
 

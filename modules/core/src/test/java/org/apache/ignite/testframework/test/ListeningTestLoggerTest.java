@@ -47,7 +47,7 @@ public class ListeningTestLoggerTest extends GridCommonAbstractTest {
 
         LogListener lsnr = LogListener.matches(IgniteVersionUtils.VER_STR).build();
 
-        log.register(lsnr);
+        log.registerListener(lsnr);
 
         try {
             startGridsMultiThreaded(gridCnt);

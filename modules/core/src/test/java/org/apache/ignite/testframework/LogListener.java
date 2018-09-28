@@ -32,21 +32,21 @@ public abstract class LogListener implements Consumer<String> {
 
     public abstract void check() throws AssertionError;
 
-    public static LogListenerBuilder matches(String substr) {
-        return new LogListenerBuilder().andMatches(substr);
+    public static Builder matches(String substr) {
+        return new Builder().andMatches(substr);
     }
 
-    public static LogListenerBuilder matches(Pattern regexp) {
-        return new LogListenerBuilder().andMatches(regexp);
+    public static Builder matches(Pattern regexp) {
+        return new Builder().andMatches(regexp);
     }
 
-    public static LogListenerBuilder matches(Predicate<String> pred) {
-        return new LogListenerBuilder().andMatches(pred);
+    public static Builder matches(Predicate<String> pred) {
+        return new Builder().andMatches(pred);
     }
 
-    public static class LogListenerBuilder {
-
-        private LogListenerBuilder() {};
+    public static class Builder {
+        /** */
+        private Builder() {};
 
         /** */
         private final CompositeMessageListener lsnr = new CompositeMessageListener();
@@ -61,19 +61,19 @@ public abstract class LogListener implements Consumer<String> {
             prev = node;
         }
 
-        public LogListenerBuilder andMatches(String substr) {
+        public Builder andMatches(String substr) {
             addLast(new Node(substr, msg -> msg.contains(substr)));
 
             return this;
         }
 
-        public LogListenerBuilder andMatches(Pattern regexp) {
+        public Builder andMatches(Pattern regexp) {
             addLast(new Node(regexp.toString(), msg -> regexp.matcher(msg).matches()));
 
             return this;
         }
 
-        public LogListenerBuilder andMatches(Predicate<String> pred) {
+        public Builder andMatches(Predicate<String> pred) {
             addLast(new Node(null, pred));
 
             return this;
@@ -85,28 +85,28 @@ public abstract class LogListener implements Consumer<String> {
             return lsnr;
         }
 
-        public LogListenerBuilder times(int n) {
+        public Builder times(int n) {
             if (prev != null)
                 prev.min = prev.max = n;
 
             return this;
         }
 
-        public LogListenerBuilder atLeast(int n) {
+        public Builder atLeast(int n) {
             if (prev != null)
                 prev.min = n;
 
             return this;
         }
 
-        public LogListenerBuilder atMost(int n) {
+        public Builder atMost(int n) {
             if (prev != null)
                 prev.max = n;
 
             return this;
         }
 
-        public LogListenerBuilder orError(String msg) {
+        public Builder orError(String msg) {
             if (prev != null)
                 prev.msg = msg;
 
@@ -141,115 +141,113 @@ public abstract class LogListener implements Consumer<String> {
                 return new LogMessageListener(pred, ValueRange.of(min, max), subj, msg);
             }
         }
+    }
+
+    /** */
+    private static class LogMessageListener extends LogListener {
+        /** */
+        private final Predicate<String> pred;
 
         /** */
-        private static class LogMessageListener extends LogListener {
-            /** */
-            private final Predicate<String> pred;
+        private final AtomicReference<Throwable> err = new AtomicReference<>();
 
-            /** */
-            private final AtomicReference<Throwable> err = new AtomicReference<>();
+        /** */
+        private final AtomicInteger matches = new AtomicInteger();
 
-            /** */
-            private final AtomicInteger hits = new AtomicInteger();
+        /** */
+        private final ValueRange exp;
 
-            /** */
-            private final ValueRange exp;
+        /** */
+        private final String subj;
 
-            /** */
-            private final String subj;
+        /** */
+        private final String errMsg;
 
-            /** */
-            private final String errMsg;
+        /**
+         *
+         * @param subj Search subject.
+         * @param exp Expected occurrences.
+         * @param pred Search predicate.
+         * @param errMsg Custom error message.
+         */
+        private LogMessageListener(
+            @NotNull Predicate<String> pred,
+            @NotNull ValueRange exp,
+            @Nullable String subj,
+            @Nullable String errMsg
+        ) {
+            this.pred = pred;
+            this.exp = exp;
+            this.subj = subj == null ? pred.toString() : subj;
+            this.errMsg = errMsg;
+        }
 
-            /**
-             *
-             * @param subj Search subject.
-             * @param exp Expected occurrences.
-             * @param pred Search predicate.
-             * @param errMsg Custom error message.
-             */
-            protected LogMessageListener(
-                @NotNull Predicate<String> pred,
-                @NotNull ValueRange exp,
-                @Nullable String subj,
-                @Nullable String errMsg
-            ) {
-                this.pred = pred;
-                this.exp = exp;
-                this.subj = subj == null ? pred.toString() : subj;
-                this.errMsg = errMsg;
-            }
+        /** {@inheritDoc} */
+        @Override public void accept(String msg) {
+            if (err.get() != null)
+                return;
 
-            /** {@inheritDoc} */
-            @Override public void accept(String msg) {
-                if (err.get() != null)
-                    return;
+            try {
+                if (pred.test(msg))
+                    matches.incrementAndGet();
+            } catch (Throwable t) {
+                err.compareAndSet(null, t);
 
-                try {
-                    if (pred.test(msg))
-                        hits.incrementAndGet();
-                } catch (Throwable t) {
-                    err.compareAndSet(null, t);
-
-                    if (t instanceof VirtualMachineError)
-                        throw t;
-                }
-            }
-
-            /** {@inheritDoc} */
-            @Override public void check() {
-                errCheck();
-
-                int hitsCnt = hits.get();
-
-                if (!exp.isValidIntValue(hitsCnt)) {
-                    if (errMsg != null)
-                        throw new AssertionError(errMsg);
-
-                    throw new AssertionError("\"" + subj + "\" matches " + hitsCnt +
-                        " times, expected " + (exp.getMaximum() == exp.getMinimum() ? exp.getMinimum() : exp) + ".");
-                }
-            }
-
-            /**
-             * Check that there were no runtime errors.
-             */
-            private void errCheck() {
-                Throwable t = err.get();
-
-                if (t instanceof Error)
-                    throw (Error) t;
-
-                if (t instanceof RuntimeException)
-                    throw (RuntimeException) t;
-
-                assert t == null : t;
+                if (t instanceof VirtualMachineError)
+                    throw t;
             }
         }
 
+        /** {@inheritDoc} */
+        @Override public void check() {
+            errCheck();
+
+            int matchesCnt = matches.get();
+
+            if (!exp.isValidIntValue(matchesCnt)) {
+                String err =  errMsg != null ? errMsg :
+                    "\"" + subj + "\" matches " + matchesCnt + " times, expected " +
+                        (exp.getMaximum() == exp.getMinimum() ? exp.getMinimum() : exp) + ".";
+
+                throw new AssertionError(err);
+            }
+        }
+
+        /**
+         * Check that there were no runtime errors.
+         */
+        private void errCheck() {
+            Throwable t = err.get();
+
+            if (t instanceof Error)
+                throw (Error) t;
+
+            if (t instanceof RuntimeException)
+                throw (RuntimeException) t;
+
+            assert t == null : t;
+        }
+    }
+
+    /** */
+    private static class CompositeMessageListener extends LogListener {
         /** */
-        private static class CompositeMessageListener extends LogListener {
-            /** */
-            private final List<LogMessageListener> lsnrs = new ArrayList<>();
+        private final List<LogMessageListener> lsnrs = new ArrayList<>();
 
-            /** {@inheritDoc} */
-            @Override public void check() {
-                for (LogMessageListener lsnr : lsnrs)
-                    lsnr.check();
-            }
+        /** {@inheritDoc} */
+        @Override public void check() {
+            for (LogMessageListener lsnr : lsnrs)
+                lsnr.check();
+        }
 
-            /** {@inheritDoc} */
-            @Override public void accept(String msg) {
-                for (LogMessageListener lsnr : lsnrs)
-                    lsnr.accept(msg);
-            }
+        /** {@inheritDoc} */
+        @Override public void accept(String msg) {
+            for (LogMessageListener lsnr : lsnrs)
+                lsnr.accept(msg);
+        }
 
-
-            public void add(LogMessageListener lsnr) {
-                lsnrs.add(lsnr);
-            }
-
+        public void add(LogMessageListener lsnr) {
+            lsnrs.add(lsnr);
         }
     }
 }

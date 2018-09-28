@@ -73,7 +73,7 @@ public class ListeningTestLogger implements IgniteLogger {
      *
      * @param lsnr Message listener.
      */
-    public void register(@NotNull Consumer<String> lsnr) {
+    public void registerListener(@NotNull Consumer<String> lsnr) {
         lsnrs.add(lsnr);
     }
 
@@ -82,7 +82,7 @@ public class ListeningTestLogger implements IgniteLogger {
      *
      * @param lsnr Message listener.
      */
-    public boolean unregister(@NotNull Consumer<String> lsnr) {
+    public boolean unregisterListener(@NotNull Consumer<String> lsnr) {
         //format.matches("q");
         return lsnrs.remove(lsnr);
     }
@@ -90,7 +90,7 @@ public class ListeningTestLogger implements IgniteLogger {
     /**
      * Clears all listeners.
      */
-    public void clear() {
+    public void clearListeners() {
         lsnrs.clear();
     }
 

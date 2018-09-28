@@ -68,7 +68,7 @@ public class GridNodeMetricsLogSelfTest extends GridCommonAbstractTest {
 
     /** {@inheritDoc} */
     @Override protected void beforeTest() throws Exception {
-        strLog.clear();
+        strLog.clearListeners();
 
 //        strLog.logLength(300_000);
 
@@ -82,7 +82,7 @@ public class GridNodeMetricsLogSelfTest extends GridCommonAbstractTest {
 
         LogListener lsnr = LogListener.matches("11").build();
 
-        strLog.register(lsnr);
+        strLog.registerListener(lsnr);
 
         IgniteCache<Integer, String> cache1 = grid(0).createCache("TestCache1");
         IgniteCache<Integer, String> cache2 = grid(1).createCache("TestCache2");
