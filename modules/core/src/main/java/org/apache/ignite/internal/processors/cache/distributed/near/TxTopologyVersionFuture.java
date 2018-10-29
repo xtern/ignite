@@ -99,7 +99,7 @@ public class TxTopologyVersionFuture extends GridFutureAdapter<AffinityTopologyV
         cctx.topology().readLock();
 
         try {
-            if (cctx.topology().stopping()) {
+            if (cctx.topology().stopping() || cctx.gate().isStopped()) {
                 onDone(new CacheStoppedException(cctx.name()));
 
                 return;

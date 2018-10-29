@@ -303,7 +303,7 @@ public abstract class GridNearTxAbstractEnlistFuture<T> extends GridCacheCompoun
         cctx.topology().readLock();
 
         try {
-            if (cctx.topology().stopping()) {
+            if (cctx.topology().stopping() || cctx.gate().isStopped()) {
                 onDone(new CacheStoppedException(cctx.name()));
 
                 return;
