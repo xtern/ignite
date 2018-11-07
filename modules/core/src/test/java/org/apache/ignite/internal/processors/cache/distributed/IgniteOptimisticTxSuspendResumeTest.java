@@ -28,6 +28,7 @@ import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.apache.ignite.Ignite;
 import org.apache.ignite.IgniteCache;
+import org.apache.ignite.IgniteCluster;
 import org.apache.ignite.IgniteException;
 import org.apache.ignite.cache.CacheMode;
 import org.apache.ignite.cluster.ClusterNode;
@@ -677,11 +678,15 @@ public class IgniteOptimisticTxSuspendResumeTest extends GridCommonAbstractTest 
             cacheTxMap.put(cache, suspendedTxs);
         }
 
-        int newNodeIdx = gridCount();
+        IgniteCluster cluster = grid(0).cluster();
 
-        startGrid(newNodeIdx);
+        long topVer = cluster.topologyVersion();
+
+        startGrid(gridCount());
 
         try {
+            assertTrue(GridTestUtils.waitForCondition(() -> cluster.topologyVersion() == topVer + 1, 1));
+
             for (Map.Entry<IgniteCache<Integer, Integer>, Map<Transaction, Integer>>  entry : cacheTxMap.entrySet()) {
                 IgniteCache<Integer, Integer> cache = entry.getKey();
 
@@ -705,7 +710,7 @@ public class IgniteOptimisticTxSuspendResumeTest extends GridCommonAbstractTest 
                 }
             }
         } finally {
-            stopGrid(newNodeIdx);
+            stopGrid(gridCount());
 
             for (IgniteCache<Integer, Integer> cache : cacheTxMap.keySet())
                 cache.removeAll();
