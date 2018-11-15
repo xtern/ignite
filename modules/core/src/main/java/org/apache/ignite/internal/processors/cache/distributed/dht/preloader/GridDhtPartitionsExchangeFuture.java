@@ -3043,6 +3043,8 @@ public class GridDhtPartitionsExchangeFuture extends GridDhtTopologyFutureAdapte
 
                 for (String cacheName : cacheNames) {
                     if (grp.hasCache(cacheName)) {
+                        log.info("RESET LOST PARTS: " + cacheName);
+
                         grp.topology().resetLostPartitions(initialVersion());
 
                         break;

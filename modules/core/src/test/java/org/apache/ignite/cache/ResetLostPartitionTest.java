@@ -20,6 +20,7 @@ package org.apache.ignite.cache;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
 import org.apache.ignite.Ignite;
@@ -245,9 +246,12 @@ public class ResetLostPartitionTest extends GridCommonAbstractTest {
 
         Ignite node = startGridsMultiThreaded(gridCnt);
 
+        node.cluster().active(true);
+
         IgniteCache<Integer, Integer> cache = node.createCache(
             new CacheConfiguration<Integer, Integer>(DEFAULT_CACHE_NAME)
                 .setBackups(0)
+                .setAffinity(new RendezvousAffinityFunction(false, 32))
                 .setPartitionLossPolicy(PartitionLossPolicy.READ_WRITE_SAFE));
 
         for (int i = 0; i < CACHE_SIZE; i++)
@@ -274,7 +278,28 @@ public class ResetLostPartitionTest extends GridCommonAbstractTest {
                 filter(Predicate.isEqual(GridDhtPartitionState.OWNING)).collect(Collectors.toList()).size();
         }
 
+        printMegaMap(GridDhtLocalPartition.MEGA_MAP);
+
         assertEquals(parts, owners);
+
+
+    }
+
+    private void printMegaMap(Map<String, Map<Integer, List<GridDhtPartitionState>>> megamap) {
+        assert !megamap.isEmpty();
+
+        for (Map.Entry<String, Map<Integer, List<GridDhtPartitionState>>> entry : megamap.entrySet()) {
+            System.out.println("-----" + entry.getKey() + "-----");
+
+            for (Map.Entry<Integer, List<GridDhtPartitionState>> entry0 : entry.getValue().entrySet()) {
+                System.out.print(entry0.getKey() + ": ");
+
+                for(GridDhtPartitionState state : entry0.getValue())
+                    System.out.print( " -> " + state);
+
+                System.out.println();
+            }
+        }
     }
 
     /**

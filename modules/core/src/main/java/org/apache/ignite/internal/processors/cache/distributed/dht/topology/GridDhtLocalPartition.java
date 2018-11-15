@@ -17,8 +17,10 @@
 
 package org.apache.ignite.internal.processors.cache.distributed.dht.topology;
 
+import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedDeque;
 import java.util.concurrent.ConcurrentMap;
@@ -80,6 +82,19 @@ import static org.apache.ignite.internal.processors.cache.distributed.dht.topolo
 public class GridDhtLocalPartition extends GridCacheConcurrentMapImpl implements Comparable<GridDhtLocalPartition>, GridReservable {
     /** */
     private static final GridCacheMapEntryFactory ENTRY_FACTORY = GridDhtCacheEntry::new;
+
+    public static final Map<String, Map<Integer, List<GridDhtPartitionState>>> MEGA_MAP = new ConcurrentHashMap<>();
+
+    /** */
+    public static void updateStateG(CacheGroupContext ctx, int part, GridDhtPartitionState state) {
+        if (!"default".equals(ctx.cacheOrGroupName()) && !"test123".equals(ctx.cacheOrGroupName()))
+            return;
+
+        String nodeId = ctx.shared().localNodeId().toString();
+
+        MEGA_MAP.computeIfAbsent(nodeId.substring(nodeId.length() - 3), v -> new ConcurrentHashMap<>())
+            .computeIfAbsent(part, v -> new ArrayList<>()).add(state);
+    }
 
     /** Maximum size for delete queue. */
     public static final int MAX_DELETE_QUEUE_SIZE = Integer.getInteger(IGNITE_ATOMIC_CACHE_DELETE_HISTORY_SIZE, 200_000);
@@ -553,6 +568,8 @@ public class GridDhtLocalPartition extends GridCacheConcurrentMapImpl implements
                 boolean update = this.state.compareAndSet(state, setPartState(state, toState));
 
                 if (update) {
+                    updateStateG(grp, id, toState);
+
                     try {
                         ctx.wal().log(new PartitionMetaStateRecord(grp.groupId(), id, toState, updateCounter()));
                     }
@@ -574,6 +591,8 @@ public class GridDhtLocalPartition extends GridCacheConcurrentMapImpl implements
             boolean update = this.state.compareAndSet(state, setPartState(state, toState));
 
             if (update) {
+                updateStateG(grp, id, toState);
+
                 if (log.isDebugEnabled())
                     log.debug("Partition changed state [grp=" + grp.cacheOrGroupName()
                         + ", p=" + id + ", prev=" + prevState + ", to=" + toState + "]");

@@ -287,7 +287,7 @@ public class CacheAffinitySharedManager<K, V> extends GridCacheSharedManagerAdap
 
                         GridDhtPartitionState state = top.partitionState(waitNode, part);
 
-                        if (state != GridDhtPartitionState.OWNING && state != GridDhtPartitionState.LOST) {
+                        if (state != GridDhtPartitionState.OWNING) { // && state != GridDhtPartitionState.LOST) {
                             rebalanced = false;
 
                             break;
@@ -1673,6 +1673,8 @@ public class CacheAffinitySharedManager<K, V> extends GridCacheSharedManagerAdap
                 CacheGroupHolder cache = groupHolder(topVer, desc);
 
                 List<List<ClusterNode>> assign = cache.affinity().calculate(topVer, evts, evts.discoveryCache());
+
+                log.info(desc.cacheOrGroupName() + " qqq " + cache.rebalanceEnabled);
 
                 if (!cache.rebalanceEnabled || fut.cacheGroupAddedOnExchange(desc.groupId(), desc.receivedFrom()))
                     cache.affinity().initialize(topVer, assign);

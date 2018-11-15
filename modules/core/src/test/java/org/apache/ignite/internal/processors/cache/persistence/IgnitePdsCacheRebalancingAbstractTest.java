@@ -37,6 +37,7 @@ import com.google.common.collect.Lists;
 import org.apache.ignite.Ignite;
 import org.apache.ignite.IgniteCache;
 import org.apache.ignite.IgniteDataStreamer;
+import org.apache.ignite.cache.CacheAtomicityMode;
 import org.apache.ignite.cache.CacheRebalanceMode;
 import org.apache.ignite.cache.CacheWriteSynchronizationMode;
 import org.apache.ignite.cache.PartitionLossPolicy;
@@ -52,6 +53,7 @@ import org.apache.ignite.configuration.WALMode;
 import org.apache.ignite.internal.IgniteEx;
 import org.apache.ignite.internal.IgniteInternalFuture;
 import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtLocalPartition;
+import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtPartitionState;
 import org.apache.ignite.internal.util.typedef.internal.U;
 import org.apache.ignite.lang.IgnitePredicate;
 import org.apache.ignite.spi.discovery.tcp.TcpDiscoverySpi;
@@ -711,6 +713,126 @@ public abstract class IgnitePdsCacheRebalancingAbstractTest extends GridCommonAb
                 ", v1=" + v1 +
                 ", v2=" + v2 +
                 '}';
+        }
+    }
+
+    /**
+     * Test that partitions are marked as lost when all owners leave cluster, but recover after nodes rejoin.
+     *
+     * @throws Exception If fails.
+     */
+    public void testPartitionLossAndRecover() throws Exception {
+//        fail("IGNITE-5302");
+
+        Ignite ignite1 = startGrid(0);
+        Ignite ignite2 = startGrid(1);
+        Ignite ignite3 = startGrid(2);
+        Ignite ignite4 = startGrid(3);
+
+        ignite1.cluster().active(true);
+
+//        awaitPartitionMapExchange();
+        String CACHE = "test123";
+
+        IgniteCache<String, String> cache1 = ignite1.createCache(
+            new CacheConfiguration<String, String>(CACHE)
+                .setBackups(0)
+                .setAffinity(new RendezvousAffinityFunction(false, 32))
+                .setAtomicityMode(CacheAtomicityMode.ATOMIC)
+            .setPartitionLossPolicy(PartitionLossPolicy.READ_WRITE_SAFE)
+        );
+
+//        final int offset = 10;
+
+        for (int i = 0; i < 10_000; i++)
+            cache1.put(String.valueOf(i), String.valueOf(i));
+
+        System.out.println("BEFORE STOP");
+
+        printPartitionState(cache1);
+
+        stopGrid(2);
+        stopGrid(3);
+
+        System.out.println("AFTER STOP");
+
+        printPartitionState(cache1);
+
+//        printM
+//        ((IgniteDiscoverySpi)ignite3.configuration().getDiscoverySpi()).simulateNodeFailure();
+//        ((IgniteDiscoverySpi)ignite4.configuration().getDiscoverySpi()).simulateNodeFailure();
+
+//        awaitPartitionMapExchange();
+//        U.sleep(5000);
+
+        U.sleep(4000);
+
+        assert !ignite1.cache(CACHE).lostPartitions().isEmpty();
+
+//        cache1.put("10_000", "10_000");
+
+        System.out.println("before start");
+
+        log.info("SEND RESET LOST PARTS");
+        ignite1.resetLostPartitions(Collections.singletonList(CACHE));
+
+//        for (int i = 0; i < 1000; i++)
+            ignite1.cache(CACHE).put("q", "q");
+
+        printMegaMap(GridDhtLocalPartition.MEGA_MAP);
+
+        ignite3 = startGrid(2);
+        ignite4 = startGrid(3);
+
+        U.sleep(4000);
+
+        printMegaMap(GridDhtLocalPartition.MEGA_MAP);
+
+
+
+        System.out.println("after reset");
+
+        printMegaMap(GridDhtLocalPartition.MEGA_MAP);
+
+
+        U.sleep(3000);
+
+        IgniteCache<String, String> cache2 = ignite2.cache(CACHE);
+        IgniteCache<String, String> cache3 = ignite3.cache(CACHE);
+        IgniteCache<String, String> cache4 = ignite4.cache(CACHE);
+
+        //Thread.sleep(5_000);
+
+        for (int i = 0; i < 10_000; i++) {
+            String key = String.valueOf(i);
+            String expected = String.valueOf(i);
+
+            assertEquals(expected, cache1.get(key));
+            assertEquals(expected, cache2.get(key));
+            assertEquals(expected, cache3.get(key));
+            assertEquals(expected, cache4.get(key));
+        }
+
+        assertEquals(10_001, cache1.size());
+        assertEquals(10_001, cache2.size());
+        assertEquals(10_001, cache3.size());
+        assertEquals(10_001, cache4.size());
+    }
+
+    private void printMegaMap(Map<String, Map<Integer, List<GridDhtPartitionState>>> megamap) {
+        assert !megamap.isEmpty();
+
+        for (Map.Entry<String, Map<Integer, List<GridDhtPartitionState>>> entry : megamap.entrySet()) {
+            System.out.println("-----" + entry.getKey() + "-----");
+
+            for (Map.Entry<Integer, List<GridDhtPartitionState>> entry0 : entry.getValue().entrySet()) {
+                System.out.print(entry0.getKey() + ": ");
+
+                for(GridDhtPartitionState state : entry0.getValue())
+                    System.out.print( " -> " + state);
+
+                System.out.println();
+            }
         }
     }
 
