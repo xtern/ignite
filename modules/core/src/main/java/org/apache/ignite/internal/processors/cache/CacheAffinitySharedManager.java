@@ -288,7 +288,7 @@ public class CacheAffinitySharedManager<K, V> extends GridCacheSharedManagerAdap
                         GridDhtPartitionState state = top.partitionState(waitNode, part);
 
                         if (state != GridDhtPartitionState.OWNING &&
-                            !lostPartitionMoving(top, grpHolder, waitNode, part, state)) {
+                            !lostPartitionMoving(top, grpHolder.affinity(), waitNode, part, state)) {
                             rebalanced = false;
 
                             break;
@@ -321,7 +321,7 @@ public class CacheAffinitySharedManager<K, V> extends GridCacheSharedManagerAdap
 
     /**
      * @param top Topology version.
-     * @param grpHolder Cache group holder.
+     * @param aff Affinity assignment cache.
      * @param waitNode Node rebalancing data.
      * @param p Parition id.
      * @param state Partition state.
@@ -329,7 +329,7 @@ public class CacheAffinitySharedManager<K, V> extends GridCacheSharedManagerAdap
      */
     private boolean lostPartitionMoving(
         GridDhtPartitionTopology top,
-        CacheGroupHolder grpHolder,
+        GridAffinityAssignmentCache aff,
         UUID waitNode,
         Integer p,
         GridDhtPartitionState state
@@ -337,7 +337,7 @@ public class CacheAffinitySharedManager<K, V> extends GridCacheSharedManagerAdap
         if (state != GridDhtPartitionState.LOST)
             return false;
 
-        List<ClusterNode> assignment = grpHolder.affinity().assignments(top.readyTopologyVersion()).get(p);
+        List<ClusterNode> assignment = aff.assignments(aff.lastVersion()).get(p);
 
         assert !assignment.isEmpty();
 
