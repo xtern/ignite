@@ -25,6 +25,8 @@ import java.util.UUID;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import org.apache.ignite.Ignite;
 import org.apache.ignite.IgniteCache;
 import org.apache.ignite.IgniteException;
@@ -47,6 +49,7 @@ import org.apache.ignite.transactions.Transaction;
 import static org.apache.ignite.cache.CacheAtomicityMode.ATOMIC;
 import static org.apache.ignite.cache.CacheAtomicityMode.TRANSACTIONAL;
 import static org.apache.ignite.cache.CacheWriteSynchronizationMode.FULL_SYNC;
+import static org.apache.ignite.testframework.GridTestUtils.runMultiThreadedAsync;
 
 /**
  * Queue basic tests.
@@ -61,6 +64,13 @@ public abstract class GridCacheQueueApiSelfAbstractTest extends IgniteCollection
     /** {@inheritDoc} */
     @Override protected int gridCount() {
         return 1;
+    }
+
+    /**
+     * @return Batch size.
+     */
+    protected int batchSize() {
+        return 1_000;
     }
 
     /**
@@ -351,53 +361,121 @@ public abstract class GridCacheQueueApiSelfAbstractTest extends IgniteCollection
      * @throws Exception If failed.
      */
     public void testPutGetMultithreadUnbounded() throws Exception {
-        // Random queue name.
-        String queueName = UUID.randomUUID().toString();
-
-        final IgniteQueue<String> queue = grid(0).queue(queueName, QUEUE_CAPACITY, config(false));
-
-        multithreaded(new Callable<Void>() {
-                @Override public Void call() throws Exception {
-                    String thName = Thread.currentThread().getName();
-
-                    for (int i = 0; i < 5; i++) {
-                        queue.put(thName);
-                        queue.peek();
-                        queue.take();
-                    }
-
-                    return null;
-                }
-            }, THREAD_NUM);
-
-        assert queue.isEmpty() : queue.size();
+        checkPutGetMultithread(0, 100);
     }
 
     /**
-     * JUnit.
+     * Check put/peek/take operations on bounded queue.
      *
      * @throws Exception If failed.
      */
     public void testPutGetMultithreadBounded() throws Exception {
+        checkPutGetMultithread(QUEUE_CAPACITY, 100);
+    }
+
+    /**
+     * Check put/peek/take operations.
+     *
+     * @param cap Queue capacity.
+     * @param size Batch size.
+     * @throws Exception If failed.
+     */
+    private void checkPutGetMultithread(int cap, int size) throws Exception {
         // Random queue name.
         String queueName = UUID.randomUUID().toString();
 
-        final IgniteQueue<String> queue = grid(0).queue(queueName, QUEUE_CAPACITY, config(false));
+        final IgniteQueue<String> queue = grid(0).queue(queueName, cap, config(false));
 
-        multithreaded(new Callable<String>() {
-                @Override public String call() throws Exception {
-                    String thName = Thread.currentThread().getName();
+        multithreaded(new Callable<Void>() {
+            @Override public Void call() {
+                String thName = Thread.currentThread().getName();
 
-                    for (int i = 0; i < QUEUE_CAPACITY * 5; i++) {
-                        queue.put(thName);
-                        queue.peek();
-                        queue.take();
-                    }
-                    return "";
+                for (int i = 0; i < size; i++) {
+                    queue.put(thName);
+                    queue.peek();
+                    queue.take();
                 }
-            }, THREAD_NUM);
+                return null;
+            }
+        }, THREAD_NUM);
 
-        assert queue.isEmpty() : queue.size();
+        assertEquals(0, queue.size());
+    }
+
+    /**
+     * Check put and take consistency on unbounded queue.
+     *
+     * @throws Exception If failed.
+     */
+    public void testPutGetDifferentThreadsUnbounded() throws Exception {
+        checkPutAndGetInDifferentThreadsMultithreaded(0, batchSize(), THREAD_NUM);
+    }
+
+    /**
+     * Check put and take consistency on bounded queue.
+     *
+     * @throws Exception If failed.
+     */
+    public void testPutGetDifferentThreadsBounded() throws Exception {
+        checkPutAndGetInDifferentThreadsMultithreaded(QUEUE_CAPACITY, batchSize(), THREAD_NUM);
+    }
+
+    /**
+     * Check put and take consistency on bounded to minimum capacity queue.
+     *
+     * @throws Exception If failed.
+     */
+    public void testPutGetDifferentThreadsMinCapacity() throws Exception {
+        checkPutAndGetInDifferentThreadsMultithreaded(1, batchSize(), 1);
+    }
+
+    /**
+     * Check put and take consistency.
+     *
+     * @param cap Queue capacity.
+     * @param size Batch size.
+     * @param threadCnt Threads count.
+     * @throws Exception If failed.
+     */
+    private void checkPutAndGetInDifferentThreadsMultithreaded(int cap, int size, int threadCnt) throws Exception {
+        int timeout = 60_000;
+
+        // Random queue name.
+        String queueName = UUID.randomUUID().toString();
+
+        final IgniteQueue<Integer> queue = grid(0).queue(queueName, cap, config(false));
+
+        AtomicInteger producers = new AtomicInteger();
+
+        IgniteInternalFuture fut0 = runMultiThreadedAsync(() -> {
+            int thNum = producers.getAndIncrement();
+            int start = size * thNum;
+            int end = start + size;
+
+            for (int i = start; i < end; i++)
+                queue.put(i);
+        }, threadCnt, "producer");
+
+        AtomicLong sum = new AtomicLong();
+
+        IgniteInternalFuture fut1 = runMultiThreadedAsync(() -> {
+            long res = 0;
+
+            for (int i = 0; i < size; i++)
+                res += queue.take();
+
+            sum.addAndGet(res);
+        }, threadCnt, "consumer");
+
+        fut0.get(timeout);
+        fut1.get(timeout);
+
+        assertEquals(0, queue.size());
+
+        long total = size * threadCnt;
+        long exp = (total - 1) * total / 2;
+
+        assertEquals(exp, sum.get());
     }
 
     /**
@@ -415,7 +493,7 @@ public abstract class GridCacheQueueApiSelfAbstractTest extends IgniteCollection
 
         final CountDownLatch clearLatch = new CountDownLatch(THREAD_NUM);
 
-        IgniteInternalFuture<?> offerFut = GridTestUtils.runMultiThreadedAsync(new Callable<Void>() {
+        IgniteInternalFuture<?> offerFut = runMultiThreadedAsync(new Callable<Void>() {
             @Override public Void call() throws Exception {
                 if (log.isDebugEnabled())
                     log.debug("Thread has been started." + Thread.currentThread().getName());
@@ -442,7 +520,7 @@ public abstract class GridCacheQueueApiSelfAbstractTest extends IgniteCollection
             }
         }, THREAD_NUM, "offer-thread");
 
-        IgniteInternalFuture<?> closeFut = GridTestUtils.runMultiThreadedAsync(new Callable<Void>() {
+        IgniteInternalFuture<?> closeFut = runMultiThreadedAsync(new Callable<Void>() {
             @Override public Void call() throws Exception {
                 try {
                     IgniteQueue<String> queue = grid(0).queue(queueName, 0, null);
