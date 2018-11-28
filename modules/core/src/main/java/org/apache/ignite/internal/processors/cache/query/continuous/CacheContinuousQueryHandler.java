@@ -426,18 +426,18 @@ public class CacheContinuousQueryHandler<K, V> implements GridContinuousHandler 
                             + ", notify=" + notify + ']');
 
                     if (primary || skipPrimaryCheck) {
-                        if (fut == null)
+//                        if (fut == null)
                             onEntryUpdate(evt, notify, loc, recordIgniteEvt);
-                        else {
-                            fut.addContinuousQueryClosure(new CI1<Boolean>() {
-                                @Override public void apply(Boolean suc) {
-                                    if (!suc)
-                                        evt.entry().markFiltered();
-
-                                    onEntryUpdate(evt, notify, loc, recordIgniteEvt);
-                                }
-                            }, sync);
-                        }
+//                        else {
+//                            fut.addContinuousQueryClosure(new CI1<Boolean>() {
+//                                @Override public void apply(Boolean suc) {
+//                                    if (!suc)
+//                                        evt.entry().markFiltered();
+//
+//                                    onEntryUpdate(evt, notify, loc, recordIgniteEvt);
+//                                }
+//                            }, sync);
+//                        }
                     }
                     else
                         handleBackupEntry(cctx, evt.entry());
