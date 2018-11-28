@@ -519,9 +519,11 @@ public abstract class GridCacheQueueAdapter<T> extends AbstractCollection<T> imp
             readSem.release(hdr.size());
         }
 
-        if (bounded() && !hdr.full()) {
+        if (bounded()) {
             writeSem.drainPermits();
-            writeSem.release(hdr.capacity() - hdr.size());
+
+            if (!hdr.full())
+                writeSem.release(hdr.capacity() - hdr.size());
         }
     }
 
