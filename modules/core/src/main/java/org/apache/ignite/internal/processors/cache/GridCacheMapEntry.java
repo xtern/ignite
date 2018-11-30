@@ -76,6 +76,7 @@ import org.apache.ignite.internal.processors.cache.version.GridCacheVersion;
 import org.apache.ignite.internal.processors.cache.version.GridCacheVersionConflictContext;
 import org.apache.ignite.internal.processors.cache.version.GridCacheVersionEx;
 import org.apache.ignite.internal.processors.cache.version.GridCacheVersionedEntryEx;
+import org.apache.ignite.internal.processors.diag.DiagnosticTopics;
 import org.apache.ignite.internal.processors.dr.GridDrType;
 import org.apache.ignite.internal.processors.query.IgniteSQLException;
 import org.apache.ignite.internal.processors.query.schema.SchemaIndexCacheFilter;
@@ -121,6 +122,7 @@ import static org.apache.ignite.internal.processors.cache.mvcc.MvccUtils.compare
 import static org.apache.ignite.internal.processors.cache.persistence.CacheDataRowAdapter.RowData.NO_KEY;
 import static org.apache.ignite.internal.processors.cache.query.IgniteQueryErrorCode.DUPLICATE_KEY;
 import static org.apache.ignite.internal.processors.cache.query.IgniteQueryErrorCode.TRANSACTION_SERIALIZATION_ERROR;
+import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.PRELOAD_UPDATED;
 import static org.apache.ignite.internal.processors.dr.GridDrType.DR_NONE;
 
 /**
@@ -2979,6 +2981,8 @@ public abstract class GridCacheMapEntry extends GridMetadataAwareAdapter impleme
         assert lock.isHeldByCurrentThread();
         assert ttl != CU.TTL_ZERO && ttl != CU.TTL_NOT_CHANGED && ttl >= 0 : ttl;
 
+        cctx.kernalContext().diagnostic().beginTrack(PRELOAD_UPDATED);
+
         boolean trackNear = addTracked && isNear() && cctx.config().isEagerTtl();
 
         long oldExpireTime = expireTimeExtras();
@@ -2995,6 +2999,8 @@ public abstract class GridCacheMapEntry extends GridMetadataAwareAdapter impleme
 
         if (trackNear && expireTime != 0 && (expireTime != oldExpireTime || isStartVersion()))
             cctx.ttl().addTrackedEntry((GridNearCacheEntry)this);
+
+        cctx.kernalContext().diagnostic().endTrack(PRELOAD_UPDATED);
     }
 
     /**
@@ -3481,6 +3487,7 @@ public abstract class GridCacheMapEntry extends GridMetadataAwareAdapter impleme
                             mvccVer == null ? MvccUtils.INITIAL_VERSION : mvccVer
                         )));
                     } else {
+                        cctx.kernalContext().diagnostic().beginTrack(DiagnosticTopics.PRELOAD_ON_WAL_LOG);
                         cctx.shared().wal().log(new DataRecord(new DataEntry(
                             cctx.cacheId(),
                             key,
@@ -3492,12 +3499,14 @@ public abstract class GridCacheMapEntry extends GridMetadataAwareAdapter impleme
                             partition(),
                             updateCntr
                         )));
+                        cctx.kernalContext().diagnostic().endTrack(DiagnosticTopics.PRELOAD_ON_WAL_LOG);
                     }
                 }
 
                 drReplicate(drType, val, ver, topVer);
 
                 if (!skipQryNtf) {
+                    cctx.kernalContext().diagnostic().beginTrack(DiagnosticTopics.PRELOAD_ON_ENTRY_UPDATED);
                     cctx.continuousQueries().onEntryUpdated(
                         key,
                         val,
@@ -3509,6 +3518,7 @@ public abstract class GridCacheMapEntry extends GridMetadataAwareAdapter impleme
                         updateCntr,
                         null,
                         topVer);
+                    cctx.kernalContext().diagnostic().endTrack(DiagnosticTopics.PRELOAD_ON_ENTRY_UPDATED);
                 }
 
                 onUpdateFinished(updateCntr);
@@ -4299,9 +4309,13 @@ public abstract class GridCacheMapEntry extends GridMetadataAwareAdapter impleme
         @Nullable IgnitePredicate<CacheDataRow> predicate) throws IgniteCheckedException {
         assert lock.isHeldByCurrentThread();
 
+        cctx.kernalContext().diagnostic().beginTrack(DiagnosticTopics.PRELOAD_STORE_ENTRY);
+
         UpdateClosure closure = new UpdateClosure(this, val, ver, expireTime, predicate);
 
         cctx.offheap().invoke(cctx, key, localPartition(), closure);
+
+        cctx.kernalContext().diagnostic().endTrack(DiagnosticTopics.PRELOAD_STORE_ENTRY);
 
         return closure.treeOp != IgniteTree.OperationType.NOOP;
     }

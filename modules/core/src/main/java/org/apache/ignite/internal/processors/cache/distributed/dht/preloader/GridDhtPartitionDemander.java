@@ -78,6 +78,11 @@ import static org.apache.ignite.events.EventType.EVT_CACHE_REBALANCE_PART_LOADED
 import static org.apache.ignite.events.EventType.EVT_CACHE_REBALANCE_STARTED;
 import static org.apache.ignite.events.EventType.EVT_CACHE_REBALANCE_STOPPED;
 import static org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtPartitionState.MOVING;
+import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.CLEAR_FUTS;
+import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.PRELOAD_ENTRY;
+import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.SEND_DEMAND;
+import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.SEND_RECEIVE;
+import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.TOTAL;
 import static org.apache.ignite.internal.processors.dr.GridDrType.DR_NONE;
 import static org.apache.ignite.internal.processors.dr.GridDrType.DR_PRELOAD;
 
@@ -372,6 +377,12 @@ public class GridDhtPartitionDemander {
                                 log.debug(e.getMessage());
                         }
                     });
+                else
+                    fut.listen(f -> {
+                        ctx.kernalContext().diagnostic().endTrack(TOTAL);
+
+                        ctx.kernalContext().diagnostic().printStats();
+                    });
 
                 requestPartitions(fut, assignments);
             };
@@ -510,8 +521,12 @@ public class GridDhtPartitionDemander {
                             return;
 
                         try {
+                            ctx.kernalContext().diagnostic().beginTrack(SEND_DEMAND);
+
                             ctx.io().sendOrderedMessage(node, rebalanceTopics.get(topicId),
                                 demandMsg.convertIfNeeded(node.version()), grp.ioPolicy(), demandMsg.timeout());
+
+                            ctx.kernalContext().diagnostic().beginTrack(SEND_RECEIVE);
 
                             // Cleanup required in case partitions demanded in parallel with cancellation.
                             synchronized (fut) {
@@ -540,6 +555,9 @@ public class GridDhtPartitionDemander {
 
                             fut.cancel();
                         }
+
+                        ctx.kernalContext().diagnostic().endTrack(SEND_DEMAND);
+
                     }, true));
                 }
             }
@@ -561,6 +579,10 @@ public class GridDhtPartitionDemander {
 
             return clearAllFuture;
         }
+
+        ctx.kernalContext().diagnostic().beginTrack(CLEAR_FUTS);
+
+        clearAllFuture.listen(f -> ctx.kernalContext().diagnostic().endTrack(CLEAR_FUTS));
 
         for (GridCacheContext cctx : grp.caches()) {
             if (cctx.statisticsEnabled()) {
@@ -661,6 +683,8 @@ public class GridDhtPartitionDemander {
         final UUID nodeId,
         final GridDhtPartitionSupplyMessage supplyMsg
     ) {
+        ctx.kernalContext().diagnostic().endTrack(SEND_RECEIVE);
+
         AffinityTopologyVersion topVer = supplyMsg.topologyVersion();
 
         final RebalanceFuture fut = rebalanceFut;
@@ -858,8 +882,12 @@ public class GridDhtPartitionDemander {
             if (!topologyChanged(fut) && !fut.isDone()) {
                 // Send demand message.
                 try {
+                    ctx.kernalContext().diagnostic().beginTrack(SEND_DEMAND);
+
                     ctx.io().sendOrderedMessage(node, rebalanceTopics.get(topicId),
                         d.convertIfNeeded(node.version()), grp.ioPolicy(), grp.config().getRebalanceTimeout());
+
+                    ctx.kernalContext().diagnostic().beginTrack(SEND_RECEIVE);
 
                     if (log.isDebugEnabled())
                         log.debug("Send next demand message [" + demandRoutineInfo(topicId, nodeId, supplyMsg) + "]");
@@ -869,6 +897,9 @@ public class GridDhtPartitionDemander {
                         log.debug("Supplier has left [" + demandRoutineInfo(topicId, nodeId, supplyMsg) +
                             ", errMsg=" + e.getMessage() + ']');
                 }
+
+                ctx.kernalContext().diagnostic().endTrack(SEND_DEMAND);
+
             }
             else {
                 if (log.isDebugEnabled())
@@ -901,6 +932,8 @@ public class GridDhtPartitionDemander {
         assert ctx.database().checkpointLockIsHeldByThread();
 
         try {
+            ctx.kernalContext().diagnostic().beginTrack(PRELOAD_ENTRY);
+
             GridCacheEntryEx cached = null;
 
             try {
@@ -965,6 +998,9 @@ public class GridDhtPartitionDemander {
         catch (IgniteCheckedException e) {
             throw new IgniteCheckedException("Failed to cache rebalanced entry (will stop rebalancing) [local=" +
                 ctx.localNode() + ", node=" + from.id() + ", key=" + entry.key() + ", part=" + p + ']', e);
+        }
+        finally {
+            ctx.kernalContext().diagnostic().endTrack(PRELOAD_ENTRY);
         }
 
         return true;
