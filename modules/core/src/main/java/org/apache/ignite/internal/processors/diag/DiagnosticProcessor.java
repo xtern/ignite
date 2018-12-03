@@ -111,7 +111,10 @@ public class DiagnosticProcessor extends GridProcessorAdapter {
                     return o1.getValue().compareTo(o2.getValue());
                 }
             })
-            .peek(e -> System.out.println("#### " + e.getKey() + " : " + e.getValue() + " ms"))
+            .peek(e -> System.out.printf("#### %s : %s ms : %.2f \r\n",
+                e.getKey(),
+                e.getValue(),
+                ((float)e.getValue() / total * 100)))
             .count();
 
         counts.clear();

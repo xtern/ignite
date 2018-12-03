@@ -53,6 +53,8 @@ import org.apache.ignite.lang.IgnitePredicate;
 import org.apache.ignite.spi.IgniteSpiException;
 
 import static org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtPartitionState.OWNING;
+import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.SUPPLIER_PROCESS_MSG;
+import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.TOTAL;
 
 /**
  * Class for supplying partitions to demanding nodes.
@@ -254,6 +256,8 @@ class GridDhtPartitionSupplier {
             long maxBatchesCnt = grp.config().getRebalanceBatchesPrefetchCount();
 
             if (sctx == null) {
+                grp.singleCacheContext().kernalContext().diagnostic().beginTrack(TOTAL);
+
                 if (log.isDebugEnabled())
                     log.debug("Starting supplying rebalancing [" + supplyRoutineInfo(topicId, nodeId, demandMsg) +
                         ", fullPartitions=" + S.compact(demandMsg.partitions().fullSet()) +
@@ -314,6 +318,8 @@ class GridDhtPartitionSupplier {
             final int msgMaxSize = grp.config().getRebalanceBatchSize();
 
             long batchesCnt = 0;
+
+            grp.singleCacheContext().kernalContext().diagnostic().beginTrack(SUPPLIER_PROCESS_MSG);
 
             while (iter.hasNext()) {
                 if (supplyMsg.messageSize() >= msgMaxSize) {
@@ -443,6 +449,10 @@ class GridDhtPartitionSupplier {
 
             reply(topicId, demanderNode, demandMsg, supplyMsg, contextId);
 
+            // Print statistics for the Supplier.
+            grp.singleCacheContext().kernalContext().diagnostic().endTrack(TOTAL);
+            grp.singleCacheContext().kernalContext().diagnostic().printStats();
+
             if (log.isInfoEnabled())
                 log.info("Finished supplying rebalancing [" + supplyRoutineInfo(topicId, nodeId, demandMsg) + "]");
         }
@@ -513,6 +523,9 @@ class GridDhtPartitionSupplier {
         GridDhtPartitionSupplyMessage supplyMsg,
         T3<UUID, Integer, AffinityTopologyVersion> contextId
     ) throws IgniteCheckedException {
+
+        grp.singleCacheContext().kernalContext().diagnostic().endTrack(SUPPLIER_PROCESS_MSG);
+
         try {
             if (log.isDebugEnabled())
                 log.debug("Send next supply message [" + supplyRoutineInfo(topicId, demander.id(), demandMsg) + "]");
