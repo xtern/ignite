@@ -675,7 +675,19 @@ public class GridDhtPartitionTopologyImpl implements GridDhtPartitionTopology {
      * @return {@code True} if given partition belongs to local node.
      */
     private boolean partitionLocalNode(int p, AffinityTopologyVersion topVer) {
-        return grp.affinity().nodes(p, topVer).contains(ctx.localNode());
+        String nodeId = ctx.localNode().id().toString();
+
+        List<ClusterNode> assign = grp.affinity().nodes(p, topVer);
+
+        boolean ret = assign.contains(ctx.localNode());
+
+        if (ret && nodeId.charAt(nodeId.length() - 1) != '3' && localPartition(p).state() == MOVING && grp.hasCache("default")) {
+            log.info("p = " + p);
+            log.info("state = MOVING");
+            log.info("assign: " + F.nodeIds(assign));
+        }
+
+        return ret;
     }
 
     /** {@inheritDoc} */
@@ -2334,8 +2346,14 @@ public class GridDhtPartitionTopologyImpl implements GridDhtPartitionTopology {
 
             List<ClusterNode> affNodes = aff.get(p);
 
+            boolean lost = part.state() == LOST;
+
             // This node is affinity node for partition, no need to run eviction.
+
+            boolean skipLost = lost && aff.idealAssignment().get(p).contains(ctx.localNode());
+
             if (affNodes.contains(ctx.localNode()))
+                //if (!lost || aff.idealAssignment().get(p).contains(ctx.localNode()))
                 continue;
 
             AffinityTopologyVersion topVer = aff.topologyVersion();

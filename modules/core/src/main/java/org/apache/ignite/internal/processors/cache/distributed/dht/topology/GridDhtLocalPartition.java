@@ -77,6 +77,18 @@ import static org.apache.ignite.internal.processors.cache.distributed.dht.topolo
  * Key partition.
  */
 public class GridDhtLocalPartition extends GridCacheConcurrentMapImpl implements Comparable<GridDhtLocalPartition>, GridReservable {
+    public static final ConcurrentMap<String, ConcurrentHashMap<Integer, StringBuilder>> MEGAMAP = new ConcurrentHashMap<>();
+
+    public void putState(GridDhtPartitionState oldState, GridDhtPartitionState newState) {
+
+        if (grp.hasCache("default")) {
+            String nodeId = ctx.localNodeId().toString();
+            String nodeIdx = nodeId.substring(nodeId.length() - 3);
+
+            MEGAMAP.computeIfAbsent(nodeIdx, (v) -> new ConcurrentHashMap<>()).computeIfAbsent(id, v -> new StringBuilder(oldState.toString())).append(" -> ").append(newState);
+        }
+    }
+
     /** */
     private static final GridCacheMapEntryFactory ENTRY_FACTORY = GridDhtCacheEntry::new;
 
@@ -552,6 +564,8 @@ public class GridDhtLocalPartition extends GridCacheConcurrentMapImpl implements
                 boolean update = this.state.compareAndSet(state, setPartState(state, toState));
 
                 if (update) {
+                    putState(prevState, toState);
+
                     try {
                         ctx.wal().log(new PartitionMetaStateRecord(grp.groupId(), id, toState, updateCounter()));
                     }
@@ -573,6 +587,11 @@ public class GridDhtLocalPartition extends GridCacheConcurrentMapImpl implements
             boolean update = this.state.compareAndSet(state, setPartState(state, toState));
 
             if (update) {
+                if (prevState == MOVING && toState == LOST && grp.hasCache("default"))
+                    U.dumpStack(log, "MOVING -> LOST " + id);
+
+                putState(prevState, toState);
+
                 if (log.isDebugEnabled())
                     log.debug("Partition changed state [grp=" + grp.cacheOrGroupName()
                         + ", p=" + id + ", prev=" + prevState + ", to=" + toState + "]");

@@ -59,6 +59,7 @@ import org.apache.ignite.internal.processors.cache.distributed.dht.preloader.Gri
 import org.apache.ignite.internal.processors.cache.distributed.dht.preloader.GridDhtPartitionsExchangeFuture;
 import org.apache.ignite.internal.processors.cache.distributed.dht.preloader.GridDhtPartitionsFullMessage;
 import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridClientPartitionTopology;
+import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtLocalPartition;
 import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtPartitionState;
 import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtPartitionTopology;
 import org.apache.ignite.internal.processors.cache.mvcc.MvccCoordinator;
@@ -287,7 +288,7 @@ public class CacheAffinitySharedManager<K, V> extends GridCacheSharedManagerAdap
 
                         GridDhtPartitionState state = top.partitionState(waitNode, part);
 
-                        if (state != GridDhtPartitionState.OWNING && state != GridDhtPartitionState.LOST) {
+                        if (state != GridDhtPartitionState.OWNING) {// && state != GridDhtPartitionState.LOST) {
                             rebalanced = false;
 
                             break;
@@ -337,6 +338,8 @@ public class CacheAffinitySharedManager<K, V> extends GridCacheSharedManagerAdap
     @Nullable private CacheAffinityChangeMessage affinityChangeMessage(WaitRebalanceInfo waitInfo) {
         if (waitInfo.assignments.isEmpty()) // Possible if all awaited caches were destroyed.
             return null;
+
+        U.dumpStack(log, "change affinity from rebalance");
 
         Map<Integer, Map<Integer, List<UUID>>> assignmentsChange = U.newHashMap(waitInfo.assignments.size());
 
@@ -1289,11 +1292,12 @@ public class CacheAffinitySharedManager<K, V> extends GridCacheSharedManagerAdap
         }
 
         try {
-            U.doInParallel(cctx.kernalContext().getSystemExecutorService(), affinityCaches, t -> {
+//            U.doInParallel(cctx.kernalContext().getSystemExecutorService(), affinityCaches, t -> {
+            for (GridAffinityAssignmentCache t : affinityCaches)
                 c.applyx(t);
 
-                return null;
-            });
+//                return null;
+//            });
         }
         catch (IgniteCheckedException e) {
             throw new IgniteException("Failed to execute affinity operation on cache groups", e);
@@ -2137,7 +2141,8 @@ public class CacheAffinitySharedManager<K, V> extends GridCacheSharedManagerAdap
                         grp.affinity(),
                         null,
                         grp.rebalanceEnabled(),
-                        affCache);
+                        affCache,
+                        grp.topology());
 
                     cctx.exchange().exchangerUpdateHeartbeat();
                 }
@@ -2161,7 +2166,8 @@ public class CacheAffinitySharedManager<K, V> extends GridCacheSharedManagerAdap
                         cache.affinity(),
                         waitRebalanceInfo,
                         latePrimary,
-                        affCache);
+                        affCache,
+                        cache.topology(evts.discoveryCache()));
 
                     if (grpAdded) {
                         AffinityAssignment aff = cache.aff.cachedAffinity(cache.aff.lastVersion());
@@ -2228,7 +2234,8 @@ public class CacheAffinitySharedManager<K, V> extends GridCacheSharedManagerAdap
         GridAffinityAssignmentCache aff,
         WaitRebalanceInfo rebalanceInfo,
         boolean latePrimary,
-        Map<Object, List<List<ClusterNode>>> affCache
+        Map<Object, List<List<ClusterNode>>> affCache,
+        GridDhtPartitionTopology top
     ) {
         if (addedOnExchnage) {
             if (!aff.lastVersion().equals(evts.topologyVersion()))
@@ -2251,6 +2258,8 @@ public class CacheAffinitySharedManager<K, V> extends GridCacheSharedManagerAdap
 
         if (latePrimary) {
             for (int p = 0; p < idealAssignment.size(); p++) {
+                GridDhtLocalPartition part = top.localPartition(p);
+
                 List<ClusterNode> newNodes = idealAssignment.get(p);
                 List<ClusterNode> curNodes = curAff.get(p);
 
@@ -2260,7 +2269,8 @@ public class CacheAffinitySharedManager<K, V> extends GridCacheSharedManagerAdap
                 if (curPrimary != null && newPrimary != null && !curPrimary.equals(newPrimary)) {
                     assert cctx.discovery().node(evts.topologyVersion(), curPrimary.id()) != null : curPrimary;
 
-                    List<ClusterNode> nodes0 = latePrimaryAssignment(aff,
+                    List<ClusterNode> nodes0 = part != null && part.state() == GridDhtPartitionState.LOST ? newNodes :
+                        latePrimaryAssignment(aff,
                         p,
                         curPrimary,
                         newNodes,

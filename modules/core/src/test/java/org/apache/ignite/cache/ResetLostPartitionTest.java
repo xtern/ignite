@@ -17,10 +17,18 @@
 
 package org.apache.ignite.cache;
 
+import com.google.common.primitives.Ints;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 import org.apache.ignite.Ignite;
 import org.apache.ignite.IgniteCache;
 import org.apache.ignite.cache.affinity.rendezvous.RendezvousAffinityFunction;
@@ -34,6 +42,7 @@ import org.apache.ignite.internal.processors.cache.GridCacheContext;
 import org.apache.ignite.internal.processors.cache.GridCacheSharedContext;
 import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtLocalPartition;
 import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtPartitionState;
+import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtPartitionTopology;
 import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtPartitionTopologyImpl;
 import org.apache.ignite.internal.util.typedef.G;
 import org.apache.ignite.internal.util.typedef.internal.CU;
@@ -255,7 +264,8 @@ public class ResetLostPartitionTest extends GridCommonAbstractTest {
 
         IgniteCache<Integer, Integer> cache = node.createCache(
             new CacheConfiguration<Integer, Integer>(DEFAULT_CACHE_NAME)
-                .setPartitionLossPolicy(PartitionLossPolicy.READ_WRITE_SAFE));
+                .setPartitionLossPolicy(PartitionLossPolicy.READ_WRITE_SAFE)
+                .setAffinity(new RendezvousAffinityFunction(false, 32)));
 
         for (int i = 0; i < CACHE_SIZE; i++)
             cache.put(i, i);
@@ -264,6 +274,8 @@ public class ResetLostPartitionTest extends GridCommonAbstractTest {
 
         int lostPartsCnt = count(DEFAULT_CACHE_NAME, OWNING, failedNodeIdx);
 
+        System.out.println(">xxx> stop grid " + failedNodeIdx);
+
         stopGrid(failedNodeIdx);
 
         int[] liveIdxs = new int[] {0, 1, 2};
@@ -271,35 +283,83 @@ public class ResetLostPartitionTest extends GridCommonAbstractTest {
         waitForCondition(() -> lostPartsCnt == count(DEFAULT_CACHE_NAME, LOST, liveIdxs), timeout);
         assertEquals(lostPartsCnt, count(DEFAULT_CACHE_NAME, LOST, liveIdxs));
 
+        System.out.println(">xxx> start grid " + failedNodeIdx);
+
         startGrid(failedNodeIdx);
 
         waitForCondition(() -> lostPartsCnt == count(DEFAULT_CACHE_NAME, LOST, failedNodeIdx), timeout);
         assertEquals(lostPartsCnt, count(DEFAULT_CACHE_NAME, LOST, failedNodeIdx));
 
-        waitForCondition(() -> 0 == count(DEFAULT_CACHE_NAME, LOST, liveIdxs), timeout);
-        assertEquals(0, count(DEFAULT_CACHE_NAME, LOST, liveIdxs));
+        U.sleep(3_000);
 
-        for (Ignite grid : G.allGrids()) {
-            GridCacheSharedContext cctx = ((IgniteEx)grid).context().cache().context();
+        printMegaMap(GridDhtLocalPartition.MEGAMAP);
 
-            cctx.exchange().affinityReadyFuture(cctx.discovery().topologyVersionEx()).get(timeout);
+        checkAffinity(DEFAULT_CACHE_NAME, 3, liveIdxs);
 
-            for (GridCacheContext ctx : (Collection<GridCacheContext>)cctx.cacheContexts())
-                ctx.preloader().rebalanceFuture().get(timeout);
+        waitForCondition(() -> lostPartsCnt == count(DEFAULT_CACHE_NAME, LOST, failedNodeIdx), timeout);
+        assertEquals(lostPartsCnt, count(DEFAULT_CACHE_NAME, LOST, failedNodeIdx));
+
+        grid(0).resetLostPartitions(Collections.singleton(DEFAULT_CACHE_NAME));
+
+        U.sleep(3_000);
+
+        printMegaMap(GridDhtLocalPartition.MEGAMAP);
+
+        checkAffinity(DEFAULT_CACHE_NAME, 3, liveIdxs);
+
+//        waitForCondition(() -> 0 == count(DEFAULT_CACHE_NAME, LOST, liveIdxs), timeout);
+//        assertEquals(0, count(DEFAULT_CACHE_NAME, LOST, liveIdxs));
+//
+//        for (Ignite grid : G.allGrids()) {
+//            GridCacheSharedContext cctx = ((IgniteEx)grid).context().cache().context();
+//
+//            cctx.exchange().affinityReadyFuture(cctx.discovery().topologyVersionEx()).get(timeout);
+//
+//            for (GridCacheContext ctx : (Collection<GridCacheContext>)cctx.cacheContexts())
+//                ctx.preloader().rebalanceFuture().get(timeout);
+//        }
+//
+//        node.resetLostPartitions(Collections.singleton(DEFAULT_CACHE_NAME));
+//
+//        waitForCondition(() -> lostPartsCnt == count(DEFAULT_CACHE_NAME, OWNING, failedNodeIdx), timeout);
+//        assertEquals(lostPartsCnt, count(DEFAULT_CACHE_NAME, OWNING, failedNodeIdx));
+//
+//        int parts = grid(0).affinity(DEFAULT_CACHE_NAME).partitions();
+//
+//        int[] allIdxs = new int[] {0, 1, 2, 3};
+//
+//        waitForCondition(() -> parts == count(DEFAULT_CACHE_NAME, OWNING, allIdxs), timeout);
+//        assertEquals(parts, count(DEFAULT_CACHE_NAME, OWNING, allIdxs));
+    }
+
+    private void checkAffinity(String name, int stoppedNodeIdx, int[] idxs) {
+        Map<Integer, Set<Integer>> primaries = new HashMap<>();
+
+
+        for (int i = 0; i < idxs.length; i++) {
+            int[] parts = grid(i).cachex(name).affinity().primaryPartitions(grid(i).localNode());
+
+            primaries.put(i, new HashSet<>(Ints.asList(parts)));
         }
 
-        node.resetLostPartitions(Collections.singleton(DEFAULT_CACHE_NAME));
+        GridDhtPartitionTopology top = grid(stoppedNodeIdx).context().cache().cacheGroup(CU.cacheId(name)).topology();
 
-        waitForCondition(() -> lostPartsCnt == count(DEFAULT_CACHE_NAME, OWNING, failedNodeIdx), timeout);
-        assertEquals(lostPartsCnt, count(DEFAULT_CACHE_NAME, OWNING, failedNodeIdx));
+        log.info(">xxx> Check primaries: ");
 
-        int parts = grid(0).affinity(DEFAULT_CACHE_NAME).partitions();
+        for (GridDhtLocalPartition p : top.localPartitions()) {
+            if (p.state() == LOST) {
+                for (Map.Entry<Integer, Set<Integer>> entry : primaries.entrySet()) {
+                    if (entry.getValue().contains(p.id())) {
+                        log.info(">xxx> found primary for " + p.id() + " on " + entry.getKey());
 
-        int[] allIdxs = new int[] {0, 1, 2, 3};
-
-        waitForCondition(() -> parts == count(DEFAULT_CACHE_NAME, OWNING, allIdxs), timeout);
-        assertEquals(parts, count(DEFAULT_CACHE_NAME, OWNING, allIdxs));
+                        break;
+                    }
+                }
+            }
+        }
     }
+
+
 
     /**
      * @param gridNumber Grid number.
@@ -342,5 +402,14 @@ public class ResetLostPartitionTest extends GridCommonAbstractTest {
         }
 
         return totalSize / IgnitionEx.allGrids().size();
+    }
+
+    private void printMegaMap(ConcurrentMap<String, ConcurrentHashMap<Integer, StringBuilder>> megamap) {
+        for (Map.Entry<String, ConcurrentHashMap<Integer, StringBuilder>> entry : megamap.entrySet()) {
+            System.out.println(">>>>>>> " + entry.getKey().toString());
+            for (Map.Entry<Integer, StringBuilder> entry0 : entry.getValue().entrySet())
+                System.out.println(">xxx> " + entry0.getKey() + ": " + entry0.getValue());
+        }
+
     }
 }

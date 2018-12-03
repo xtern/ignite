@@ -218,6 +218,9 @@ public class GridAffinityAssignmentCache {
      * @param mvccCrd Mvcc coordinator.
      */
     public void initialize(AffinityTopologyVersion topVer, List<List<ClusterNode>> affAssignment, MvccCoordinator mvccCrd) {
+        if ("default".equals(cacheOrGrpName))
+            U.dumpStack("initialize aff " + ctx.localNodeId());
+
         assert topVer.compareTo(lastVersion()) >= 0 : "[topVer = " + topVer + ", last=" + lastVersion() + ']';
 
         assert idealAssignment != null;
