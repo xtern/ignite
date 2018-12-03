@@ -21,6 +21,7 @@ import java.util.Comparator;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import java.util.stream.Collectors;
 import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.internal.GridKernalContext;
 import org.apache.ignite.internal.processors.GridProcessorAdapter;
@@ -100,32 +101,33 @@ public class DiagnosticProcessor extends GridProcessorAdapter {
 
     /** */
     public synchronized void printStats() {
-        System.out.println("### Diagnostic processor info:");
-
         Long total = counts.get(TOTAL.getName());
 
-        counts.entrySet()
+        String out = counts.entrySet()
             .stream()
             .sorted(new Comparator<Map.Entry<String, Long>>() {
                 @Override public int compare(Map.Entry<String, Long> o1, Map.Entry<String, Long> o2) {
                     return o1.getValue().compareTo(o2.getValue());
                 }
             })
-            .peek(e -> System.out.printf("#### %s : %s ms : %.2f \r\n",
+            .map(e -> String.format("#### %s : %s ms : %.2f",
                 e.getKey(),
                 e.getValue(),
                 ((float)e.getValue() / total * 100)))
-            .count();
+            .collect(Collectors.joining("\n"));
+
+        log.info("\n### Diagnostic processor info: \n" + out);
+
 
         counts.clear();
 
         if (!tracks.isEmpty()) {
-            System.out.println("### Unfinished tracks:");
-
-            tracks.entrySet()
+            String str = tracks.entrySet()
                 .stream()
-                .peek(e -> System.out.println("#### " + e.getKey() + " : " + e.getValue()))
-                .count();
+                .map(e -> "#### " + e.getKey() + " : " + e.getValue())
+                .collect(Collectors.joining("\n"));
+
+            log.info("\n### Unfinished tracks: \n" + str);
         }
 
         tracks.clear();
