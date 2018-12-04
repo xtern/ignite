@@ -15,6 +15,9 @@ public enum DiagnosticTopics {
     PRELOAD_OFFHEAP_INVOKE("### initialValue(..) -> offheap().invoke(..)"),
     /** CacheDataStoreImpl#invoke0(..) */
     PRELOAD_TREE_INVOKE("#### tree.invoke(..)"),
+    /** */
+    PRELOAD_TREE_ADD_ROW("#### rowStore.addRow(..)"),
+
     /** CacheDataStoreImpl.finishUpdate(..) */
     PRELOAD_INDEXING_STORE("#### finishUpdate -> indexing().store(..)"),
     /** CacheDataStoreImpl.finishUpdate(..) */
@@ -29,8 +32,6 @@ public enum DiagnosticTopics {
     PRELOAD_UPDATED("### initialValue(..) -> GridCacheMapEntry.updated(..)"),
     /** */
     PRELOAD_ON_WAL_LOG("### initialValue(..) -> wal.log(..)"),
-    /** */
-    PRELOAD_ON_WAL_FLUSH("#### wal.log(..) -> flushBuffer(..)"),
     /** */
     PRELOAD_ON_ENTRY_UPDATED("### initialValue(..) -> cq().onEntryUpdated(..)"),
 

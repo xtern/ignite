@@ -57,7 +57,6 @@ import static org.apache.ignite.internal.pagemem.wal.record.WALRecord.RecordType
 import static org.apache.ignite.internal.processors.cache.persistence.wal.FileWriteAheadLogManager.prepareSerializerVersionBuffer;
 import static org.apache.ignite.internal.processors.cache.persistence.wal.serializer.RecordSerializerFactory.LATEST_SERIALIZER_VERSION;
 import static org.apache.ignite.internal.processors.cache.persistence.wal.serializer.RecordV1Serializer.HEADER_RECORD_SIZE;
-import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.PRELOAD_ON_WAL_FLUSH;
 import static org.apache.ignite.internal.util.IgniteUtils.findField;
 import static org.apache.ignite.internal.util.IgniteUtils.findNonPublicMethod;
 
@@ -310,12 +309,8 @@ class FileWriteHandleImpl extends AbstractFileHandle implements FileWriteHandle 
      * @param ptr Pointer.
      */
     public void flush(FileWALPointer ptr) throws IgniteCheckedException {
-        Long st = U.currentTimeMillis();
-
         if (ptr == null) { // Unconditional flush.
             walWriter.flushAll();
-
-            cctx.kernalContext().diagnostic().mergeSafe(PRELOAD_ON_WAL_FLUSH, U.currentTimeMillis() - st);
 
             return;
         }
@@ -323,8 +318,6 @@ class FileWriteHandleImpl extends AbstractFileHandle implements FileWriteHandle 
         assert ptr.index() == getSegmentId();
 
         walWriter.flushBuffer(ptr.fileOffset());
-
-        cctx.kernalContext().diagnostic().mergeSafe(PRELOAD_ON_WAL_FLUSH, U.currentTimeMillis() - st);
     }
 
     /**

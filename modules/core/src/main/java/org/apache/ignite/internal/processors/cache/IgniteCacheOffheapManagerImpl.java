@@ -129,6 +129,7 @@ import static org.apache.ignite.internal.processors.cache.persistence.GridCacheO
 import static org.apache.ignite.internal.processors.cache.persistence.tree.io.DataPageIO.MVCC_INFO_SIZE;
 import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.PRELOAD_PENDING_TREE_PUT;
 import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.PRELOAD_PENDING_TREE_REMOVE;
+import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.PRELOAD_TREE_ADD_ROW;
 import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.PRELOAD_TREE_INVOKE;
 import static org.apache.ignite.internal.util.IgniteTree.OperationType.NOOP;
 import static org.apache.ignite.internal.util.IgniteTree.OperationType.PUT;
@@ -1716,6 +1717,7 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
 
             DataRow dataRow = makeDataRow(key, val, ver, expireTime, cacheId);
 
+            ctx.kernalContext().diagnostic().beginTrack(PRELOAD_TREE_ADD_ROW);
             if (canUpdateOldRow(cctx, oldRow, dataRow) && rowStore.updateRow(oldRow.link(), dataRow))
                 dataRow.link(oldRow.link());
             else {
@@ -1726,6 +1728,7 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
 
                 rowStore.addRow(dataRow);
             }
+            ctx.kernalContext().diagnostic().endTrack(PRELOAD_TREE_ADD_ROW);
 
             assert dataRow.link() != 0 : dataRow;
 
