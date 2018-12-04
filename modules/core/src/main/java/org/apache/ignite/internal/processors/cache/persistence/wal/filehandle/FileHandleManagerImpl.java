@@ -24,7 +24,6 @@ import java.nio.channels.ClosedByInterruptException;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.LockSupport;
 import java.util.function.Supplier;
 import org.apache.ignite.IgniteCheckedException;
@@ -50,7 +49,6 @@ import static org.apache.ignite.configuration.WALMode.LOG_ONLY;
 import static org.apache.ignite.failure.FailureType.CRITICAL_ERROR;
 import static org.apache.ignite.failure.FailureType.SYSTEM_WORKER_TERMINATION;
 import static org.apache.ignite.internal.processors.cache.persistence.wal.SegmentedRingByteBuffer.BufferMode.DIRECT;
-import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.PRELOAD_ON_WAL_FLUSH;
 import static org.apache.ignite.internal.util.IgniteUtils.sleep;
 
 /**
