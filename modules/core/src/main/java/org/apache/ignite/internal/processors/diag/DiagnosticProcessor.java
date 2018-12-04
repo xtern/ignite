@@ -21,6 +21,7 @@ import java.util.Comparator;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.atomic.LongAdder;
 import java.util.stream.Collectors;
 import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.internal.GridKernalContext;
@@ -34,13 +35,13 @@ import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.TOTAL;
  */
 public class DiagnosticProcessor extends GridProcessorAdapter {
     /** */
-    private final ConcurrentMap<String, Long> counts = new ConcurrentHashMap<>();
+    private final ConcurrentMap<String, LongAdder> counts = new ConcurrentHashMap<>();
 
     /** */
     private final ConcurrentMap<String, Long> tracks = new ConcurrentHashMap<>();
 
     /** */
-    private volatile boolean enabled = false;
+    private volatile boolean enabled;
 
     /**
      * @param ctx Context.
@@ -51,6 +52,8 @@ public class DiagnosticProcessor extends GridProcessorAdapter {
 
     /** {@inheritDoc} */
     @Override public void start() throws IgniteCheckedException {
+        for (DiagnosticTopics topics : DiagnosticTopics.values())
+            counts.put(topics.getName(), new LongAdder());
 
         U.quietAndInfo(log, "DiagnosticProcessor started");
     }
@@ -59,7 +62,7 @@ public class DiagnosticProcessor extends GridProcessorAdapter {
     @Override public void stop(boolean cancel) throws IgniteCheckedException {
         super.stop(cancel);
 
-        counts.clear();
+        resetCounts();
     }
 
     /** */
@@ -91,45 +94,58 @@ public class DiagnosticProcessor extends GridProcessorAdapter {
         if (TOTAL.getName().equals(topic))
             enabled = false;
 
-        Long point = tracks.remove(topic);
+        Long value = tracks.remove(topic);
 
-        if (point == null)
+        if (value == null)
             return;
 
-        counts.merge(topic, U.currentTimeMillis() - point, (a, b) -> a + b);
+        counts.get(topic).add(U.currentTimeMillis() - value);
+    }
+
+    /** */
+    public void mergeSafe(DiagnosticTopics topic, Long value) {
+        mergeSafe(topic.getName(), U.currentTimeMillis() - value);
+    }
+
+    /** */
+    public void mergeSafe(String topic, Long value) {
+        if (enabled)
+            counts.get(topic).add(value);
     }
 
     /** */
     public synchronized void printStats() {
-        Long total = counts.get(TOTAL.getName());
+        Long total = counts.get(TOTAL.getName()).longValue();
 
         String out = counts.entrySet()
             .stream()
-            .sorted(new Comparator<Map.Entry<String, Long>>() {
-                @Override public int compare(Map.Entry<String, Long> o1, Map.Entry<String, Long> o2) {
-                    return o1.getValue().compareTo(o2.getValue());
-                }
-            })
-            .map(e -> String.format("#### %s : %s ms : %.2f",
+            .filter(e -> e.getValue().longValue() != 0)
+            .sorted(Comparator.comparingInt(o -> DiagnosticTopics.get(o.getKey()).ordinal()))
+            .map(e -> String.format("# %s : %.3f s : %.2f",
                 e.getKey(),
-                e.getValue(),
-                ((float)e.getValue() / total * 100)))
+                (float)(e.getValue().longValue() / 1000),
+                ((float)e.getValue().longValue() / total * 100)))
             .collect(Collectors.joining("\n"));
 
-        log.info("\n### Diagnostic processor info: \n" + out);
+        log.info("\n# Diagnostic processor info: \n" + out);
 
-
-        counts.clear();
+        resetCounts();
 
         if (!tracks.isEmpty()) {
             String str = tracks.entrySet()
                 .stream()
-                .map(e -> "#### " + e.getKey() + " : " + e.getValue())
+                .map(e -> "# " + e.getKey() + " : " + e.getValue())
                 .collect(Collectors.joining("\n"));
 
-            log.info("\n### Unfinished tracks: \n" + str);
+            log.info("\n# Unfinished tracks: \n" + str);
         }
 
         tracks.clear();
+    }
+
+    /** */
+    public synchronized void resetCounts() {
+        for (Map.Entry<String, LongAdder> e : counts.entrySet())
+            e.getValue().reset();
     }
 }

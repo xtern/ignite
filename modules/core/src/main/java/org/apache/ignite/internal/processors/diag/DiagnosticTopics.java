@@ -1,19 +1,50 @@
 package org.apache.ignite.internal.processors.diag;
 
+import java.util.HashMap;
+import java.util.Map;
+
 /**
  *
  */
 public enum DiagnosticTopics {
-    SEND_DEMAND("demand message serialization"),
-    SEND_RECEIVE("network delay between nodes"),
-    CLEAR_FUTS("cache wait clearAllFutures"),
-    TOTAL("total"),
-    PRELOAD_ENTRY("preload entries total"),
-    PRELOAD_ON_ENTRY_UPDATED("preload entry onEntryUpdated"),
-    PRELOAD_ON_WAL_LOG("preload entry wal log"),
-    PRELOAD_STORE_ENTRY("preload entry tree invoke"),
-    PRELOAD_UPDATED("preload entry updated"),
-    SUPPLIER_PROCESS_MSG("prepare message by supplier");
+    /** Root. */
+    TOTAL("# rebalance total"),
+    /** GridDhtPartitionDemander#preloadEntry(..) */
+    PRELOAD_ENTRY("## preload entry total"),
+    /** GridCacheMapEntry#storeValue(..) */
+    PRELOAD_OFFHEAP_INVOKE("### initialValue(..) -> offheap().invoke(..)"),
+    /** CacheDataStoreImpl#invoke0(..) */
+    PRELOAD_TREE_INVOKE("#### tree.invoke(..)"),
+    /** CacheDataStoreImpl.finishUpdate(..) */
+    PRELOAD_INDEXING_STORE("#### finishUpdate -> indexing().store(..)"),
+    /** CacheDataStoreImpl.finishUpdate(..) */
+    PRELOAD_PENDING_TREE_REMOVE("#### finishUpdate -> pendingTree().removex(..)"),
+    /** CacheDataStoreImpl.finishUpdate(..) */
+    PRELOAD_PENDING_TREE_PUT("#### finishUpdate -> pendingTree().putx(..)"),
+    /** CacheDataStoreImpl#finishRemove(..) */
+    PRELOAD_INDEXING_REMOVE("#### finishRemove -> indexing().remove(..)"),
+    /** CacheDataStoreImpl#finishRemove(..) */
+    PRELOAD_FREELIST_REMOVE("#### finishRemove -> freeList.removeDataRowByLink(..)"),
+    /** */
+    PRELOAD_UPDATED("### initialValue(..) -> GridCacheMapEntry.updated(..)"),
+    /** */
+    PRELOAD_ON_WAL_LOG("### initialValue(..) -> wal.log(..)"),
+    /** */
+    PRELOAD_ON_WAL_FLUSH("#### wal.log(..) -> flushBuffer(..)"),
+    /** */
+    PRELOAD_ON_ENTRY_UPDATED("### initialValue(..) -> cq().onEntryUpdated(..)"),
+
+    SEND_DEMAND("# demand message serialization"),
+    SEND_RECEIVE("# network delay between nodes"),
+    SUPPLIER_PROCESS_MSG("# prepare message supplier");
+
+    /** Reverse-lookup map for getting a day from an abbreviation */
+    private static final Map<String, DiagnosticTopics> lookup = new HashMap<String, DiagnosticTopics>();
+
+    static {
+        for (DiagnosticTopics t : DiagnosticTopics.values())
+            lookup.put(t.getName(), t);
+    }
 
     /** */
     private String name;
@@ -21,6 +52,11 @@ public enum DiagnosticTopics {
     /** */
     DiagnosticTopics(String name) {
         this.name = name;
+    }
+
+    /** */
+    public static DiagnosticTopics get(String topic) {
+        return lookup.get(topic);
     }
 
     /** */

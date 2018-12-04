@@ -4309,13 +4309,13 @@ public abstract class GridCacheMapEntry extends GridMetadataAwareAdapter impleme
         @Nullable IgnitePredicate<CacheDataRow> predicate) throws IgniteCheckedException {
         assert lock.isHeldByCurrentThread();
 
-        cctx.kernalContext().diagnostic().beginTrack(DiagnosticTopics.PRELOAD_STORE_ENTRY);
+        cctx.kernalContext().diagnostic().beginTrack(DiagnosticTopics.PRELOAD_OFFHEAP_INVOKE);
 
         UpdateClosure closure = new UpdateClosure(this, val, ver, expireTime, predicate);
 
         cctx.offheap().invoke(cctx, key, localPartition(), closure);
 
-        cctx.kernalContext().diagnostic().endTrack(DiagnosticTopics.PRELOAD_STORE_ENTRY);
+        cctx.kernalContext().diagnostic().endTrack(DiagnosticTopics.PRELOAD_OFFHEAP_INVOKE);
 
         return closure.treeOp != IgniteTree.OperationType.NOOP;
     }

@@ -78,7 +78,6 @@ import static org.apache.ignite.events.EventType.EVT_CACHE_REBALANCE_PART_LOADED
 import static org.apache.ignite.events.EventType.EVT_CACHE_REBALANCE_STARTED;
 import static org.apache.ignite.events.EventType.EVT_CACHE_REBALANCE_STOPPED;
 import static org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtPartitionState.MOVING;
-import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.CLEAR_FUTS;
 import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.PRELOAD_ENTRY;
 import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.SEND_DEMAND;
 import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.SEND_RECEIVE;
@@ -579,10 +578,6 @@ public class GridDhtPartitionDemander {
 
             return clearAllFuture;
         }
-
-        ctx.kernalContext().diagnostic().beginTrack(CLEAR_FUTS);
-
-        clearAllFuture.listen(f -> ctx.kernalContext().diagnostic().endTrack(CLEAR_FUTS));
 
         for (GridCacheContext cctx : grp.caches()) {
             if (cctx.statisticsEnabled()) {

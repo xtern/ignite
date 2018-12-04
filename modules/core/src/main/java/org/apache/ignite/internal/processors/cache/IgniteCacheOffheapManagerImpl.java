@@ -127,6 +127,9 @@ import static org.apache.ignite.internal.processors.cache.mvcc.MvccUtils.state;
 import static org.apache.ignite.internal.processors.cache.mvcc.MvccUtils.unexpectedStateException;
 import static org.apache.ignite.internal.processors.cache.persistence.GridCacheOffheapManager.EMPTY_CURSOR;
 import static org.apache.ignite.internal.processors.cache.persistence.tree.io.DataPageIO.MVCC_INFO_SIZE;
+import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.PRELOAD_PENDING_TREE_PUT;
+import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.PRELOAD_PENDING_TREE_REMOVE;
+import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.PRELOAD_TREE_INVOKE;
 import static org.apache.ignite.internal.util.IgniteTree.OperationType.NOOP;
 import static org.apache.ignite.internal.util.IgniteTree.OperationType.PUT;
 
@@ -1664,7 +1667,11 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
             try {
                 assert cctx.shared().database().checkpointLockIsHeldByThread();
 
+                ctx.kernalContext().diagnostic().beginTrack(PRELOAD_TREE_INVOKE);
+
                 dataTree.invoke(row, CacheDataRowAdapter.RowData.NO_KEY, c);
+
+                ctx.kernalContext().diagnostic().endTrack(PRELOAD_TREE_INVOKE);
 
                 switch (c.operationType()) {
                     case PUT: {
@@ -2689,13 +2696,17 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
             if (oldRow != null) {
                 assert oldRow.link() != 0 : oldRow;
 
-                if (pendingTree() != null && oldRow.expireTime() != 0)
+                if (pendingTree() != null && oldRow.expireTime() != 0) {
+                    cctx.kernalContext().diagnostic().beginTrack(PRELOAD_PENDING_TREE_REMOVE);
                     pendingTree().removex(new PendingRow(cacheId, oldRow.expireTime(), oldRow.link()));
+                    cctx.kernalContext().diagnostic().endTrack(PRELOAD_PENDING_TREE_REMOVE);
+                }
             }
 
             if (pendingTree() != null && expireTime != 0) {
+                cctx.kernalContext().diagnostic().beginTrack(PRELOAD_PENDING_TREE_PUT);
                 pendingTree().putx(new PendingRow(cacheId, expireTime, newRow.link()));
-
+                cctx.kernalContext().diagnostic().endTrack(PRELOAD_PENDING_TREE_PUT);
                 hasPendingEntries = true;
             }
         }
