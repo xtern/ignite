@@ -41,9 +41,6 @@ public class DiagnosticProcessor extends GridProcessorAdapter {
     private final ConcurrentMap<String, LongAdder> counts = new ConcurrentHashMap<>();
 
     /** */
-    private final ConcurrentMap<String, LongAdder> msgs = new ConcurrentHashMap<>();
-
-    /** */
     private final ConcurrentMap<String, Long> tracks = new ConcurrentHashMap<>();
 
     /** */
@@ -113,11 +110,6 @@ public class DiagnosticProcessor extends GridProcessorAdapter {
     }
 
     /** */
-    public synchronized void countMessage(String topic) {
-       msgs.getOrDefault(topic, new LongAdder()).increment();
-    }
-
-    /** */
     public synchronized void printStats() {
         Long total = timings.get(TOTAL.getName()).longValue();
 
@@ -132,12 +124,7 @@ public class DiagnosticProcessor extends GridProcessorAdapter {
                 counts.get(e.getKey()).longValue()))
             .collect(Collectors.joining("\n"));
 
-        String msgsCount = msgs.entrySet()
-            .stream()
-            .map(e -> String.format("# %s : %s", e.getKey(), e.getValue().longValue()))
-            .collect(Collectors.joining("\n"));
-
-        log.info("\n# Diagnostic processor info: \n" + out + "\n" + msgsCount);
+        log.info("\n# Diagnostic processor info: \n" + out);
 
         resetCounts();
 
