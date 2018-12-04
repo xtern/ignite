@@ -10,7 +10,7 @@ public enum DiagnosticTopics {
     /** Root. */
     TOTAL("# cache rebalance total"),
     /** GridDhtPartitionDemander#preloadEntry(..) */
-    PRELOAD_ENTRY("# # preload entry total"),
+    PRELOAD_ENTRY("# # preload on demander"),
     /** GridCacheMapEntry#storeValue(..) */
     PRELOAD_OFFHEAP_INVOKE("# # # offheap().invoke(..)"),
     /** CacheDataStoreImpl#invoke0(..) */
@@ -30,15 +30,15 @@ public enum DiagnosticTopics {
     /** CacheDataStoreImpl#finishRemove(..) */
     PRELOAD_FREELIST_REMOVE("# # # # finishRemove -> freeList.removeDataRowByLink(..)"),
     /** */
-    PRELOAD_UPDATED("# # # initialValue(..) -> GridCacheMapEntry.updated(..)"),
+    PRELOAD_UPDATED("# # # ttl().addTrackedEntry(..)"),
     /** */
-    PRELOAD_ON_WAL_LOG("# # # initialValue(..) -> wal.log(..)"),
+    PRELOAD_ON_WAL_LOG("# # # wal.log(..)"),
     /** */
-    PRELOAD_ON_ENTRY_UPDATED("# # # initialValue(..) -> cq().onEntryUpdated(..)"),
+    PRELOAD_ON_ENTRY_UPDATED("# # # continuousQueries().onEntryUpdated(..)"),
 
-    SEND_DEMAND("# demand message serialization"),
+    SEND_DEMAND("# message serialization"),
     SEND_RECEIVE("# network delay between nodes"),
-    SUPPLIER_PROCESS_MSG("# prepare message supplier");
+    SUPPLIER_PROCESS_MSG("# make batch on supplier handleDemandMessage(..)");
 
     /** Reverse-lookup map for getting a day from an abbreviation */
     private static final Map<String, DiagnosticTopics> lookup = new HashMap<String, DiagnosticTopics>();
