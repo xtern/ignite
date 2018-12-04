@@ -130,6 +130,7 @@ import static org.apache.ignite.internal.processors.cache.persistence.tree.io.Da
 import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.PRELOAD_PENDING_TREE_PUT;
 import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.PRELOAD_PENDING_TREE_REMOVE;
 import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.PRELOAD_TREE_ADD_ROW;
+import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.PRELOAD_TREE_FINISH_UPDATE;
 import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.PRELOAD_TREE_INVOKE;
 import static org.apache.ignite.internal.util.IgniteTree.OperationType.NOOP;
 import static org.apache.ignite.internal.util.IgniteTree.OperationType.PUT;
@@ -1679,8 +1680,9 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
                         assert c.newRow() != null : c;
 
                         CacheDataRow oldRow = c.oldRow();
-
+                        ctx.kernalContext().diagnostic().beginTrack(PRELOAD_TREE_FINISH_UPDATE);
                         finishUpdate(cctx, c.newRow(), oldRow);
+                        ctx.kernalContext().diagnostic().endTrack(PRELOAD_TREE_FINISH_UPDATE);
 
                         break;
                     }

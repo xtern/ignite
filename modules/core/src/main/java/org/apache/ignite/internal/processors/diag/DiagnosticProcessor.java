@@ -35,7 +35,13 @@ import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.TOTAL;
  */
 public class DiagnosticProcessor extends GridProcessorAdapter {
     /** */
+    private final ConcurrentMap<String, LongAdder> timings = new ConcurrentHashMap<>();
+
+    /** */
     private final ConcurrentMap<String, LongAdder> counts = new ConcurrentHashMap<>();
+
+    /** */
+    private final ConcurrentMap<String, LongAdder> msgs = new ConcurrentHashMap<>();
 
     /** */
     private final ConcurrentMap<String, Long> tracks = new ConcurrentHashMap<>();
@@ -52,8 +58,11 @@ public class DiagnosticProcessor extends GridProcessorAdapter {
 
     /** {@inheritDoc} */
     @Override public void start() throws IgniteCheckedException {
-        for (DiagnosticTopics topics : DiagnosticTopics.values())
+        for (DiagnosticTopics topics : DiagnosticTopics.values()) {
+            timings.put(topics.getName(), new LongAdder());
+
             counts.put(topics.getName(), new LongAdder());
+        }
 
         U.quietAndInfo(log, "DiagnosticProcessor started");
     }
@@ -99,35 +108,36 @@ public class DiagnosticProcessor extends GridProcessorAdapter {
         if (value == null)
             return;
 
-        counts.get(topic).add(U.currentTimeMillis() - value);
+        timings.get(topic).add(U.currentTimeMillis() - value);
+        counts.get(topic).increment();
     }
 
     /** */
-    public void mergeSafe(DiagnosticTopics topic, Long value) {
-        mergeSafe(topic.getName(), U.currentTimeMillis() - value);
-    }
-
-    /** */
-    public void mergeSafe(String topic, Long value) {
-        if (enabled)
-            counts.get(topic).add(value);
+    public synchronized void countMessage(String topic) {
+       msgs.getOrDefault(topic, new LongAdder()).increment();
     }
 
     /** */
     public synchronized void printStats() {
-        Long total = counts.get(TOTAL.getName()).longValue();
+        Long total = timings.get(TOTAL.getName()).longValue();
 
-        String out = counts.entrySet()
+        String out = timings.entrySet()
             .stream()
             .filter(e -> e.getValue().longValue() != 0)
             .sorted(Comparator.comparingInt(o -> DiagnosticTopics.get(o.getKey()).ordinal()))
-            .map(e -> String.format("# %s : %.3f s : %.2f",
+            .map(e -> String.format("# %s : %s ms : %.2f : %s",
                 e.getKey(),
-                (float)(e.getValue().longValue() / 1000),
-                ((float)e.getValue().longValue() / total * 100)))
+                e.getValue().longValue(),
+                ((float)e.getValue().longValue() / total * 100),
+                counts.get(e.getKey()).longValue()))
             .collect(Collectors.joining("\n"));
 
-        log.info("\n# Diagnostic processor info: \n" + out);
+        String msgsCount = msgs.entrySet()
+            .stream()
+            .map(e -> String.format("# %s : %s", e.getKey(), e.getValue().longValue()))
+            .collect(Collectors.joining("\n"));
+
+        log.info("\n# Diagnostic processor info: \n" + out + "\n" + msgsCount);
 
         resetCounts();
 
@@ -145,7 +155,10 @@ public class DiagnosticProcessor extends GridProcessorAdapter {
 
     /** */
     public synchronized void resetCounts() {
-        for (Map.Entry<String, LongAdder> e : counts.entrySet())
+        for (Map.Entry<String, LongAdder> e : timings.entrySet())
             e.getValue().reset();
+
+        for (Map.Entry<String, LongAdder> c : counts.entrySet())
+            c.getValue().reset();
     }
 }

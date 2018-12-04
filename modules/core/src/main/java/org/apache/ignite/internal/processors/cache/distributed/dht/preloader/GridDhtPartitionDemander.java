@@ -726,6 +726,8 @@ public class GridDhtPartitionDemander {
 
         final GridDhtPartitionTopology top = grp.topology();
 
+        ctx.kernalContext().diagnostic().countMessage("demand messages total");
+
         if (grp.sharedGroup()) {
             for (GridCacheContext cctx : grp.caches()) {
                 if (cctx.statisticsEnabled()) {
@@ -811,6 +813,7 @@ public class GridDhtPartitionDemander {
 
                                             break;
                                         }
+                                        ctx.kernalContext().diagnostic().countMessage("cache key received");
 
                                         for (GridCacheContext cctx : grp.caches()) {
                                             if (cctx.statisticsEnabled())
