@@ -857,11 +857,11 @@ public class IgniteCachePartitionLossPolicySelfTest extends GridCommonAbstractTe
             for (int i = 0; i < aff.partitions(); i++)
                 ignite(0).cache(DEFAULT_CACHE_NAME).put(i, i);
 
-            client = true;
+//            client = true;
 
             startGrid(4);
 
-            client = false;
+//            client = false;
 
             for (int i = 0; i < 5; i++)
                 info(">>> Node [idx=" + i + ", nodeId=" + ignite(i).cluster().localNode().id() + ']');

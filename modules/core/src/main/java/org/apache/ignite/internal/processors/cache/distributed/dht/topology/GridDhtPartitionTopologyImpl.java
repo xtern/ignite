@@ -2260,6 +2260,20 @@ public class GridDhtPartitionTopologyImpl implements GridDhtPartitionTopology {
                     }
                 }
 
+                if (lostParts != null) {
+                    for (Map.Entry<UUID, GridDhtPartitionMap> e : node2part.entrySet()) {
+                        if (e.getKey().equals(ctx.localNodeId()))
+                            continue;
+
+                        for (Integer part : lostParts) {
+                            GridDhtPartitionState state = e.getValue().get(part);
+
+                            if (state != null && state.active())
+                                e.getValue().put(part, LOST);
+                        }
+                    }
+                }
+
                 node2part = new GridDhtPartitionFullMap(node2part, updateSeq.incrementAndGet());
             } finally {
                 lock.writeLock().unlock();
@@ -2339,7 +2353,7 @@ public class GridDhtPartitionTopologyImpl implements GridDhtPartitionTopology {
 
             AffinityTopologyVersion topVer = aff.topologyVersion();
 
-            List<ClusterNode> nodes = part.state() == LOST ? nodes(p, topVer, OWNING, LOST) : nodes(p, topVer, OWNING);
+            List<ClusterNode> nodes = nodes(p, topVer, OWNING); // part.state() == LOST ? nodes(p, topVer, OWNING, LOST) :
 
             Collection<UUID> nodeIds = F.nodeIds(nodes);
 
