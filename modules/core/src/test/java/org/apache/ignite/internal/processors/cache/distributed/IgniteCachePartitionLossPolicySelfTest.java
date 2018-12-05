@@ -54,6 +54,7 @@ import org.apache.ignite.internal.util.typedef.F;
 import org.apache.ignite.internal.util.typedef.G;
 import org.apache.ignite.internal.util.typedef.P1;
 import org.apache.ignite.internal.util.typedef.internal.CU;
+import org.apache.ignite.internal.util.typedef.internal.U;
 import org.apache.ignite.plugin.extensions.communication.Message;
 import org.apache.ignite.spi.discovery.tcp.TcpDiscoverySpi;
 import org.apache.ignite.spi.discovery.tcp.ipfinder.TcpDiscoveryIpFinder;
@@ -544,14 +545,28 @@ public class IgniteCachePartitionLossPolicySelfTest extends GridCommonAbstractTe
 
         awaitPartitionMapExchange(true, true, null);
 
+        printPartitionState(DEFAULT_CACHE_NAME, 0);
+
         for (Ignite ig : G.allGrids()) {
             IgniteCache<Integer, Integer> cache = ig.cache(DEFAULT_CACHE_NAME);
 
             assertTrue(cache.lostPartitions().isEmpty());
 
-            int parts = ig.affinity(DEFAULT_CACHE_NAME).partitions();
+            Affinity<Integer> aff = ig.affinity(DEFAULT_CACHE_NAME);
+
+            int parts = aff.partitions();
 
             for (int i = 0; i < parts; i++) {
+                System.out.println(ig.cluster().localNode().id() + " >xxx> get p=" + i);
+
+                for (Ignite ig0 : G.allGrids()) {
+                    if (aff.isPrimary(ig0.cluster().localNode(), i))
+                        System.out.println("\t>xxx> primary " + ig0.cluster().localNode().id());
+
+                    if (aff.isBackup(ig0.cluster().localNode(), i))
+                        System.out.println("\t>xxx> backup " + ig0.cluster().localNode().id());
+                }
+
                 cache.get(i);
 
                 cache.put(i, i);
@@ -857,11 +872,11 @@ public class IgniteCachePartitionLossPolicySelfTest extends GridCommonAbstractTe
             for (int i = 0; i < aff.partitions(); i++)
                 ignite(0).cache(DEFAULT_CACHE_NAME).put(i, i);
 
-//            client = true;
+            client = true;
 
             startGrid(4);
 
-//            client = false;
+            client = false;
 
             for (int i = 0; i < 5; i++)
                 info(">>> Node [idx=" + i + ", nodeId=" + ignite(i).cluster().localNode().id() + ']');

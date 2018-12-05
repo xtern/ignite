@@ -857,6 +857,7 @@ public abstract class GridCommonAbstractTest extends GridAbstractTest {
 
             try {
                 sb.append("nodeId=").append(k.context().localNodeId())
+                    .append(" client=").append(k.context().clientNode())
                     .append(" isDone=").append(f.isDone())
                     .append(" res=").append(f.isDone() ? f.get() : "N/A")
                     .append(" topVer=")

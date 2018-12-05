@@ -339,6 +339,8 @@ public class CacheAffinitySharedManager<K, V> extends GridCacheSharedManagerAdap
 
         Map<Integer, Map<Integer, List<UUID>>> assignmentsChange = U.newHashMap(waitInfo.assignments.size());
 
+        StringBuilder buf = new StringBuilder();
+
         for (Map.Entry<Integer, Map<Integer, List<ClusterNode>>> e : waitInfo.assignments.entrySet()) {
             Integer grpId = e.getKey();
 
@@ -349,8 +351,15 @@ public class CacheAffinitySharedManager<K, V> extends GridCacheSharedManagerAdap
             for (Map.Entry<Integer, List<ClusterNode>> e0 : assignment.entrySet())
                 assignment0.put(e0.getKey(), toIds0(e0.getValue()));
 
+            buf.append("\ngrp=" + grpId + "\n");
+
+            for (Map.Entry<Integer, List<UUID>> entry : assignment0.entrySet())
+                buf.append("part= " + entry.getKey()).append(": ").append(entry.getValue()).append("\n");
+
             assignmentsChange.put(grpId, assignment0);
         }
+
+        U.dumpStack(">xxx> change aff\n" + buf);
 
         return new CacheAffinityChangeMessage(waitInfo.topVer, assignmentsChange, waitInfo.deploymentIds);
     }
@@ -1293,11 +1302,12 @@ public class CacheAffinitySharedManager<K, V> extends GridCacheSharedManagerAdap
         }
 
         try {
-            U.doInParallel(cctx.kernalContext().getSystemExecutorService(), affinityCaches, t -> {
+            //U.doInParallel(cctx.kernalContext().getSystemExecutorService(), affinityCaches, t -> {
+            for (GridAffinityAssignmentCache t : affinityCaches) {
                 c.applyx(t);
-
-                return null;
-            });
+//                return null;
+            }
+            //);
         }
         catch (IgniteCheckedException e) {
             throw new IgniteException("Failed to execute affinity operation on cache groups", e);
@@ -2264,7 +2274,14 @@ public class CacheAffinitySharedManager<K, V> extends GridCacheSharedManagerAdap
 
                     GridDhtPartitionState state = top.partitionState(curPrimary.id(), p);
 
-                    List<ClusterNode> nodes0 = state == GridDhtPartitionState.LOST ? newNodes : latePrimaryAssignment(aff,
+                    boolean lost = state == GridDhtPartitionState.LOST;
+
+                    if (lost)
+                        log.info(">xxx> primary " + curPrimary.id() + " LOST, p=" + p + ", assign=" + F.nodeIds(newNodes));
+                    else
+                        log.info(">xxx> p=" + p + ", state=" + state + ", primary=" + curPrimary.id() + ", newPrimary="+newPrimary.id());
+
+                    List<ClusterNode> nodes0 = lost ? newNodes : latePrimaryAssignment(aff,
                         p,
                         curPrimary,
                         newNodes,
