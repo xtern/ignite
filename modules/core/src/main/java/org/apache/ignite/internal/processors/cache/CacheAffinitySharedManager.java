@@ -2276,10 +2276,12 @@ public class CacheAffinitySharedManager<K, V> extends GridCacheSharedManagerAdap
 
                     boolean lost = state == GridDhtPartitionState.LOST;
 
-                    if (lost)
-                        log.info(">xxx> primary " + curPrimary.id() + " LOST, p=" + p + ", assign=" + F.nodeIds(newNodes));
-                    else
-                        log.info(">xxx> p=" + p + ", state=" + state + ", primary=" + curPrimary.id() + ", newPrimary="+newPrimary.id());
+                    if ("default".equals(aff.cacheOrGroupName())) {
+                        if (lost)
+                            log.info(">xxx> p=" + p + ", state=" + state + ", primary " + curPrimary.id() + " LOST, p=" + p + ", assign=" + F.nodeIds(newNodes));
+                        else
+                            log.info(">xxx> p=" + p + ", state=" + state + ", primary=" + curPrimary.id() + ", newPrimary=" + newPrimary.id());
+                    }
 
                     List<ClusterNode> nodes0 = lost ? newNodes : latePrimaryAssignment(aff,
                         p,
@@ -2347,6 +2349,10 @@ public class CacheAffinitySharedManager<K, V> extends GridCacheSharedManagerAdap
 
             if (!node.equals(curPrimary))
                 nodes0.add(node);
+            else {
+                if ("default".equals(aff.cacheOrGroupName()))
+                    log.info(">xxx> reorder p=" + part + ", node=" + curPrimary.id());
+            }
         }
 
         if (rebalance != null)
