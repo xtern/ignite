@@ -1,0 +1,147 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<!--
+  Licensed to the Apache Software Foundation (ASF) under one or more
+  contributor license agreements.  See the NOTICE file distributed with
+  this work for additional information regarding copyright ownership.
+  The ASF licenses this file to You under the Apache License, Version 2.0
+  (the "License"); you may not use this file except in compliance with
+  the License.  You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+  Unless required by applicable law or agreed to in writing, software
+  distributed under the License is distributed on an "AS IS" BASIS,
+  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+  See the License for the specific language governing permissions and
+  limitations under the License.
+-->
+
+<beans xmlns="http://www.springframework.org/schema/beans"
+       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+       xsi:schemaLocation="http://www.springframework.org/schema/beans
+http://www.springframework.org/schema/beans/spring-beans.xsd">
+    <bean id="walArchivePath" class="java.lang.String">
+        <constructor-arg index="0" value="/sdb/ssd/mmuzaf/apache-ignite/work/walArchive" />
+    </bean>
+
+    <bean id="walStorePath" class="java.lang.String">
+        <constructor-arg index="0" value="/sdb/ssd/mmuzaf/apache-ignite/work/walStore" />
+    </bean>
+
+    <bean id="igniteConfiguration" class="org.apache.ignite.configuration.IgniteConfiguration">
+        <property name="failureDetectionTimeout" value="180000"/>
+        <property name="metricsLogFrequency" value="30000"/>
+        <property name="publicThreadPoolSize" value="256"/>
+        <property name="systemThreadPoolSize" value="256"/>
+	<property name="rebalanceThreadPoolSize" value="1"/>
+
+        <property name="peerClassLoadingEnabled" value="true"/>
+
+        <property name="binaryConfiguration">
+            <ref bean="binaryConfiguration"/>
+        </property>
+
+        <property name="communicationSpi">
+            <ref bean="tcpCommunicationSpi"/>
+        </property>
+
+        <property name="discoverySpi">
+            <ref bean="discoverySpi"/>
+        </property>
+
+        <property name="connectorConfiguration">
+            <ref bean="connectorConfiguration"/>
+        </property>
+
+        <property name="memoryConfiguration">
+            <ref bean="memoryConfiguration"/>
+        </property>
+
+        <property name="transactionConfiguration">
+            <ref bean="transactionConfiguration"/>
+        </property>
+
+        <property name="atomicConfiguration">
+            <ref bean="atomicConfiguration"/>
+        </property>
+
+        <property name="persistentStoreConfiguration">
+            <ref bean="persistentStoreConfiguration"/>
+        </property>
+    </bean>
+
+    <bean id="tcpCommunicationSpi" class="org.apache.ignite.spi.communication.tcp.TcpCommunicationSpi">
+        <property name="sharedMemoryPort" value="-1"/>
+        <property name="connectTimeout" value="20000"/>
+        <property name="maxConnectTimeout" value="60000"/>
+        <property name="reconnectCount" value="2"/>
+        <property name="idleConnectionTimeout" value="600000"/>
+        <property name="socketWriteTimeout" value="30000"/>
+        <property name="selectorsCount" value="18"/>
+        <property name="connectionsPerNode" value="8"/>
+        <property name="messageQueueLimit" value="0"/>
+        <property name="localPort" value="48100"/>
+    </bean>
+
+    <bean id="discoverySpi" class="org.apache.ignite.spi.discovery.tcp.TcpDiscoverySpi">
+        <property name="localPort" value="48501" />
+        <property name="ipFinder">
+            <bean class="org.apache.ignite.spi.discovery.tcp.ipfinder.multicast.TcpDiscoveryMulticastIpFinder">
+                <property name="multicastPort" value="48601" />
+                <property name="addresses">
+                    <list>
+                        <value>10.116.172.13:48601..48609</value>
+			            <value>10.116.172.15:48601..48609</value>
+                    </list>
+                </property>
+            </bean>
+        </property>
+    </bean>
+
+    <bean id="binaryConfiguration" class="org.apache.ignite.configuration.BinaryConfiguration">
+        <property name="compactFooter" value="true"/>
+    </bean>
+
+    <bean id="connectorConfiguration" class="org.apache.ignite.configuration.ConnectorConfiguration">
+        <property name="port" value="11311" />
+        <property name="idleTimeout" value="180000"/>
+    </bean>
+
+    <bean id="memoryConfiguration" class="org.apache.ignite.configuration.MemoryConfiguration">
+        <property name="pageSize" value="#{4 * 1024}"/>
+        <property name="defaultMemoryPolicyName" value="dpl_mem_plc"/>
+        <property name="memoryPolicies">
+            <list>
+                <ref bean="memoryPolicyConfiguration"/>
+            </list>
+        </property>
+    </bean>
+
+    <bean id="memoryPolicyConfiguration" class="org.apache.ignite.configuration.MemoryPolicyConfiguration">
+        <property name="name" value="dpl_mem_plc"/>
+
+        <property name="initialSize" value="#{200 * 1024 * 1024 * 1024L}"/>
+        <property name="maxSize" value="#{600 * 1024 * 1024 * 1024L}"/>
+    </bean>
+
+    <bean id="persistentStoreConfiguration" class="org.apache.ignite.configuration.PersistentStoreConfiguration">
+        <property name="checkpointingFrequency" value="10000"/>
+        <property name="walMode" value="LOG_ONLY"/>
+        <property name="tlbSize" value="10485760"/>
+        <property name="checkpointingPageBufferSize" value="#{16 * 1024 * 1024 * 1024L}" />
+
+        <property name="walArchivePath" ref="walArchivePath" />
+        <property name="walStorePath" ref="walStorePath" />
+    </bean>
+
+    <bean id="transactionConfiguration" class="org.apache.ignite.configuration.TransactionConfiguration">
+        <property name="defaultTxIsolation" value="READ_COMMITTED"/>
+        <property name="defaultTxTimeout" value="300000"/>
+    </bean>
+
+    <bean id="atomicConfiguration" class="org.apache.ignite.configuration.AtomicConfiguration">
+        <property name="atomicSequenceReserveSize" value="50000"/>
+        <property name="cacheMode" value="REPLICATED"/>
+    </bean>
+</beans>
