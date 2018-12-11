@@ -28,6 +28,7 @@ import org.apache.ignite.internal.processors.cache.distributed.dht.preloader.Gri
 import org.apache.ignite.internal.processors.cache.distributed.dht.preloader.GridDhtPartitionsFullMessage;
 import org.apache.ignite.internal.util.typedef.F;
 import org.apache.ignite.internal.util.typedef.internal.S;
+import org.apache.ignite.internal.util.typedef.internal.U;
 import org.apache.ignite.lang.IgniteUuid;
 import org.jetbrains.annotations.Nullable;
 
@@ -71,6 +72,8 @@ public class CacheAffinityChangeMessage implements DiscoveryCustomMessage {
         Map<Integer, IgniteUuid> cacheDeploymentIds) {
         assert !F.isEmpty(assignmentChange) : assignmentChange;
 
+        U.dumpStack("aff change message");
+
         this.topVer = topVer;
         this.assignmentChange = assignmentChange;
         this.cacheDeploymentIds = cacheDeploymentIds;
@@ -86,6 +89,8 @@ public class CacheAffinityChangeMessage implements DiscoveryCustomMessage {
     public CacheAffinityChangeMessage(GridDhtPartitionExchangeId exchId,
         GridDhtPartitionsFullMessage partsMsg,
         Map<Integer, Map<Integer, List<UUID>>> assignmentChange) {
+        U.dumpStack("wal aff change message");
+
         this.exchId = exchId;
         this.partsMsg = partsMsg;
         this.assignmentChange = assignmentChange;

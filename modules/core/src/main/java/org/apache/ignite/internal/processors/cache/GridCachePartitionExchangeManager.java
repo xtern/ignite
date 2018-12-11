@@ -1682,8 +1682,8 @@ public class GridCachePartitionExchangeManager<K, V> extends GridCacheSharedMana
 
         try {
             if (msg.exchangeId() == null) {
-                if (log.isDebugEnabled())
-                    log.debug("Received full partition update [node=" + node.id() + ", msg=" + msg + ']');
+                if (log.isInfoEnabled())
+                    log.info("Received full partition update [node=" + node.id() + ", msg=" + msg + ']');
 
                 boolean updated = false;
 
@@ -1725,8 +1725,11 @@ public class GridCachePartitionExchangeManager<K, V> extends GridCacheSharedMana
                 if (!hasMovingParts)
                     cctx.database().releaseHistoryForPreloading();
             }
-            else
+            else {
+                log.info(">xxx> Received full partition update v2.0");
+
                 exchangeFuture(msg.exchangeId(), null, null, null, null).onReceiveFullMessage(node, msg);
+            }
         }
         finally {
             leaveBusy();
@@ -1765,16 +1768,26 @@ public class GridCachePartitionExchangeManager<K, V> extends GridCacheSharedMana
                     else if (!grp.isLocal())
                         top = grp.topology();
 
+                    if ("default".equals(grp.cacheOrGroupName()))
+                        U.dumpStack("Init topology update from node " + node.id());
+
                     if (top != null) {
-                        updated |= top.update(null, entry.getValue(), false);
+                        boolean update0 = top.update(null, entry.getValue(), false);
+
+                        updated |= update0;
 
                         cctx.affinity().checkRebalanceState(top, grpId);
                     }
+
+                    if (updated && "default".equals(grp.cacheOrGroupName()))
+                        log.info(">xxx> top updated " + grp.cacheOrGroupName() + " node=" + node.id());
                 }
 
                 if (updated) {
-                    if (log.isDebugEnabled())
-                        log.debug("Partitions have been scheduled to resend [reason=Single update from " + node.id() + "]");
+                    if (log.isInfoEnabled())
+                        log.info("Partitions have been scheduled to resend [reason=Single update from " + node.id() + "]");
+
+                    U.dumpStack("schedule resend partitions ");
 
                     scheduleResendPartitions();
                 }
@@ -2955,8 +2968,13 @@ public class GridCachePartitionExchangeManager<K, V> extends GridCacheSharedMana
                                 if (grp.isLocal())
                                     continue;
 
-                                if (grp.preloader().rebalanceRequired(rebTopVer, exchFut))
+                                boolean rebalanceRequired = grp.preloader().rebalanceRequired(rebTopVer, exchFut);
+
+                                if (rebalanceRequired)
                                     rebTopVer = NONE;
+
+                                if (rebalanceRequired && "default".equals(grp.cacheOrGroupName()))
+                                    log.info("rebalance required");
 
                                 changed |= grp.topology().afterExchange(exchFut);
                             }

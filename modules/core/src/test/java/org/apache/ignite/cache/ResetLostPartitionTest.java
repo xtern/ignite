@@ -18,30 +18,27 @@
 package org.apache.ignite.cache;
 
 import java.util.Arrays;
-import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import org.apache.ignite.Ignite;
 import org.apache.ignite.IgniteCache;
 import org.apache.ignite.cache.affinity.rendezvous.RendezvousAffinityFunction;
 import org.apache.ignite.configuration.CacheConfiguration;
 import org.apache.ignite.configuration.DataStorageConfiguration;
 import org.apache.ignite.configuration.IgniteConfiguration;
-import org.apache.ignite.internal.IgniteEx;
 import org.apache.ignite.internal.IgnitionEx;
 import org.apache.ignite.internal.processors.cache.CacheGroupContext;
-import org.apache.ignite.internal.processors.cache.GridCacheContext;
-import org.apache.ignite.internal.processors.cache.GridCacheSharedContext;
-import org.apache.ignite.internal.processors.cache.distributed.dht.preloader.GridDhtPreloader;
 import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtLocalPartition;
 import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtPartitionState;
 import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtPartitionTopologyImpl;
-import org.apache.ignite.internal.util.typedef.G;
 import org.apache.ignite.internal.util.typedef.internal.CU;
 import org.apache.ignite.internal.util.typedef.internal.U;
 import org.apache.ignite.spi.discovery.tcp.TcpDiscoverySpi;
 import org.apache.ignite.spi.discovery.tcp.ipfinder.TcpDiscoveryIpFinder;
 import org.apache.ignite.spi.discovery.tcp.ipfinder.vm.TcpDiscoveryVmIpFinder;
+import org.apache.ignite.testframework.GridTestUtils;
 import org.apache.ignite.testframework.junits.common.GridCommonAbstractTest;
 
 import static java.util.function.Predicate.isEqual;
@@ -105,7 +102,7 @@ public class ResetLostPartitionTest extends GridCommonAbstractTest {
 
         cfg.setDiscoverySpi(new TcpDiscoverySpi().setIpFinder(IP_FINDER));
 
-        cfg.setCacheConfiguration(ccfg);
+//        cfg.setCacheConfiguration(ccfg);
 
         return cfg;
     }
@@ -250,7 +247,7 @@ public class ResetLostPartitionTest extends GridCommonAbstractTest {
 
         int gridCnt = 4;
 
-        long timeout = 5_000;
+        long timeout = 15_000;
 
         Ignite node = startGridsMultiThreaded(gridCnt);
 
@@ -297,6 +294,8 @@ public class ResetLostPartitionTest extends GridCommonAbstractTest {
 //                ctx.preloader().rebalanceFuture().get(timeout);
 //        }
 
+        printMegaMap();
+
         log.info(">xxx> reset lost partitions");
 
         node.resetLostPartitions(Collections.singleton(DEFAULT_CACHE_NAME));
@@ -308,6 +307,8 @@ public class ResetLostPartitionTest extends GridCommonAbstractTest {
         waitForCondition(() -> lostPartsCnt == count(DEFAULT_CACHE_NAME, OWNING, failedNodeIdx), timeout);
         assertEquals(lostPartsCnt, count(DEFAULT_CACHE_NAME, OWNING, failedNodeIdx));
 
+        printMegaMap();
+
         int parts = grid(0).affinity(DEFAULT_CACHE_NAME).partitions();
 
         int[] allIdxs = new int[] {0, 1, 2, 3};
@@ -315,9 +316,24 @@ public class ResetLostPartitionTest extends GridCommonAbstractTest {
         waitForCondition(() -> parts == count(DEFAULT_CACHE_NAME, OWNING, allIdxs), timeout);
         assertEquals(parts, count(DEFAULT_CACHE_NAME, OWNING, allIdxs));
 
-        for (int idx : allIdxs)
-            assertEquals("" + idx, 0, count(DEFAULT_CACHE_NAME, LOST, idx));
-            //assert grid(idx).cache(DEFAULT_CACHE_NAME).lostPartitions().isEmpty();
+        for (int idx : allIdxs) {
+            assertTrue(grid(idx).cache(DEFAULT_CACHE_NAME).lostPartitions().isEmpty());
+
+            int lostCnt = count(DEFAULT_CACHE_NAME, LOST, idx);
+
+            assertEquals("LOST parts found on " + idx, 0, lostCnt);
+        }
+
+    }
+
+    /** */
+    private void printMegaMap() {
+        for (Map.Entry<String, ConcurrentHashMap<Integer, StringBuilder>> e : GridDhtLocalPartition.MEGAMAP.entrySet()) {
+            System.out.println(">xxx> --- " + e.getKey());
+
+            for (Map.Entry<Integer, StringBuilder> e0 : e.getValue().entrySet())
+                System.out.println(e0.getKey() + ": " + e0.getValue());
+        }
     }
 
     /**

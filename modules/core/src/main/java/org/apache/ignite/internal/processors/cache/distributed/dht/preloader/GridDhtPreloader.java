@@ -229,8 +229,8 @@ public class GridDhtPreloader extends GridCachePreloaderAdapter {
 
         for (int p = 0; p < partitions; p++) {
             if (ctx.exchange().hasPendingExchange()) {
-                if (log.isDebugEnabled())
-                    log.debug("Skipping assignments creation, exchange worker has pending assignments: " +
+                if (log.isInfoEnabled())
+                    log.info("Skipping assignments creation, exchange worker has pending assignments: " +
                         exchId);
 
                 assignments.cancelled(true);

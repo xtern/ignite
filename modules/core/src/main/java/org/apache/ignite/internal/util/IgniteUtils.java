@@ -10683,6 +10683,7 @@ public abstract class IgniteUtils {
         Collection<T> srcDatas,
         IgniteThrowableConsumer<T, R> operation
     ) throws IgniteCheckedException, IgniteInterruptedCheckedException {
+
         return doInParallel(srcDatas.size(), executorSvc, srcDatas, operation);
     }
 
@@ -10705,6 +10706,14 @@ public abstract class IgniteUtils {
     ) throws IgniteCheckedException, IgniteInterruptedCheckedException {
         if(srcDatas.isEmpty())
             return Collections.emptyList();
+
+        List<R> list = new ArrayList<>(srcDatas.size());
+
+        for (T t : srcDatas)
+            list.add(operation.accept(t));
+
+        if (true)
+        return list;
 
         int[] batchSizes = calculateOptimalBatchSizes(parallelismLvl, srcDatas.size());
 

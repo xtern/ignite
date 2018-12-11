@@ -2123,11 +2123,18 @@ public class GridDhtPartitionTopologyImpl implements GridDhtPartitionTopology {
     @Override public void resetLostPartitions(AffinityTopologyVersion resTopVer) {
         ctx.database().checkpointReadLock();
 
+        if (ctx.localNode().equals(ctx.discovery().discoCache().oldestAliveServerNode()))
+            U.dumpStack("reset lost partitions");
+
+        boolean stateChanged = false;
+
         try {
             lock.writeLock().lock();
 
             try {
                 long updSeq = updateSeq.incrementAndGet();
+
+
 
                 for (Map.Entry<UUID, GridDhtPartitionMap> e : node2part.entrySet()) {
                     GridDhtPartitionMap partMap = e.getValue();
@@ -2142,15 +2149,24 @@ public class GridDhtPartitionTopologyImpl implements GridDhtPartitionTopology {
 
                         AffinityAssignment assignment = grp.affinity().cachedAffinity(resTopVer);
 
+                        GridDhtLocalPartition locPart = localPartition(part, resTopVer, false);
+
+                        if (locPart != null && locPart.state() == LOST)
+                            assert locPart.updateCounter() == 0 : ctx.localNodeId() + ": p=" + part + ", cntr=" + locPart.updateCounter();
+
                         if (!assignment.idealAssignment().get(part).contains(ctx.discovery().node(e.getKey())))
                             continue;
 
+//                        ctx.exchange().refreshPartitions(
+
                         e0.setValue(OWNING);
+
+                        stateChanged = true;
 
                         if (!ctx.localNodeId().equals(e.getKey()))
                             continue;;
 
-                        GridDhtLocalPartition locPart = localPartition(part, resTopVer, false);
+//                        GridDhtLocalPartition locPart = localPartition(part, resTopVer, false);
 
                         if (locPart != null && locPart.state() == LOST) {
                             boolean marked = locPart.own();
@@ -2181,6 +2197,17 @@ public class GridDhtPartitionTopologyImpl implements GridDhtPartitionTopology {
         finally {
             ctx.database().checkpointReadUnlock();
         }
+
+//        if (stateChanged)
+//            log.info("state changed = " + stateChanged);
+
+//        if (ctx.localNode().equals(ctx.discovery().discoCache().oldestAliveServerNode())) {
+////            log.info("send refresh");
+////
+//            ctx.exchange().refreshPartitions(Collections.singleton(grp));
+//        }
+
+        log.info(">xxx> finished reset " + ctx.localNodeId());
     }
 
     /** {@inheritDoc} */
@@ -2348,8 +2375,14 @@ public class GridDhtPartitionTopologyImpl implements GridDhtPartitionTopology {
             List<ClusterNode> affNodes = aff.get(p);
 
             // This node is affinity node for partition, no need to run eviction.
-            if (affNodes.contains(ctx.localNode()))
+            if (affNodes.contains(ctx.localNode())) {
+                if ("default".equals(grp.cacheOrGroupName()) && part.state() == LOST)
+                    log.info(">xxx> skip eviction for p=" + p + ", local node");
                 continue;
+            }
+
+            if ("default".equals(grp.cacheOrGroupName()) && part.state() == LOST)
+                log.info(">xxx> EVICT for p=" + p);
 
             AffinityTopologyVersion topVer = aff.topologyVersion();
 

@@ -263,7 +263,7 @@ public class CacheAffinitySharedManager<K, V> extends GridCacheSharedManagerAdap
      * @param top Topology.
      * @param checkGrpId Group ID.
      */
-    void checkRebalanceState(GridDhtPartitionTopology top, Integer checkGrpId) {
+    public void checkRebalanceState(GridDhtPartitionTopology top, Integer checkGrpId) {
         CacheAffinityChangeMessage msg = null;
 
         synchronized (mux) {
@@ -291,10 +291,15 @@ public class CacheAffinitySharedManager<K, V> extends GridCacheSharedManagerAdap
 
                             break;
                         }
-                        else
+                        else {
+                            log.info(">xxx> " + grpHolder.affinity().cacheOrGroupName() + " p=" + part + " rebalanced");
+
                             it.remove();
+                        }
                     }
                 }
+                else
+                    log.info(">xxx> grp=null " + checkGrpId + " rebalanced");
 
                 if (rebalanced) {
                     waitInfo.waitGrps.remove(checkGrpId);
@@ -1261,11 +1266,12 @@ public class CacheAffinitySharedManager<K, V> extends GridCacheSharedManagerAdap
             .collect(Collectors.toList());
 
         try {
-            U.doInParallel(cctx.kernalContext().getSystemExecutorService(), affinityCaches, t -> {
+//            U.doInParallel(cctx.kernalContext().getSystemExecutorService(), affinityCaches, t -> {
+            for (CacheGroupDescriptor t : affinityCaches)
                 c.applyx(t);
 
-                return null;
-            });
+//                return null;
+//            });
         }
         catch (IgniteCheckedException e) {
             throw new IgniteException("Failed to execute affinity operation on cache groups", e);

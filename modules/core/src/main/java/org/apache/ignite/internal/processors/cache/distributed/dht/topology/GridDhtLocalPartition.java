@@ -83,6 +83,17 @@ public class GridDhtLocalPartition extends GridCacheConcurrentMapImpl implements
     /** */
     private static final GridCacheMapEntryFactory ENTRY_FACTORY = GridDhtCacheEntry::new;
 
+    public static final ConcurrentMap<String, ConcurrentHashMap<Integer, StringBuilder>> MEGAMAP = new ConcurrentHashMap<>();
+
+    public void putState(GridDhtPartitionState oldState, GridDhtPartitionState newState) {
+        if (grp.hasCache("default")) {
+            String nodeId = ctx.localNodeId().toString();
+            String nodeIdx = nodeId.substring(nodeId.length() - 3);
+
+            MEGAMAP.computeIfAbsent(nodeIdx, (v) -> new ConcurrentHashMap<>()).computeIfAbsent(id, v -> new StringBuilder(oldState.toString())).append(" -> ").append(newState);
+        }
+    }
+
     /** Maximum size for delete queue. */
     public static final int MAX_DELETE_QUEUE_SIZE = Integer.getInteger(IGNITE_ATOMIC_CACHE_DELETE_HISTORY_SIZE, 200_000);
 
@@ -559,6 +570,8 @@ public class GridDhtLocalPartition extends GridCacheConcurrentMapImpl implements
                 boolean update = this.state.compareAndSet(state, setPartState(state, toState));
 
                 if (update) {
+                    putState(prevState, toState);
+
                     try {
                         ctx.wal().log(new PartitionMetaStateRecord(grp.groupId(), id, toState, updateCounter()));
                     }
@@ -582,6 +595,8 @@ public class GridDhtLocalPartition extends GridCacheConcurrentMapImpl implements
             boolean update = this.state.compareAndSet(state, setPartState(state, toState));
 
             if (update) {
+                putState(prevState, toState);
+
                 if (log.isDebugEnabled())
                     log.debug("Partition changed state [grp=" + grp.cacheOrGroupName()
                         + ", p=" + id + ", prev=" + prevState + ", to=" + toState + "]");

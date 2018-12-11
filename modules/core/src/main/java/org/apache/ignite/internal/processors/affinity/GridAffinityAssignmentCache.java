@@ -205,6 +205,16 @@ public class GridAffinityAssignmentCache {
 
         assert idealAssignment != null;
 
+        boolean single = true;
+
+        for (int p = 0; p < affAssignment.size(); p++) {
+            if (affAssignment.get(p).size() != 1)
+                single = false;
+        }
+
+        if (single)
+            U.dumpStack(">xxx> initialize correct affinity");
+
         GridAffinityAssignment assignment = new GridAffinityAssignment(topVer, affAssignment, idealAssignment);
 
         HistoryAffinityAssignment hAff = affCache.put(topVer, new HistoryAffinityAssignment(assignment));

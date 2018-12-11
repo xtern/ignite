@@ -2019,6 +2019,8 @@ public class GridDhtPartitionsExchangeFuture extends GridDhtTopologyFutureAdapte
         }
 
         if (err == null) {
+            assert !forceAffReassignment : "force aff reassign";
+
             if (centralizedAff || forceAffReassignment) {
                 assert !exchCtx.mergeExchanges();
 
@@ -2745,6 +2747,28 @@ public class GridDhtPartitionsExchangeFuture extends GridDhtTopologyFutureAdapte
             if (!awaitSingleMapUpdates())
                 return;
 
+//            if (false)
+//            for (Map.Entry<Integer, GridDhtPartitionMap> entry : msg.partitions().entrySet()) {
+//                Integer grpId = entry.getKey();
+//
+//                CacheGroupContext grp = cctx.cache().cacheGroup(grpId);
+//
+//                if (grp != null &&
+//                    grp.localStartVersion().compareTo(entry.getValue().topologyVersion()) > 0)
+//                    continue;
+//
+//                GridDhtPartitionTopology top = null;
+//
+//                if (!grp.isLocal())
+//                    top = grp.topology();
+//
+//                if (top != null) {
+//                    log.info(">xxx> (crd) checkRebalanceState " + grp.cacheOrGroupName());
+//
+//                    cctx.affinity().checkRebalanceState(top, grpId);
+//                }
+//            }
+
             onAllReceived(null);
         }
     }
@@ -2795,6 +2819,8 @@ public class GridDhtPartitionsExchangeFuture extends GridDhtTopologyFutureAdapte
      * @param top Topology.
      */
     private void assignPartitionSizes(GridDhtPartitionTopology top) {
+        U.dumpStack("assign parts sizes ");
+
         Map<Integer, Long> partSizes = new HashMap<>();
 
         for (Map.Entry<UUID, GridDhtPartitionsSingleMessage> e : msgs.entrySet()) {
@@ -2807,6 +2833,7 @@ public class GridDhtPartitionsExchangeFuture extends GridDhtTopologyFutureAdapte
 
             for (Map.Entry<Integer, GridDhtPartitionState> e0 : partMap.entrySet()) {
                 int p = e0.getKey();
+
                 GridDhtPartitionState state = e0.getValue();
 
                 if (state == GridDhtPartitionState.OWNING)
@@ -2828,6 +2855,8 @@ public class GridDhtPartitionsExchangeFuture extends GridDhtTopologyFutureAdapte
      * @param top Topology to assign.
      */
     private void assignPartitionStates(GridDhtPartitionTopology top) {
+        U.dumpStack("assign parts states");
+
         Map<Integer, CounterWithNodes> maxCntrs = new HashMap<>();
         Map<Integer, Long> minCntrs = new HashMap<>();
 
@@ -3010,8 +3039,6 @@ public class GridDhtPartitionsExchangeFuture extends GridDhtTopologyFutureAdapte
      */
     private void resetLostPartitions(Collection<String> cacheNames) {
         assert !exchCtx.mergeExchanges();
-
-        U.dumpStack("reset lost partitions");
 
         synchronized (cctx.exchange().interruptLock()) {
             if (Thread.currentThread().isInterrupted())
@@ -3249,8 +3276,11 @@ public class GridDhtPartitionsExchangeFuture extends GridDhtTopologyFutureAdapte
 
                         Set<String> caches = exchActions.cachesToResetLostPartitions();
 
-                        if (!F.isEmpty(caches))
+                        if (!F.isEmpty(caches)) {
                             resetLostPartitions(caches);
+
+                            cctx.exchange().scheduleResendPartitions();
+                        }
                     }
                 }
                 else if (discoveryCustomMessage instanceof SnapshotDiscoveryMessage
@@ -3979,6 +4009,8 @@ public class GridDhtPartitionsExchangeFuture extends GridDhtTopologyFutureAdapte
                         CachePartitionFullCountersMap cntrMap = msg.partitionUpdateCounters(grpId,
                             grp.topology().partitions());
 
+                        U.dumpStack("Update updatePartitionFullMap");
+
                         grp.topology().update(resTopVer,
                             msg.partitions().get(grpId),
                             cntrMap,
@@ -4030,6 +4062,9 @@ public class GridDhtPartitionsExchangeFuture extends GridDhtTopologyFutureAdapte
         for (Map.Entry<Integer, GridDhtPartitionMap> entry : msg.partitions().entrySet()) {
             Integer grpId = entry.getKey();
             CacheGroupContext grp = cctx.cache().cacheGroup(grpId);
+
+            if (grp != null && "default".equals(grp.cacheOrGroupName()))
+                log.info(">xxx> update single map!");
 
             GridDhtPartitionTopology top = grp != null ? grp.topology() :
                 cctx.exchange().clientTopology(grpId, events().discoveryCache());
