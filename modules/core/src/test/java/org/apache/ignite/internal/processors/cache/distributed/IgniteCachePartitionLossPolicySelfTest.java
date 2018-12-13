@@ -49,6 +49,7 @@ import org.apache.ignite.internal.TestDelayingCommunicationSpi;
 import org.apache.ignite.internal.managers.communication.GridIoMessage;
 import org.apache.ignite.internal.processors.affinity.AffinityTopologyVersion;
 import org.apache.ignite.internal.processors.cache.CacheGroupContext;
+import org.apache.ignite.internal.processors.cache.distributed.CacheBlockOnReadAbstractTest.RunnableX;
 import org.apache.ignite.internal.processors.cache.distributed.dht.preloader.GridDhtPartitionsAbstractMessage;
 import org.apache.ignite.internal.processors.cache.distributed.dht.preloader.GridDhtPartitionsFullMessage;
 import org.apache.ignite.internal.util.typedef.F;
@@ -67,6 +68,7 @@ import org.junit.runners.JUnit4;
 
 import static java.util.Arrays.asList;
 import static java.util.Collections.singletonList;
+import static org.apache.ignite.IgniteSystemProperties.IGNITE_PRELOAD_RESEND_TIMEOUT;
 import static org.apache.ignite.cache.CacheMode.PARTITIONED;
 import static org.apache.ignite.cache.CacheWriteSynchronizationMode.FULL_SYNC;
 
@@ -170,9 +172,15 @@ public class IgniteCachePartitionLossPolicySelfTest extends GridCommonAbstractTe
      */
     @Test
     public void testReadOnlySafe() throws Exception {
-        partLossPlc = PartitionLossPolicy.READ_ONLY_SAFE;
+        checkReadOnlySafe();
+    }
 
-        checkLostPartition(false, true, killSingleNode);
+    /**
+     * @throws Exception if failed.
+     */
+    @Test
+    public void testReadOnlySafeNoResendDelay() throws Exception {
+        withoutResendDelay(this::checkReadOnlySafe);
     }
 
     /**
@@ -180,9 +188,26 @@ public class IgniteCachePartitionLossPolicySelfTest extends GridCommonAbstractTe
      */
     @Test
     public void testReadOnlySafeWithPersistence() throws Exception {
-        partLossPlc = PartitionLossPolicy.READ_ONLY_SAFE;
-
         isPersistenceEnabled = true;
+
+        checkReadOnlySafe();
+    }
+
+    /**
+     * @throws Exception if failed.
+     */
+    @Test
+    public void testReadOnlySafeWithPersistenceNoResendDelay() throws Exception {
+        isPersistenceEnabled = true;
+
+        withoutResendDelay(this::checkReadOnlySafe);
+    }
+
+    /**
+     * @throws Exception if failed.
+     */
+    private void checkReadOnlySafe() throws Exception {
+        partLossPlc = PartitionLossPolicy.READ_ONLY_SAFE;
 
         checkLostPartition(false, true, killSingleNode);
     }
@@ -216,9 +241,15 @@ public class IgniteCachePartitionLossPolicySelfTest extends GridCommonAbstractTe
      */
     @Test
     public void testReadWriteSafe() throws Exception {
-        partLossPlc = PartitionLossPolicy.READ_WRITE_SAFE;
+        checkReadWriteSafe();
+    }
 
-        checkLostPartition(true, true, killSingleNode);
+    /**
+     * @throws Exception if failed.
+     */
+    @Test
+    public void testReadWriteSafeNoResendDelay() throws Exception {
+        withoutResendDelay(this::checkReadWriteSafe);
     }
 
     /**
@@ -228,7 +259,24 @@ public class IgniteCachePartitionLossPolicySelfTest extends GridCommonAbstractTe
     public void testReadWriteSafeWithPersistence() throws Exception {
         partLossPlc = PartitionLossPolicy.READ_WRITE_SAFE;
 
-        isPersistenceEnabled = true;
+        checkReadWriteSafe();
+    }
+
+    /**
+     * @throws Exception if failed.
+     */
+    @Test
+    public void testReadWriteSafeWithPersistenceNoResendDelay() throws Exception {
+        partLossPlc = PartitionLossPolicy.READ_WRITE_SAFE;
+
+        withoutResendDelay(this::checkReadWriteSafe);
+    }
+
+    /**
+     * @throws Exception if failed.
+     */
+    private void checkReadWriteSafe() throws Exception {
+        partLossPlc = PartitionLossPolicy.READ_WRITE_SAFE;
 
         checkLostPartition(true, true, killSingleNode);
     }
@@ -858,6 +906,27 @@ public class IgniteCachePartitionLossPolicySelfTest extends GridCommonAbstractTe
 
             return res;
         }, IgniteCheckedException.class, msg);
+    }
+
+    /**
+     * Executes test with IGNITE_PRELOAD_RESEND_TIMEOUT set to zero.
+     *
+     * @param r The test method to be called.
+     * @throws Exception if failed.
+     */
+    private void withoutResendDelay(RunnableX r) throws Exception {
+        String propName = IGNITE_PRELOAD_RESEND_TIMEOUT;
+
+        String prevVal = System.setProperty(propName, "0");
+
+        try {
+            r.runx();
+        } finally {
+            if (prevVal == null)
+                System.clearProperty(propName);
+            else
+                System.setProperty(propName, prevVal);
+        }
     }
 
     /** */
