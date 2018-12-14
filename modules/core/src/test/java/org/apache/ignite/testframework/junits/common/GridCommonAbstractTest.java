@@ -780,6 +780,8 @@ public abstract class GridCommonAbstractTest extends GridAbstractTest {
 
                                 for (Map.Entry entry : pMap.entrySet()) {
                                     if (System.currentTimeMillis() - start > timeout) {
+                                        printPartitionState(dht.name(), 0);
+
                                         U.dumpThreads(log);
 
                                         throw new IgniteException("Timeout of waiting for partition state update [" +

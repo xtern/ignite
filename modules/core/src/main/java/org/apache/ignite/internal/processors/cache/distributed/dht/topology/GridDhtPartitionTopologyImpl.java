@@ -2153,6 +2153,12 @@ public class GridDhtPartitionTopologyImpl implements GridDhtPartitionTopology {
                         if (e0.getValue() != LOST)
                             continue;
 
+
+                        AffinityAssignment assignment = grp.affinity().cachedAffinity(resTopVer);
+
+                        if (!assignment.idealAssignment().get(e0.getKey()).contains(ctx.discovery().node(e.getKey())))
+                            continue;
+
                         e0.setValue(OWNING);
 
                         GridDhtLocalPartition locPart = localPartition(e0.getKey(), resTopVer, false);
@@ -2278,6 +2284,19 @@ public class GridDhtPartitionTopologyImpl implements GridDhtPartitionTopology {
                             + ", nodeId=" + nodeId
                             + ", partsFull=" + S.compact(rebalancedParts)
                             + ", partsHistorical=" + S.compact(historical) + "]");
+                    }
+                }
+
+                if (lostParts != null) {
+                    for (Map.Entry<UUID, GridDhtPartitionMap> e : node2part.entrySet()) {
+                        if (e.getKey().equals(ctx.localNodeId()))
+                            continue;
+
+                        for (Integer part : lostParts) {
+                            GridDhtPartitionState state = e.getValue().get(part);
+                            if (state != null && state.active())
+                                e.getValue().put(part, LOST);
+                        }
                     }
                 }
 
