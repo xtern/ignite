@@ -89,7 +89,7 @@ public class ResetLostPartitionTest extends GridCommonAbstractTest {
 
         storageCfg.getDefaultDataRegionConfiguration()
             .setPersistenceEnabled(true)
-            .setMaxSize(300L * 1024 * 1024);
+            .setMaxSize(500L * 1024 * 1024);
 
         cfg.setDataStorageConfiguration(storageCfg);
 
