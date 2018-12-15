@@ -3157,6 +3157,9 @@ public class GridCachePartitionExchangeManager<K, V> extends GridCacheSharedMana
                     try {
                         if (started.compareAndSet(false, true))
                             refreshPartitions();
+                        else {
+                            log.warning("resend already started");
+                        }
                     }
                     finally {
                         busyLock.readLock().unlock();

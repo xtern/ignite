@@ -3253,8 +3253,13 @@ public class GridDhtPartitionsExchangeFuture extends GridDhtTopologyFutureAdapte
                     if (exchActions != null) {
                         assignPartitionsStates();
 
-                        if (!F.isEmpty(exchActions.cachesToResetLostPartitions()))
-                            cctx.exchange().scheduleResendPartitions();
+                        if (!F.isEmpty(exchActions.cachesToResetLostPartitions())) {
+                            for (String name : exchActions.cachesToResetLostPartitions()) {
+                                GridCacheContext ctx = cctx.cacheContext(CU.cacheId(name));
+
+                                cctx.affinity().checkRebalanceState(ctx.topology(), ctx.groupId());
+                            }
+                        }
                     }
                 }
                 else if (discoveryCustomMessage instanceof SnapshotDiscoveryMessage

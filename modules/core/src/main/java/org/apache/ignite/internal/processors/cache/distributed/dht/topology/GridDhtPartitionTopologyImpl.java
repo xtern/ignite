@@ -2153,7 +2153,6 @@ public class GridDhtPartitionTopologyImpl implements GridDhtPartitionTopology {
                         if (e0.getValue() != LOST)
                             continue;
 
-
                         AffinityAssignment assignment = grp.affinity().cachedAffinity(resTopVer);
 
                         if (!assignment.idealAssignment().get(e0.getKey()).contains(ctx.discovery().node(e.getKey())))
@@ -2455,6 +2454,7 @@ public class GridDhtPartitionTopologyImpl implements GridDhtPartitionTopology {
                                 log.debug("Partitions have been scheduled to resend [reason=" +
                                     "Evictions are done [grp" + grp.cacheOrGroupName() + "]");
 
+                            log.info("schedule resend");
                             ctx.exchange().scheduleResendPartitions();
                         }
                         finally {
