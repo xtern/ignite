@@ -1057,6 +1057,9 @@ public class GridDhtPartitionTopologyImpl implements GridDhtPartitionTopology {
                 if (part == null)
                     continue;
 
+                if (part.state() == RENTING)
+                    log.info(">xxx> observing RENTING " + part.id());
+
                 map.put(i, part.state());
             }
 

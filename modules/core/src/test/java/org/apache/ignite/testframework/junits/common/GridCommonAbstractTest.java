@@ -739,7 +739,7 @@ public abstract class GridCommonAbstractTest extends GridAbstractTest {
                                 if (System.currentTimeMillis() - start > timeout) {
                                     U.dumpThreads(log);
 
-                                    if (printPartState)
+//                                    if (printPartState)
                                         printPartitionState(c);
 
                                     throw new IgniteException("Timeout of waiting for topology map update [" +

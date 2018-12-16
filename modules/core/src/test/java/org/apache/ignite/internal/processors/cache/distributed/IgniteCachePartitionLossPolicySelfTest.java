@@ -24,6 +24,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Semaphore;
@@ -51,6 +52,7 @@ import org.apache.ignite.internal.processors.cache.CacheGroupContext;
 import org.apache.ignite.internal.processors.cache.distributed.CacheBlockOnReadAbstractTest.RunnableX;
 import org.apache.ignite.internal.processors.cache.distributed.dht.preloader.GridDhtPartitionsAbstractMessage;
 import org.apache.ignite.internal.processors.cache.distributed.dht.preloader.GridDhtPartitionsFullMessage;
+import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtLocalPartition;
 import org.apache.ignite.internal.util.typedef.F;
 import org.apache.ignite.internal.util.typedef.G;
 import org.apache.ignite.internal.util.typedef.P1;
@@ -248,6 +250,8 @@ public class IgniteCachePartitionLossPolicySelfTest extends GridCommonAbstractTe
      */
     @Test
     public void testReadWriteSafeNoResendDelay() throws Exception {
+        GridDhtLocalPartition.MEGAMAP.clear();
+
         withoutResendDelay(this::checkReadWriteSafe);
     }
 
@@ -618,7 +622,11 @@ public class IgniteCachePartitionLossPolicySelfTest extends GridCommonAbstractTe
 
         ignite(4).resetLostPartitions(singletonList(DEFAULT_CACHE_NAME));
 
-        awaitPartitionMapExchange(true, true, null);
+        try {
+            awaitPartitionMapExchange(true, true, null);
+        } finally {
+            printMegaMap();
+        }
 
         for (Ignite ig : G.allGrids()) {
             IgniteCache<Integer, Integer> cache = ig.cache(DEFAULT_CACHE_NAME);
@@ -642,6 +650,15 @@ public class IgniteCachePartitionLossPolicySelfTest extends GridCommonAbstractTe
             }
 
             checkQueryPasses(ig, false);
+        }
+    }
+
+    private void printMegaMap() {
+        for (Map.Entry<String, ConcurrentHashMap<Integer, StringBuilder>> e : GridDhtLocalPartition.MEGAMAP.entrySet()) {
+            log.info(">xxx> -------- " + e.getKey());
+
+            for (Map.Entry<Integer, StringBuilder> e0 : e.getValue().entrySet())
+                log.info(">xxx>\t" + e0.getKey() + ": " + e0.getValue());
         }
     }
 

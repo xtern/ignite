@@ -1813,6 +1813,8 @@ public class GridDhtPartitionsExchangeFuture extends GridDhtTopologyFutureAdapte
                 true);
         }
         else {
+            log.info("single message");
+
             msg = cctx.exchange().createPartitionsSingleMessage(exchangeId(),
                 false,
                 true,
