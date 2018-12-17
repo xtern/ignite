@@ -159,14 +159,14 @@ public class IgniteCachePartitionLossPolicySelfTest extends GridCommonAbstractTe
         isPersistenceEnabled = false;
     }
 
-//    /** {@inheritDoc} */
-//    @Override protected void afterTest() throws Exception {
-//        stopAllGrids();
-//
-//        cleanPersistenceDir();
-//
-//        super.afterTest();
-//    }
+    /** {@inheritDoc} */
+    @Override protected void afterTest() throws Exception {
+        stopAllGrids();
+
+        cleanPersistenceDir();
+
+        super.afterTest();
+    }
 //
 //    /**
 //     * @throws Exception if failed.
@@ -237,13 +237,13 @@ public class IgniteCachePartitionLossPolicySelfTest extends GridCommonAbstractTe
 //        checkLostPartition(false, false, killSingleNode);
 //    }
 //
-    /**
-     * @throws Exception if failed.
-     */
-    @Test
-    public void testReadWriteSafe() throws Exception {
-        checkReadWriteSafe();
-    }
+//    /**
+//     * @throws Exception if failed.
+//     */
+//    @Test
+//    public void testReadWriteSafe() throws Exception {
+//        checkReadWriteSafe();
+//    }
 
     /**
      * @throws Exception if failed.

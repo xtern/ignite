@@ -2386,7 +2386,7 @@ public class GridDhtPartitionTopologyImpl implements GridDhtPartitionTopology {
             if (nodeIds.containsAll(F.nodeIds(affNodes))) {
                 GridDhtPartitionState state0 = part.state();
 
-                IgniteInternalFuture<?> rentFut = part.rent(false);
+                IgniteInternalFuture<?> rentFut = part.rent(true);
 
                 rentingFutures.add(rentFut);
 
@@ -2417,7 +2417,7 @@ public class GridDhtPartitionTopologyImpl implements GridDhtPartitionTopology {
                         if (locId.equals(n.id())) {
                             GridDhtPartitionState state0 = part.state();
 
-                            IgniteInternalFuture<?> rentFut = part.rent(false);
+                            IgniteInternalFuture<?> rentFut = part.rent(true);
 
                             rentingFutures.add(rentFut);
 
