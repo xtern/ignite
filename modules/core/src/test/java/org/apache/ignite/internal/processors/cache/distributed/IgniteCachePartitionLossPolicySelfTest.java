@@ -237,13 +237,13 @@ public class IgniteCachePartitionLossPolicySelfTest extends GridCommonAbstractTe
 //        checkLostPartition(false, false, killSingleNode);
 //    }
 //
-//    /**
-//     * @throws Exception if failed.
-//     */
-//    @Test
-//    public void testReadWriteSafe() throws Exception {
-//        checkReadWriteSafe();
-//    }
+    /**
+     * @throws Exception if failed.
+     */
+    @Test
+    public void testReadWriteSafe() throws Exception {
+        checkReadWriteSafe();
+    }
 
     /**
      * @throws Exception if failed.
