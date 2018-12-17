@@ -620,7 +620,11 @@ public class IgniteCachePartitionLossPolicySelfTest extends GridCommonAbstractTe
             }
         }
 
+        log.info(">xxx> reset lost parts");
+
         ignite(4).resetLostPartitions(singletonList(DEFAULT_CACHE_NAME));
+
+        log.info(">xxx> reset lost parts finished");
 
         try {
             awaitPartitionMapExchange(true, true, null);
@@ -739,6 +743,8 @@ public class IgniteCachePartitionLossPolicySelfTest extends GridCommonAbstractTe
         // Check write.
         for (int i = 0; i < parts; i++) {
             try {
+                log.info("put " + i);
+
                 cache.put(i, i);
 
                 assertTrue("Write in read-only mode should be forbidden: " + i, canWrite);
@@ -747,6 +753,8 @@ public class IgniteCachePartitionLossPolicySelfTest extends GridCommonAbstractTe
                     assertFalse("Writing to a lost partition should have failed: " + i, safe);
             }
             catch (CacheException e) {
+                log.info("(ex) put " + i);
+
                 if (canWrite) {
                     assertTrue("Write exception should only be triggered in safe mode: " + e, safe);
                     assertTrue("Write exception should only be triggered for a lost partition: " + e,

@@ -872,7 +872,7 @@ public class GridDhtLocalPartition extends GridCacheConcurrentMapImpl implements
         if (state() != EVICTED)
             return;
 
-        final long timeout = 10_000;
+        final long timeout = 30_000;
 
         for (;;) {
             try {
@@ -1025,6 +1025,8 @@ public class GridDhtLocalPartition extends GridCacheConcurrentMapImpl implements
      * @param val Update counter value.
      */
     public void updateCounter(long val) {
+        log.info(" update cntr " + id() + ", cntr=" + val);
+
         store.updateCounter(val);
     }
 
@@ -1049,7 +1051,12 @@ public class GridDhtLocalPartition extends GridCacheConcurrentMapImpl implements
      * @return Update counter value before update.
      */
     public long getAndIncrementUpdateCounter(long delta) {
-        return store.getAndIncrementUpdateCounter(delta);
+        long cntr = store.getAndIncrementUpdateCounter(delta);
+
+//        if (cntr == 0)
+            log.info(" update cntr " + id() + ", cntr=" + cntr);
+
+        return cntr;
     }
 
     /**
@@ -1059,6 +1066,9 @@ public class GridDhtLocalPartition extends GridCacheConcurrentMapImpl implements
      * @param delta Delta.
      */
     public void updateCounter(long start, long delta) {
+//        if (start == 0)
+//        log.info(" update cntr " + id() + ", start=" + start + ", delta=" + delta);
+
          store.updateCounter(start, delta);
     }
 

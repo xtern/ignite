@@ -2173,11 +2173,18 @@ public class GridDhtPartitionTopologyImpl implements GridDhtPartitionTopology {
 
                                 long updateCntr = locPart.updateCounter();
 
-//                                if (hasOwner.contains(locPart.id())) {
+                                if (hasOwner.contains(locPart.id())) {
                                     // Set update counters to 0, for full rebalance.
+                                    log.info(">xxx> " + grp.cacheOrGroupName() + " there is owner for " + locPart.id() + " reset counter 0");
+
                                     locPart.updateCounter(updateCntr, -updateCntr);
-                                    locPart.initialUpdateCounter(0);
-//                                }
+                                }
+                                else
+                                    log.info(">xxx> " + grp.cacheOrGroupName() + " there is no owner for " + locPart.id() + ", keeping update cntr = " + updateCntr);
+
+                                assert locPart.initialUpdateCounter() == 0 : locPart.initialUpdateCounter();
+
+                                locPart.initialUpdateCounter(0);
                             }
                         }
                     }

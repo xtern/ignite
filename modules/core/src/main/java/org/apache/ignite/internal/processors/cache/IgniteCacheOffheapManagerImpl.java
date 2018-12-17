@@ -1551,6 +1551,8 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
 
         /** {@inheritDoc} */
         @Override public void updateSize(int cacheId, long delta) {
+//            U.dumpStack("update size " + ctx.cache().cacheDescriptor(cacheId).cacheName() + "< delta = " + delta);
+
             storageSize.addAndGet(delta);
 
             if (grp.sharedGroup()) {
