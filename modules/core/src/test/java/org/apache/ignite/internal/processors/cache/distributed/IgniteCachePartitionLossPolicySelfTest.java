@@ -949,7 +949,7 @@ public class IgniteCachePartitionLossPolicySelfTest extends GridCommonAbstractTe
                 assertNotNull(ref);
 
                 if (!(done = (done && ref.get() == null))) {
-                    boolean success = GridTestUtils.waitForCondition(() -> ref.get() == null, 5_000);
+                    boolean success = GridTestUtils.waitForCondition(() -> ref.get() == null, 30_000);
 
                     assertTrue(success);
                 }
