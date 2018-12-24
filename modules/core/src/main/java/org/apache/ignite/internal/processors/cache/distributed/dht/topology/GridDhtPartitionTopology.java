@@ -336,7 +336,15 @@ public interface GridDhtPartitionTopology {
      *
      * @param resTopVer Exchange result version.
      */
-    public void resetLostPartitions(AffinityTopologyVersion resTopVer);
+    public void resetLostPartitions(AffinityTopologyVersion resTopVer, List<CachePartitionPartialCountersMap> cntrMaps);
+
+    /**
+     * Update local lost partitions after reset.
+     *
+     * @param incomeMap Partition map received from coordinator.
+     * @return {@code True} if local partitions state was changed.
+     */
+    public boolean updateLostPartitions(GridDhtPartitionMap incomeMap);
 
     /**
      * @return Collection of lost partitions, if any.
