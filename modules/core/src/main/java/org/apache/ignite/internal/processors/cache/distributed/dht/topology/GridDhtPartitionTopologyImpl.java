@@ -2158,9 +2158,9 @@ public class GridDhtPartitionTopologyImpl implements GridDhtPartitionTopology {
                         if (blankCntr[p] == null)
                             blankCntr[p] = isBlankCounters(p, cntrMaps);
 
-                        if (blankCntr[p] && !grp.affinity().cachedAffinity(resTopVer).idealAssignment().get(p)
-                            .contains(ctx.discovery().node(e.getKey())))
-                            continue;
+//                        if (blankCntr[p] && !grp.affinity().cachedAffinity(resTopVer).idealAssignment().get(p)
+//                            .contains(ctx.discovery().node(e.getKey())))
+//                            continue;
 
                         e0.setValue(OWNING);
 
@@ -2174,11 +2174,11 @@ public class GridDhtPartitionTopologyImpl implements GridDhtPartitionTopology {
 
                                 long updateCntr = locPart.updateCounter();
 
-                                if (hasOwner.contains(locPart.id())) {
+//                                if (hasOwner.contains(locPart.id())) {
                                     // Set update counters to 0, for full rebalance.
                                     locPart.updateCounter(updateCntr, -updateCntr);
                                     locPart.initialUpdateCounter(0);
-                                }
+//                                }
                             }
                         }
                     }
@@ -2200,7 +2200,7 @@ public class GridDhtPartitionTopologyImpl implements GridDhtPartitionTopology {
     }
 
     /** {@inheritDoc} */
-    @Override public boolean updateLostPartitions(GridDhtPartitionMap incomeMap) {
+    @Override public boolean updateLostPartitions(AffinityTopologyVersion resTopVer, GridDhtPartitionMap incomeMap) {
         boolean update = false;
 
         ctx.database().checkpointReadLock();
@@ -2215,8 +2215,22 @@ public class GridDhtPartitionTopologyImpl implements GridDhtPartitionTopology {
                     if (part == null)
                         continue;
 
-                    if (part.state() == LOST && incomeMap.get(part.id()) == OWNING)
-                        update |= part.own();
+                    if (part.state() == LOST && incomeMap.get(part.id()) == OWNING) {
+                        boolean marked = part.own();
+
+                        update |= marked;
+
+                        if (marked) {
+                            updateLocal(part.id(), part.state(), updateSeq.incrementAndGet(), resTopVer);
+
+                            long updateCntr = part.updateCounter();
+
+                            part.updateCounter(updateCntr, -updateCntr);
+                            part.initialUpdateCounter(0);
+                        }
+                    }
+
+
                 }
 
                 lostParts = null;

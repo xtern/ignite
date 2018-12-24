@@ -3242,7 +3242,7 @@ public class GridDhtPartitionsExchangeFuture extends GridDhtTopologyFutureAdapte
 
                 if (discoveryCustomMessage instanceof DynamicCacheChangeBatch) {
                     if (exchActions != null) {
-                        assignPartitionsStates();
+
 
                         // Check rebalance state after reset lost partitions.
                         Collection<String> caches = exchActions.cachesToResetLostPartitions();
@@ -3250,13 +3250,15 @@ public class GridDhtPartitionsExchangeFuture extends GridDhtTopologyFutureAdapte
                         // Reset lost partitions on coordinator before update cache topology from single messages.
                         if (!F.isEmpty(caches)) {
                             resetLostPartitions(caches);
-
-                            for (String cache : caches) {
-                                GridCacheContext ctx = cctx.cacheContext(CU.cacheId(cache));
-
-                                cctx.affinity().checkRebalanceState(ctx.topology(), ctx.groupId());
-                            }
+//
+//                            for (String cache : caches) {
+//                                GridCacheContext ctx = cctx.cacheContext(CU.cacheId(cache));
+//
+//                                cctx.affinity().checkRebalanceState(ctx.topology(), ctx.groupId());
+//                            }
                         }
+
+                        assignPartitionsStates();
                     }
                 }
                 else if (discoveryCustomMessage instanceof SnapshotDiscoveryMessage
@@ -4000,7 +4002,7 @@ public class GridDhtPartitionsExchangeFuture extends GridDhtTopologyFutureAdapte
                         GridDhtPartitionFullMap partsFullMap = msg.partitions().get(grpId);
 
                         if (reset)
-                            grp.topology().updateLostPartitions(partsFullMap.get(cctx.localNodeId()));
+                            grp.topology().updateLostPartitions(resTopVer, partsFullMap.get(cctx.localNodeId()));
 
                         grp.topology().update(resTopVer,
                             partsFullMap,

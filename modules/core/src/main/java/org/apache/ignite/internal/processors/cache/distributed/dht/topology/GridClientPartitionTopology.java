@@ -1000,7 +1000,7 @@ public class GridClientPartitionTopology implements GridDhtPartitionTopology {
     }
 
     /** {@inheritDoc} */
-    @Override public boolean updateLostPartitions(GridDhtPartitionMap incomeMap) {
+    @Override public boolean updateLostPartitions(AffinityTopologyVersion resTopVer, GridDhtPartitionMap incomeMap) {
         assert false : "updateLostPartitions should never be called on client topology";
 
         return false;

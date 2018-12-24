@@ -48,6 +48,7 @@ import org.apache.ignite.internal.util.lang.GridPlainRunnable;
 import org.apache.ignite.internal.util.lang.GridTuple3;
 import org.apache.ignite.internal.util.typedef.CI1;
 import org.apache.ignite.internal.util.typedef.F;
+import org.apache.ignite.internal.util.typedef.internal.U;
 import org.apache.ignite.lang.IgnitePredicate;
 import org.jetbrains.annotations.Nullable;
 
@@ -177,8 +178,11 @@ public class GridDhtPreloader extends GridCachePreloaderAdapter {
         if (ctx.kernalContext().clientNode() || rebTopVer.equals(AffinityTopologyVersion.NONE))
             return false; // No-op.
 
-        if (exchFut.resetLostPartitionFor(grp.cacheOrGroupName()))
+        if (exchFut.resetLostPartitionFor(grp.cacheOrGroupName())) {
+            U.dumpStack("rebalance required");
+
             return true;
+        }
 
         if (exchFut.localJoinExchange())
             return true; // Required, can have outdated updSeq partition counter if node reconnects.

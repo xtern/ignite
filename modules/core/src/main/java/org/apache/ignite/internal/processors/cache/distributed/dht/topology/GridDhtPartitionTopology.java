@@ -344,7 +344,7 @@ public interface GridDhtPartitionTopology {
      * @param incomeMap Partition map received from coordinator.
      * @return {@code True} if local partitions state was changed.
      */
-    public boolean updateLostPartitions(GridDhtPartitionMap incomeMap);
+    public boolean updateLostPartitions(AffinityTopologyVersion resTopVer, GridDhtPartitionMap incomeMap);
 
     /**
      * @return Collection of lost partitions, if any.
