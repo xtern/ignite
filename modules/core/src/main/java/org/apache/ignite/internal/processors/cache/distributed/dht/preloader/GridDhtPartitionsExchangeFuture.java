@@ -1830,12 +1830,12 @@ public class GridDhtPartitionsExchangeFuture extends GridDhtTopologyFutureAdapte
 
         GridDhtPartitionsSingleMessage msg;
 
-        // Reset lost partitions before sending local partitions to coordinator.
+        // Reset lost partitions counters before sending local partitions to coordinator.
         if (exchActions != null) {
             Set<String> caches = exchActions.cachesToResetLostPartitions();
 
             if (!F.isEmpty(caches))
-                resetLostPartitions(caches);
+                resetLostPartitions(caches, false);
         }
 
         if (cctx.kernalContext().clientNode() || (dynamicCacheStartExchange() && exchangeLocE != null)) {
@@ -3114,8 +3114,9 @@ public class GridDhtPartitionsExchangeFuture extends GridDhtTopologyFutureAdapte
 
     /**
      * @param cacheNames Cache names.
+     * @param crd Coordinator flag.
      */
-    private void resetLostPartitions(Collection<String> cacheNames) {
+    private void resetLostPartitions(Collection<String> cacheNames, boolean crd) {
         assert !exchCtx.mergeExchanges();
 
         synchronized (cctx.exchange().interruptLock()) {
@@ -3128,7 +3129,18 @@ public class GridDhtPartitionsExchangeFuture extends GridDhtTopologyFutureAdapte
 
                 for (String cacheName : cacheNames) {
                     if (grp.hasCache(cacheName)) {
-                        grp.topology().resetLostPartitions(initialVersion());
+                        GridDhtPartitionTopology top = grp.topology();
+
+                        if (crd) {
+                            List<CachePartitionPartialCountersMap> cntrMaps = new ArrayList<>(msgs.size());
+
+                            for (GridDhtPartitionsSingleMessage msg : msgs.values())
+                                cntrMaps.add(msg.partitionUpdateCounters(grp.groupId(), top.partitions()));
+
+                            top.resetLostPartitions(initialVersion(), cntrMaps);
+                        }
+                        else
+                            top.resetLostPartitionCounters();
 
                         break;
                     }
@@ -3350,12 +3362,20 @@ public class GridDhtPartitionsExchangeFuture extends GridDhtTopologyFutureAdapte
 
                 if (discoveryCustomMessage instanceof DynamicCacheChangeBatch) {
                     if (exchActions != null) {
+                        // Check rebalance state after reset lost partitions.
+                        Collection<String> caches = exchActions.cachesToResetLostPartitions();
+
+                        if (!F.isEmpty(caches)) {
+                            resetLostPartitions(caches, true);
+
+                            for (String cache : caches) {
+                                GridCacheContext ctx = cctx.cacheContext(CU.cacheId(cache));
+
+                                cctx.affinity().checkRebalanceState(ctx.topology(), ctx.groupId());
+                            }
+                        }
+
                         assignPartitionsStates();
-
-                        Set<String> caches = exchActions.cachesToResetLostPartitions();
-
-                        if (!F.isEmpty(caches))
-                            resetLostPartitions(caches);
                     }
                 }
                 else if (discoveryCustomMessage instanceof SnapshotDiscoveryMessage
@@ -4069,6 +4089,9 @@ public class GridDhtPartitionsExchangeFuture extends GridDhtTopologyFutureAdapte
         // Reserve at least 2 threads for system operations.
         int parallelismLvl = U.availableThreadCount(cctx.kernalContext(), GridIoPolicy.SYSTEM_POOL, 2);
 
+        Set<String> cachesToResetLostParts = exchangeActions() != null ?
+            exchangeActions().cachesToResetLostPartitions() : Collections.emptySet();
+
         try {
             doInParallel(
                 parallelismLvl,
@@ -4077,11 +4100,26 @@ public class GridDhtPartitionsExchangeFuture extends GridDhtTopologyFutureAdapte
                     CacheGroupContext grp = cctx.cache().cacheGroup(grpId);
 
                     if (grp != null) {
+                        boolean reset = false;
+
+                        for (GridCacheContext ctx : grp.caches()) {
+                            if (cachesToResetLostParts.contains(ctx.name())) {
+                                reset = true;
+
+                                break;
+                            }
+                        }
+
                         CachePartitionFullCountersMap cntrMap = msg.partitionUpdateCounters(grpId,
                             grp.topology().partitions());
 
+                        GridDhtPartitionFullMap partsFullMap = msg.partitions().get(grpId);
+
+                        if (reset)
+                            grp.topology().updateLostPartitions(partsFullMap.get(cctx.localNodeId()));
+
                         grp.topology().update(resTopVer,
-                            msg.partitions().get(grpId),
+                            partsFullMap,
                             cntrMap,
                             msg.partsToReload(cctx.localNodeId(), grpId),
                             msg.partitionSizes(grpId),
