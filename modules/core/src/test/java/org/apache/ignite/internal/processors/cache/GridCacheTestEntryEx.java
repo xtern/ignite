@@ -706,6 +706,19 @@ public class GridCacheTestEntryEx extends GridMetadataAwareAdapter implements Gr
         return false;
     }
 
+    @Override public void finishPreload(@Nullable CacheObject val, long expTime, long ttl, GridCacheVersion ver,
+        boolean addTracked, AffinityTopologyVersion topVer, GridDrType drType,
+        MvccVersion mvccVer) throws IgniteCheckedException {
+
+    }
+
+    @Override public boolean preload(CacheObject val, GridCacheVersion ver, @Nullable MvccVersion mvccVer,
+        @Nullable MvccVersion newMvccVer, byte mvccTxState, byte newMvccTxState, long ttl, long expireTime,
+        boolean preload, AffinityTopologyVersion topVer, GridDrType drType,
+        boolean fromStore) throws IgniteCheckedException, GridCacheEntryRemovedException {
+        return false;
+    }
+
     /** @inheritDoc */
     @Override public GridCacheVersionedEntryEx versionedEntry(final boolean keepBinary) throws IgniteCheckedException {
         return null;

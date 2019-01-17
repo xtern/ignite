@@ -808,6 +808,50 @@ public interface GridCacheEntryEx {
         GridDrType drType,
         boolean fromStore) throws IgniteCheckedException, GridCacheEntryRemovedException;
 
+
+    public void finishPreload(
+        @Nullable CacheObject val,
+        long expTime,
+        long ttl,
+        GridCacheVersion ver,
+        boolean addTracked,
+        AffinityTopologyVersion topVer,
+        GridDrType drType,
+        MvccVersion mvccVer
+    ) throws IgniteCheckedException;
+
+    /**
+     * Sets new value if current version is <tt>0</tt>
+     *
+     * @param val New value.
+     * @param ver Version to use.
+     * @param mvccVer Mvcc version.
+     * @param newMvccVer New mvcc version.
+     * @param mvccTxState Tx state hint for mvcc version.
+     * @param newMvccTxState Tx state hint for new mvcc version.
+     * @param ttl Time to live.
+     * @param expireTime Expiration time.
+     * @param preload Flag indicating whether entry is being preloaded.
+     * @param topVer Topology version.
+     * @param drType DR type.
+     * @param fromStore {@code True} if value was loaded from store.
+     * @return {@code True} if initial value was set.
+     * @throws IgniteCheckedException In case of error.
+     * @throws GridCacheEntryRemovedException If entry was removed.
+     */
+    public boolean preload(CacheObject val,
+        GridCacheVersion ver,
+        @Nullable MvccVersion mvccVer,
+        @Nullable MvccVersion newMvccVer,
+        byte mvccTxState,
+        byte newMvccTxState,
+        long ttl,
+        long expireTime,
+        boolean preload,
+        AffinityTopologyVersion topVer,
+        GridDrType drType,
+        boolean fromStore) throws IgniteCheckedException, GridCacheEntryRemovedException;
+
     /**
      * Create versioned entry for this cache entry.
      *
