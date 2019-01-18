@@ -190,6 +190,16 @@ public interface IgniteCacheOffheapManager {
 
     /**
      * @param cctx Cache context.
+     * @param keys Sorted Keys.
+     * @param part Partition.
+     * @param c Tree update closure.
+     * @throws IgniteCheckedException If failed.
+     */
+    public void invokeAll(GridCacheContext cctx, List<KeyCacheObject> keys, GridDhtLocalPartition part, OffheapInvokeClosure c)
+        throws IgniteCheckedException;
+
+    /**
+     * @param cctx Cache context.
      * @param key Key.
      * @param mvccSnapshot MVCC snapshot.
      * @return Cached row, if available, null otherwise.
@@ -959,6 +969,14 @@ public interface IgniteCacheOffheapManager {
          * @throws IgniteCheckedException If failed.
          */
         public void invoke(GridCacheContext cctx, KeyCacheObject key, OffheapInvokeClosure c) throws IgniteCheckedException;
+
+        /**
+         * @param cctx Cache context.
+         * @param keys Keys.
+         * @param c Closure.
+         * @throws IgniteCheckedException If failed.
+         */
+        public void invokeAll(GridCacheContext cctx, List<KeyCacheObject> keys, OffheapInvokeClosure c) throws IgniteCheckedException;
 
         /**
          *

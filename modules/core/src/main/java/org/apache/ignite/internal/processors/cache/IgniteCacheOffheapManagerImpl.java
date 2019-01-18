@@ -18,12 +18,16 @@
 package org.apache.ignite.internal.processors.cache;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.NavigableSet;
 import java.util.NoSuchElementException;
 import java.util.Set;
 import java.util.TreeMap;
@@ -63,6 +67,7 @@ import org.apache.ignite.internal.processors.cache.persistence.RowStore;
 import org.apache.ignite.internal.processors.cache.persistence.partstate.GroupPartitionId;
 import org.apache.ignite.internal.processors.cache.persistence.partstate.PartitionRecoverState;
 import org.apache.ignite.internal.processors.cache.persistence.tree.BPlusTree;
+import org.apache.ignite.internal.processors.cache.persistence.tree.io.AbstractDataPageIO;
 import org.apache.ignite.internal.processors.cache.persistence.tree.io.BPlusIO;
 import org.apache.ignite.internal.processors.cache.persistence.tree.io.DataPageIO;
 import org.apache.ignite.internal.processors.cache.persistence.tree.io.PageIO;
@@ -102,6 +107,7 @@ import org.apache.ignite.internal.util.lang.GridCursor;
 import org.apache.ignite.internal.util.lang.GridIterator;
 import org.apache.ignite.internal.util.lang.IgniteInClosure2X;
 import org.apache.ignite.internal.util.typedef.F;
+import org.apache.ignite.internal.util.typedef.T2;
 import org.apache.ignite.internal.util.typedef.internal.CU;
 import org.apache.ignite.internal.util.typedef.internal.U;
 import org.apache.ignite.lang.IgniteBiTuple;
@@ -439,6 +445,12 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
         throws IgniteCheckedException {
         dataStore(part).invoke(cctx, key, c);
     }
+
+    @Override public void invokeAll(GridCacheContext cctx, List<KeyCacheObject> keys, GridDhtLocalPartition part, OffheapInvokeClosure c)
+        throws IgniteCheckedException {
+        dataStore(part).invokeAll(cctx, keys, c);
+    }
+
 
     /** {@inheritDoc} */
     @Override public void update(
@@ -1645,6 +1657,99 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
 
             invoke0(cctx, new SearchRow(cacheId, key), c);
         }
+
+        @Override public void invokeAll(
+            GridCacheContext cctx,
+            List<KeyCacheObject> keys,
+            Map<KeyCacheObject, GridCacheEntryEx> items
+//            OffheapInvokeClosure c
+        ) throws IgniteCheckedException {
+            // todo ensure sorted
+//            Set<KeyCacheObject> keys = items.keySet();
+
+            int size = keys.size();
+
+            int cacheId = grp.sharedGroup() ? cctx.cacheId() : CU.UNDEFINED_CACHE_ID;
+
+            KeyCacheObject first = keys.get(0);
+            KeyCacheObject last = keys.get(size - 1);
+
+            assert last.hashCode() >= first.hashCode() : "Keys not sorted by hash: first=" + first.hashCode() + ", last=" + last.hashCode();
+
+            GridCursor<CacheDataRow> cur = dataTree.find(new SearchRow(cacheId, first), new SearchRow(cacheId, last));
+
+//            Iterator<KeyCacheObject> keyIter = keys.iterator();
+
+            // todo bench perf linked vs not-linked
+            Map<KeyCacheObject, CacheDataRow> updateKeys = new LinkedHashMap<>();
+            // todo can rid from it - measure performance with iterator.
+            Set<KeyCacheObject> insertKeys = new HashSet<>(keys);
+
+            while (cur.next()) {
+                CacheDataRow row = cur.get();
+
+                if (insertKeys.remove(row.key()))
+                    updateKeys.put(row.key(), row);
+            }
+
+            // Updates.
+            for (Map.Entry<KeyCacheObject, CacheDataRow> e : updateKeys.entrySet()) {
+                KeyCacheObject key = e.getKey();
+
+                GridCacheEntryEx entry = items.get(key);
+
+                try {
+                    update(cctx, key, entry.valueBytes(), entry.version(), entry.expireTime(), e.getValue());
+                }
+                catch (GridCacheEntryRemovedException ex) {
+                    // todo
+                    ex.printStackTrace();
+                }
+            }
+
+            int pageSize = cctx.dataRegion().pageMemory().pageSize();
+
+            int maxDataSize = pageSize - AbstractDataPageIO.MIN_DATA_PAGE_OVERHEAD;
+
+            T2<List<DataRow>, Integer> large = new  T2<>();
+            // New.
+            for (KeyCacheObject key : insertKeys) {
+
+                GridCacheEntryEx entry = items.get(key);
+
+                try {
+
+                    DataRow dataRow = makeDataRow(key, entry.valueBytes(),
+                        entry.version(),
+                        entry.expireTime(), cacheId);
+
+                    // todo bin packing by pages
+                    // 1. split into 3 bags
+                    //  A. Larger then pages +
+                    //    B. Tails
+                    //  C. Other objects
+
+//                    if (dataRow)
+                    // todo how splitted large objects
+
+
+//                    CacheDataRow newRow = createRow(
+//                        cctx,
+//                        key,
+//                        entry.valueBytes(),
+//                        entry.version(),
+//                        entry.expireTime(),
+//                        null);
+                }
+                catch (GridCacheEntryRemovedException ex) {
+                    // todo
+                    ex.printStackTrace();
+                }
+
+            }
+        }
+
+        //compare(KeyCac)
 
         /**
          * @param cctx Cache context.
