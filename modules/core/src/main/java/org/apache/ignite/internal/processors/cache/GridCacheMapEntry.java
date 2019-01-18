@@ -530,7 +530,7 @@ public abstract class GridCacheMapEntry extends GridMetadataAwareAdapter impleme
      * @throws IgniteCheckedException If failed.
      * @throws GridCacheEntryRemovedException If entry was removed.
      */
-    @Nullable protected CacheDataRow unswap(@Nullable CacheDataRow row, boolean checkExpire)
+    @Nullable public CacheDataRow unswap(@Nullable CacheDataRow row, boolean checkExpire)
         throws IgniteCheckedException, GridCacheEntryRemovedException {
         boolean obsolete = false;
         boolean deferred = false;

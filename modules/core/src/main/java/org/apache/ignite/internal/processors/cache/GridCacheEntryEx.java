@@ -1116,6 +1116,9 @@ public interface GridCacheEntryEx {
     @Nullable public CacheObject unswap(CacheDataRow row)
         throws IgniteCheckedException, GridCacheEntryRemovedException;
 
+    @Nullable public CacheDataRow unswap(@Nullable CacheDataRow row, boolean checkExpire)
+        throws IgniteCheckedException, GridCacheEntryRemovedException;
+
     /**
      * Unswap ignoring flags.
      *

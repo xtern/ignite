@@ -43,6 +43,7 @@ import org.apache.ignite.internal.processors.affinity.AffinityTopologyVersion;
 import org.apache.ignite.internal.processors.cache.CacheEntryInfoCollection;
 import org.apache.ignite.internal.processors.cache.CacheGroupContext;
 import org.apache.ignite.internal.processors.cache.CacheMetricsImpl;
+import org.apache.ignite.internal.processors.cache.CacheObject;
 import org.apache.ignite.internal.processors.cache.GridCacheContext;
 import org.apache.ignite.internal.processors.cache.GridCacheEntryEx;
 import org.apache.ignite.internal.processors.cache.GridCacheEntryInfo;
@@ -963,9 +964,63 @@ public class GridDhtPartitionDemander {
                             new GridCacheMapEntry.UpdateClosure(
                                 (GridCacheMapEntry)cached, entry.value(), entry.version(), entry.ttl(), pred);
 
-                        cctx.offheap().invoke(cctx, entry.key(), part, closure);
+                        CacheObject val = entry.value();
 
-                        boolean update = closure.operationType() == IgniteTree.OperationType.NOOP;
+                        CacheDataRow oldRow = cached.unswap(null, true);
+
+                        // todo
+                        assert oldRow == null : oldRow;
+
+                        boolean update = false;
+
+                        if (oldRow == null) {
+
+//                            if (oldRow != null) {
+//                                oldRow.key(entry.key);
+//
+//                                oldRow = checkRowExpired(oldRow);
+//                            }
+
+//                            this.oldRow = oldRow;
+
+                            if (pred != null && !pred.apply(oldRow))
+                                continue;
+
+                            if (val != null) {
+//                                CacheDataRow newRow = cctx.offheap().dataStore(part).createRow(
+//                                    cctx,
+//                                    entry.key(),
+//                                    val,
+//                                    entry.version(),
+//                                    entry.expireTime(),
+//                                    oldRow);
+
+
+                                // todo think about oldRow != null && oldRow.link() == newRow.link()
+
+
+//                                treeOp = oldRow != null && oldRow.link() == newRow.link() ?
+//                                    IgniteTree.OperationType.NOOP : IgniteTree.OperationType.PUT;
+
+                                cctx.offheap().dataStore(part).update(
+                                    cctx,
+                                    entry.key(),
+                                    val,
+                                    entry.version(),
+                                    entry.expireTime(),
+                                    oldRow
+                                );
+                            }
+                            else {
+                                // todo null - remove
+                                //treeOp = oldRow != null ? IgniteTree.OperationType.REMOVE : IgniteTree.OperationType.NOOP;
+                            }
+                        }
+                        else {
+                            cctx.offheap().invoke(cctx, entry.key(), part, closure);
+
+                            update = closure.operationType() == IgniteTree.OperationType.NOOP;
+                        }
 
                         if (update) {
                             cached.finishPreload(entry.value(), expTime, entry.ttl(), entry.version(), true,
@@ -1013,11 +1068,12 @@ public class GridDhtPartitionDemander {
 //                    }
 
             }
-//            catch (GridCacheEntryRemovedException ignored) {
-//                if (log.isTraceEnabled())
-//                    log.trace("Entry has been concurrently removed while rebalancing (will ignore) [key=" +
-//                        cached.key() + ", part=" + p + ']');
-//            }
+            catch (GridCacheEntryRemovedException ignored) {
+                // todo properly handle
+                if (log.isTraceEnabled())
+                    log.trace("Entry has been concurrently removed while rebalancing (will ignore) [key=" +
+                        cached.key() + ", part=" + p + ']');
+            }
             catch (GridDhtInvalidPartitionException ignored) {
                 if (log.isDebugEnabled())
                     log.debug("Partition became invalid during rebalancing (will ignore): " + p);

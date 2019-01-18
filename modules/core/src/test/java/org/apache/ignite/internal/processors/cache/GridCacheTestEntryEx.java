@@ -903,6 +903,11 @@ public class GridCacheTestEntryEx extends GridMetadataAwareAdapter implements Gr
         return null;
     }
 
+    @Override public @Nullable CacheDataRow unswap(@Nullable CacheDataRow row,
+        boolean checkExpire) throws IgniteCheckedException, GridCacheEntryRemovedException {
+        return null;
+    }
+
     /** {@inheritDoc} */
     @Override public boolean hasLockCandidate(long threadId) throws GridCacheEntryRemovedException {
         return localCandidate(threadId) != null;
