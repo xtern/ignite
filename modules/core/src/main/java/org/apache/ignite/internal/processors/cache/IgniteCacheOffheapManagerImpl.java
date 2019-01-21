@@ -18,8 +18,10 @@
 package org.apache.ignite.internal.processors.cache;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
@@ -1715,11 +1717,13 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
             // rows <-> count of pages needed
             T2<List<DataRow>, Integer> large = new  T2<>(new ArrayList<>(), 0);
 
+
+
             // tail from large objects (sizes)
-            List<Integer> tails = new ArrayList<>();
+//            List<DataRow> tails = new ArrayList<>();
 
             // other objects
-            List<DataRow> rows = new ArrayList<>();
+            List<T2<Integer, DataRow>> rows = new ArrayList<>();
 
             // New.
             for (KeyCacheObject key : insertKeys) {
@@ -1738,7 +1742,7 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
                     //  C. Other objects
 
                     if (dataRow.size() < maxDataSize)
-                        rows.add(dataRow);
+                        rows.add(new T2<>(dataRow.size(), dataRow));
                     else {
                         large.getKey().add(dataRow);
 
@@ -1747,7 +1751,7 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
                         int tailSize = dataRow.size() % maxDataSize;
 
                         if (tailSize > 0)
-                            tails.add(tailSize);
+                            rows.add(new T2<>(tailSize, dataRow));
                     }
 //                    if (dataRow)
                     // todo how splitted large objects
@@ -1766,25 +1770,70 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
             }
 
             //
-            int[] smallObjs = new int[tails.size() + rows.size()];
+            rows.sort(Comparator.comparing(IgniteBiTuple::getKey));
 
-            int cntr = 0;
-
-            for (int objSize : tails)
-                smallObjs[cntr++] = objSize;
-
-            for (CacheDataRow row : rows)
-                smallObjs[cntr++] = row.size();
+//            int[] smallObjs = new int[tails.size() + rows.size()];
+//
+//            int cntr = 0;
+//
+//            for (int objSize : tails)
+//                smallObjs[cntr++] = objSize;
+//
+//            for (CacheDataRow row : rows)
+//                smallObjs[cntr++] = row.size();
 
             // Page -> list of indexes
-            List<List<Integer>> res = binPack(smallObjs, maxDataSize);
+            List<List<DataRow>> bins = binPack(rows, maxDataSize);
+
+            //
+            int total = large.getValue() + bins.size();
 
         }
 
         // todo move out
-        private List<List<Integer>> binPack(int[] objs, int size) {
-            // todo
-            return null;
+        private List<List<DataRow>> binPack(List<T2<Integer, DataRow>> rows, int cap) {
+            // Initialize result (Count of bins)
+            int cnt = 0;
+
+            // Result.
+            List<List<DataRow>> bins = new ArrayList<>();
+
+            // Create an array to store remaining space in bins
+            // there can be at most n bins
+            int[] remains = new int[rows.size()];
+
+            // Place items one by one
+            for (int i = (rows.size() - 1); i >= 0; i--) {
+                // Find the first bin that can accommodate weight[i]
+                int j;
+
+                int size = rows.get(i).getKey();
+
+                for (j = 0; j < cnt; j++) {
+                    if (remains[j] >= size) {
+                        remains[j] -= size;
+
+                        bins.get(j).add(rows.get(i).getValue());
+
+                        break;
+                    }
+                }
+
+                // If no bin could accommodate sizes[i].
+                if (j == cnt) {
+                    remains[cnt] = cap - size;
+
+                    List<DataRow> list = new ArrayList<>();
+
+                    bins.add(list);
+
+                    list.add(rows.get(i).getValue());
+
+                    cnt++;
+                }
+            }
+
+            return bins;
         }
 
         //compare(KeyCac)
