@@ -973,10 +973,12 @@ public interface IgniteCacheOffheapManager {
         /**
          * @param cctx Cache context.
          * @param keys Keys.
-         * @param c Closure.
+         * @param items todo
          * @throws IgniteCheckedException If failed.
          */
-        public void invokeAll(GridCacheContext cctx, List<KeyCacheObject> keys, OffheapInvokeClosure c) throws IgniteCheckedException;
+        public void invokeAll(GridCacheContext cctx,
+            List<KeyCacheObject> keys,
+            Map<KeyCacheObject, GridCacheEntryEx> items) throws IgniteCheckedException;
 
         /**
          *

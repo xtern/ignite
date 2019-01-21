@@ -448,7 +448,8 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
 
     @Override public void invokeAll(GridCacheContext cctx, List<KeyCacheObject> keys, GridDhtLocalPartition part, OffheapInvokeClosure c)
         throws IgniteCheckedException {
-        dataStore(part).invokeAll(cctx, keys, c);
+        // todo
+        //dataStore(part).invokeAll(cctx, keys, c);
     }
 
 
@@ -1711,10 +1712,17 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
 
             int maxDataSize = pageSize - AbstractDataPageIO.MIN_DATA_PAGE_OVERHEAD;
 
-            T2<List<DataRow>, Integer> large = new  T2<>();
+            // rows <-> count of pages needed
+            T2<List<DataRow>, Integer> large = new  T2<>(new ArrayList<>(), 0);
+
+            // tail from large objects (sizes)
+            List<Integer> tails = new ArrayList<>();
+
+            // other objects
+            List<DataRow> rows = new ArrayList<>();
+
             // New.
             for (KeyCacheObject key : insertKeys) {
-
                 GridCacheEntryEx entry = items.get(key);
 
                 try {
@@ -1729,10 +1737,20 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
                     //    B. Tails
                     //  C. Other objects
 
+                    if (dataRow.size() < maxDataSize)
+                        rows.add(dataRow);
+                    else {
+                        large.getKey().add(dataRow);
+
+                        large.setValue(large.getValue() + (dataRow.size() / maxDataSize));
+
+                        int tailSize = dataRow.size() % maxDataSize;
+
+                        if (tailSize > 0)
+                            tails.add(tailSize);
+                    }
 //                    if (dataRow)
                     // todo how splitted large objects
-
-
 //                    CacheDataRow newRow = createRow(
 //                        cctx,
 //                        key,
@@ -1745,8 +1763,28 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
                     // todo
                     ex.printStackTrace();
                 }
-
             }
+
+            //
+            int[] smallObjs = new int[tails.size() + rows.size()];
+
+            int cntr = 0;
+
+            for (int objSize : tails)
+                smallObjs[cntr++] = objSize;
+
+            for (CacheDataRow row : rows)
+                smallObjs[cntr++] = row.size();
+
+            // Page -> list of indexes
+            List<List<Integer>> res = binPack(smallObjs, maxDataSize);
+
+        }
+
+        // todo move out
+        private List<List<Integer>> binPack(int[] objs, int size) {
+            // todo
+            return null;
         }
 
         //compare(KeyCac)
