@@ -51,7 +51,6 @@ import org.apache.ignite.internal.processors.cache.GridCacheEntryRemovedExceptio
 import org.apache.ignite.internal.processors.cache.GridCacheMapEntry;
 import org.apache.ignite.internal.processors.cache.GridCachePartitionExchangeManager;
 import org.apache.ignite.internal.processors.cache.GridCacheSharedContext;
-import org.apache.ignite.internal.processors.cache.IgniteCacheOffheapManager;
 import org.apache.ignite.internal.processors.cache.KeyCacheObject;
 import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtInvalidPartitionException;
 import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtLocalPartition;
@@ -71,6 +70,7 @@ import org.apache.ignite.internal.util.lang.IgniteInClosureX;
 import org.apache.ignite.internal.util.tostring.GridToStringExclude;
 import org.apache.ignite.internal.util.tostring.GridToStringInclude;
 import org.apache.ignite.internal.util.typedef.CI1;
+import org.apache.ignite.internal.util.typedef.T2;
 import org.apache.ignite.internal.util.typedef.internal.CU;
 import org.apache.ignite.internal.util.typedef.internal.LT;
 import org.apache.ignite.internal.util.typedef.internal.S;
@@ -80,7 +80,6 @@ import org.apache.ignite.lang.IgnitePredicate;
 import org.apache.ignite.spi.IgniteSpiException;
 import org.jetbrains.annotations.Nullable;
 
-import static org.apache.ignite.events.EventType.EVT_CACHE_OBJECT_EXPIRED;
 import static org.apache.ignite.events.EventType.EVT_CACHE_REBALANCE_OBJECT_LOADED;
 import static org.apache.ignite.events.EventType.EVT_CACHE_REBALANCE_PART_LOADED;
 import static org.apache.ignite.events.EventType.EVT_CACHE_REBALANCE_STARTED;
@@ -899,9 +898,256 @@ public class GridDhtPartitionDemander {
         }
     }
 
-    private void preloadEntries(ClusterNode from, int p, Collection<GridCacheEntryInfo> entries,
+    /**
+     * todo
+     * @param from
+     * @param p
+     * @param entries
+     * @param topVer
+     * @throws IgniteCheckedException
+     */
+    private void preloadEntries(ClusterNode from,
+        int p,
+        Collection<GridCacheEntryInfo> entries,
+        AffinityTopologyVersion topVer
+    ) throws IgniteCheckedException {
+        GridDhtLocalPartition part = null;
+
+        Map<Integer, List<T2<GridCacheMapEntry, GridCacheEntryInfo>>> cctxMap = new HashMap<>();
+
+        // Map by context.
+        for (GridCacheEntryInfo entry : entries) {
+            GridCacheEntryEx cached = null;
+
+            try {
+                GridCacheContext cctx0 = grp.sharedGroup() ? ctx.cacheContext(entry.cacheId()) : grp.singleCacheContext();
+
+                if (part == null)
+                    part = cctx0.topology().localPartition(p);
+
+                if (cctx0 == null)
+                    return;
+
+                if (cctx0.isNear())
+                    cctx0 = cctx0.dhtCache().context();
+
+                final GridCacheContext cctx = cctx0;
+
+                cached = cctx.cache().entryEx(entry.key());
+                // todo ensure free space
+                // todo check obsolete
+
+                if (log.isTraceEnabled())
+                    log.trace("Rebalancing key [key=" + entry.key() + ", part=" + p + ", node=" + from.id() + ']');
+
+
+
+                List<T2<GridCacheMapEntry, GridCacheEntryInfo>> entriesList = cctxMap.get(cctx.cacheId());
+
+                if (entriesList == null) {
+                    cctx.continuousQueries().getListenerReadLock().lock();
+
+                    cctxMap.put(cctx.cacheId(), entriesList = new ArrayList<>());
+                }
+
+                cached.lockEntry();
+
+                entriesList.add(new T2<>((GridCacheMapEntry)cached, entry));
+            }
+            catch (GridDhtInvalidPartitionException ignored) {
+                if (log.isDebugEnabled())
+                    log.debug("Partition became invalid during rebalancing (will ignore): " + p);
+
+                return;
+            }
+        }
+
+        try {
+            for (Map.Entry<Integer, List<T2<GridCacheMapEntry, GridCacheEntryInfo>>> mapEntries : cctxMap.entrySet()) {
+                GridCacheContext cctx = ctx.cacheContext(mapEntries.getKey());
+
+                // todo think about sorting keys.
+                List<KeyCacheObject> keys = new ArrayList<>(mapEntries.getValue().size());
+                Map<KeyCacheObject, GridCacheEntryEx> keyToEntry = new HashMap<>(U.capacity(mapEntries.getValue().size()));
+
+                for (T2<GridCacheMapEntry, GridCacheEntryInfo> pair : mapEntries.getValue()) {
+                    KeyCacheObject key = pair.getValue().key();
+
+                    keys.add(key);
+
+                    keyToEntry.put(key, pair.getKey());
+                }
+
+                cctx.offheap().updateBatch(cctx, keys, part, keyToEntry);
+            }
+        } finally {
+            for (Map.Entry<Integer, List<T2<GridCacheMapEntry, GridCacheEntryInfo>>> mapEntries : cctxMap.entrySet()) {
+                GridCacheContext cctx = ctx.cacheContext(mapEntries.getKey());
+
+                assert cctx != null : mapEntries.getKey();
+
+                cctx.continuousQueries().getListenerReadLock().unlock();
+
+                for (T2<GridCacheMapEntry, GridCacheEntryInfo> e : mapEntries.getValue()) {
+                    try {
+                        GridCacheEntryInfo info = e.get2();
+
+                        long expTime = info.ttl() < 0 ? CU.toExpireTime(info.ttl()) : info.ttl();
+
+                        e.get1().finishPreload(info.value(), expTime, info.ttl(), info.version(), true,
+                            topVer,
+                            cctx.isDrEnabled() ? DR_PRELOAD : DR_NONE,
+                            cctx.mvccEnabled() ? ((MvccVersionAware)e).mvccVersion() : null);
+
+                    } finally {
+                        e.get1().unlockEntry();
+
+                        // todo record rebalance event
+                        e.get1().touch(topVer);
+                    }
+                }
+            }
+
+        }
+//
+//
+//                try {
+//                    if (preloadPred == null || preloadPred.apply(entry)) {
+//                        // todo mvcc support
+////                        GridCacheMapEntry.UpdateClosure closure =
+////                            new GridCacheMapEntry.UpdateClosure(
+////                                (GridCacheMapEntry)cached, entry.value(), entry.version(), entry.ttl(), pred);
+//
+//                        CacheObject val = entry.value();
+//
+//                        CacheDataRow oldRow = cached.unswap(null, true);
+//
+//                        // todo
+//                        assert oldRow == null : oldRow;
+//
+//                        boolean update = false;
+//
+//                        if (oldRow == null) {
+//
+////                            if (oldRow != null) {
+////                                oldRow.key(entry.key);
+////
+////                                oldRow = checkRowExpired(oldRow);
+////                            }
+//
+////                            this.oldRow = oldRow;
+//
+//                            if (pred != null && !pred.apply(oldRow))
+//                                continue;
+//
+//                            if (val != null) {
+////                                CacheDataRow newRow = cctx.offheap().dataStore(part).createRow(
+////                                    cctx,
+////                                    entry.key(),
+////                                    val,
+////                                    entry.version(),
+////                                    entry.expireTime(),
+////                                    oldRow);
+//
+//
+//                                // todo think about oldRow != null && oldRow.link() == newRow.link()
+//
+//
+////                                treeOp = oldRow != null && oldRow.link() == newRow.link() ?
+////                                    IgniteTree.OperationType.NOOP : IgniteTree.OperationType.PUT;
+//
+//                                cctx.offheap().dataStore(part).update(
+//                                    cctx,
+//                                    entry.key(),
+//                                    val,
+//                                    entry.version(),
+//                                    entry.expireTime(),
+//                                    oldRow
+//                                );
+//                            }
+//                            else {
+//                                // todo null - remove
+//                                //treeOp = oldRow != null ? IgniteTree.OperationType.REMOVE : IgniteTree.OperationType.NOOP;
+//                            }
+//                        }
+//                        else {
+//                            cctx.offheap().invoke(cctx, entry.key(), part, closure);
+//
+//                            update = closure.operationType() == IgniteTree.OperationType.NOOP;
+//                        }
+//
+//                        if (update) {
+//                            cached.finishPreload(entry.value(), expTime, entry.ttl(), entry.version(), true,
+//                                topVer,
+//                                cctx.isDrEnabled() ? DR_PRELOAD : DR_NONE,
+//                                cctx.mvccEnabled() ? ((MvccVersionAware)entry).mvccVersion() : null);
+//                        }
+//                    }
+//                } finally {
+//                    cached.unlockEntry();
+//                    cctx.continuousQueries().getListenerReadLock().unlock();
+//                }
+
+
+
+//                    if (cached.preload(
+//                        entry.value(),
+//                        entry.version(),
+//
+//                        cctx.mvccEnabled() ? ((MvccVersionAware)entry).mvccVersion() : null,
+//                        cctx.mvccEnabled() ? ((MvccUpdateVersionAware)entry).newMvccVersion() : null,
+//                        cctx.mvccEnabled() ? ((MvccVersionAware)entry).mvccTxState() : TxState.NA,
+//                        cctx.mvccEnabled() ? ((MvccUpdateVersionAware)entry).newMvccTxState() : TxState.NA,
+//                        entry.ttl(),
+//                        entry.expireTime(),
+//                        true,
+//                        topVer,
+//                        cctx.isDrEnabled() ? DR_PRELOAD : DR_NONE,
+//                        false
+//                    )) {
+//                        cached.touch(topVer); // Start tracking.
+//
+//                        if (cctx.events().isRecordable(EVT_CACHE_REBALANCE_OBJECT_LOADED) && !cached.isInternal())
+//                            cctx.events().addEvent(cached.partition(), cached.key(), cctx.localNodeId(), null,
+//                                null, null, EVT_CACHE_REBALANCE_OBJECT_LOADED, entry.value(), true, null,
+//                                false, null, null, null, true);
+//                    }
+//                    else {
+//                        cached.touch(topVer); // Start tracking.
+//
+//                        if (log.isTraceEnabled())
+//                            log.trace("Rebalancing entry is already in cache (will ignore) [key=" + cached.key() +
+//                                ", part=" + p + ']');
+//                    }
+//
+//            }
+//            catch (GridCacheEntryRemovedException ignored) {
+//                // todo properly handle
+//                if (log.isTraceEnabled())
+//                    log.trace("Entry has been concurrently removed while rebalancing (will ignore) [key=" +
+//                        cached.key() + ", part=" + p + ']');
+//            }
+//            catch (GridDhtInvalidPartitionException ignored) {
+//                if (log.isDebugEnabled())
+//                    log.debug("Partition became invalid during rebalancing (will ignore): " + p);
+//
+//                return;
+//            }
+//            catch (IgniteCheckedException e) {
+//                throw new IgniteCheckedException("Failed to cache rebalanced entry (will stop rebalancing) [local=" +
+//                    ctx.localNode() + ", node=" + from.id() + ", key=" + entry.key() + ", part=" + p + ']', e);
+//            }
+//        }
+
+
+    }
+
+    // backup of workable version.
+    private void preloadEntries0(ClusterNode from, int p, Collection<GridCacheEntryInfo> entries,
         AffinityTopologyVersion topVer) throws IgniteCheckedException {
         GridDhtLocalPartition part = null;
+
+        // Map by context.
 
         for (GridCacheEntryInfo entry : entries) {
             GridCacheEntryEx cached = null;

@@ -21,13 +21,14 @@ import java.util.IdentityHashMap;
 import java.util.Map;
 import java.util.concurrent.ThreadLocalRandom;
 import org.apache.ignite.Ignite;
-import org.apache.ignite.IgniteCache;
 import org.apache.ignite.IgniteDataStreamer;
 import org.apache.ignite.cache.CacheMode;
 import org.apache.ignite.cache.affinity.rendezvous.RendezvousAffinityFunction;
 import org.apache.ignite.configuration.CacheConfiguration;
 import org.apache.ignite.configuration.IgniteConfiguration;
-import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtLocalPartition;
+import org.apache.ignite.internal.IgniteEx;
+import org.apache.ignite.internal.processors.cache.GridCacheContext;
+import org.apache.ignite.internal.processors.cache.IgniteInternalCache;
 import org.apache.ignite.internal.util.typedef.internal.U;
 import org.apache.ignite.testframework.junits.common.GridCommonAbstractTest;
 import org.junit.Test;
@@ -116,8 +117,15 @@ public class FreeListBatchUpdateTest extends GridCommonAbstractTest {
         }
     }
 
-    public void checkFreeList() {
+    @Test
+    public void checkFreeList() throws Exception {
+        try (IgniteEx node = startGrid(0)) {
+            IgniteInternalCache cache = node.cachex(DEFAULT_CACHE_NAME);
 
+            GridCacheContext cctx = cache.context();
+
+            cctx.offheap().updateBatch(cctx, );
+        }
     }
 
     /** */

@@ -47,6 +47,7 @@ import org.apache.ignite.internal.util.lang.GridCursor;
 import org.apache.ignite.internal.util.lang.GridIterator;
 import org.apache.ignite.internal.util.lang.IgniteInClosure2X;
 import org.apache.ignite.lang.IgniteBiTuple;
+import org.apache.ignite.lang.IgnitePredicate;
 import org.jetbrains.annotations.Nullable;
 
 /**
@@ -186,16 +187,6 @@ public interface IgniteCacheOffheapManager {
      * @throws IgniteCheckedException If failed.
      */
     public void invoke(GridCacheContext cctx, KeyCacheObject key, GridDhtLocalPartition part, OffheapInvokeClosure c)
-        throws IgniteCheckedException;
-
-    /**
-     * @param cctx Cache context.
-     * @param keys Sorted Keys.
-     * @param part Partition.
-     * @param c Tree update closure.
-     * @throws IgniteCheckedException If failed.
-     */
-    public void invokeAll(GridCacheContext cctx, List<KeyCacheObject> keys, GridDhtLocalPartition part, OffheapInvokeClosure c)
         throws IgniteCheckedException;
 
     /**
@@ -429,6 +420,20 @@ public interface IgniteCacheOffheapManager {
         long expireTime,
         GridDhtLocalPartition part,
         @Nullable CacheDataRow oldRow
+    ) throws IgniteCheckedException;
+
+    /**
+     * @param cctx Cache context.
+     * @param keys Sorted Keys.
+     * @param part Partition.
+     * @param items todo
+     * @throws IgniteCheckedException If failed.
+     */
+    public void updateBatch(
+        GridCacheContext cctx,
+        List<KeyCacheObject> keys,
+        GridDhtLocalPartition part,
+        Map<KeyCacheObject, GridCacheEntryEx> items
     ) throws IgniteCheckedException;
 
     /**

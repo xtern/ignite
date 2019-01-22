@@ -18,18 +18,13 @@
 package org.apache.ignite.internal.processors.cache;
 
 import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collection;
 import java.util.Collections;
-import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.NavigableSet;
 import java.util.NoSuchElementException;
 import java.util.Set;
 import java.util.TreeMap;
@@ -69,7 +64,6 @@ import org.apache.ignite.internal.processors.cache.persistence.RowStore;
 import org.apache.ignite.internal.processors.cache.persistence.partstate.GroupPartitionId;
 import org.apache.ignite.internal.processors.cache.persistence.partstate.PartitionRecoverState;
 import org.apache.ignite.internal.processors.cache.persistence.tree.BPlusTree;
-import org.apache.ignite.internal.processors.cache.persistence.tree.io.AbstractDataPageIO;
 import org.apache.ignite.internal.processors.cache.persistence.tree.io.BPlusIO;
 import org.apache.ignite.internal.processors.cache.persistence.tree.io.DataPageIO;
 import org.apache.ignite.internal.processors.cache.persistence.tree.io.PageIO;
@@ -109,7 +103,6 @@ import org.apache.ignite.internal.util.lang.GridCursor;
 import org.apache.ignite.internal.util.lang.GridIterator;
 import org.apache.ignite.internal.util.lang.IgniteInClosure2X;
 import org.apache.ignite.internal.util.typedef.F;
-import org.apache.ignite.internal.util.typedef.T2;
 import org.apache.ignite.internal.util.typedef.internal.CU;
 import org.apache.ignite.internal.util.typedef.internal.U;
 import org.apache.ignite.lang.IgniteBiTuple;
@@ -448,13 +441,6 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
         dataStore(part).invoke(cctx, key, c);
     }
 
-    @Override public void invokeAll(GridCacheContext cctx, List<KeyCacheObject> keys, GridDhtLocalPartition part, OffheapInvokeClosure c)
-        throws IgniteCheckedException {
-        // todo
-        //dataStore(part).invokeAll(cctx, keys, c);
-    }
-
-
     /** {@inheritDoc} */
     @Override public void update(
         GridCacheContext cctx,
@@ -468,6 +454,16 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
         assert expireTime >= 0;
 
         dataStore(part).update(cctx, key, val, ver, expireTime, oldRow);
+    }
+
+    /** {@inheritDoc} */
+    @Override public void updateBatch(
+        GridCacheContext cctx,
+        List<KeyCacheObject> keys,
+        GridDhtLocalPartition part,
+        Map<KeyCacheObject, GridCacheEntryEx> items
+    ) throws IgniteCheckedException {
+        dataStore(part).updateBatch(cctx, keys, items);
     }
 
     /** {@inheritDoc} */
@@ -1677,6 +1673,8 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
 
             assert last.hashCode() >= first.hashCode() : "Keys not sorted by hash: first=" + first.hashCode() + ", last=" + last.hashCode();
 
+            // todo check on which range we can loose performance (if there will be a lot of misses).
+
             GridCursor<CacheDataRow> cur = dataTree.find(new SearchRow(cacheId, first), new SearchRow(cacheId, last));
 
             // todo bench perf linked vs not-linked
@@ -1687,8 +1685,14 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
             while (cur.next()) {
                 CacheDataRow row = cur.get();
 
-                if (insertKeys.remove(row.key()))
-                    updateKeys.put(row.key(), row);
+                try {
+                    if (insertKeys.remove(row.key()) && needUpdate(cctx, row, items.get(row.key())))
+                        updateKeys.put(row.key(), row);
+                }
+                catch (GridCacheEntryRemovedException ex) {
+                    // todo Is it safe to ignore this exception (on rebalance)?
+                    ex.printStackTrace();
+                }
             }
 
             // Updates.
@@ -1731,6 +1735,30 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
 //            rowStore.freeList().batchInsert();
             //cctx.
 
+        }
+
+        // todo
+        private boolean needUpdate(GridCacheContext cctx, CacheDataRow row, GridCacheEntryEx entry) throws GridCacheEntryRemovedException {
+            boolean update0;
+
+            GridCacheVersion currVer = row != null ? row.version() : entry.version();
+
+            boolean isStartVer = cctx.shared().versions().isStartVersion(currVer);
+
+            if (cctx.group().persistenceEnabled()) {
+                if (!isStartVer) {
+                    if (cctx.atomic())
+                        update0 = GridCacheMapEntry.ATOMIC_VER_COMPARATOR.compare(currVer, entry.version()) < 0;
+                    else
+                        update0 = currVer.compareTo(entry.version()) < 0;
+                }
+                else
+                    update0 = true;
+            }
+            else
+                update0 = isStartVer;
+
+            return update0;
         }
 
         /**
