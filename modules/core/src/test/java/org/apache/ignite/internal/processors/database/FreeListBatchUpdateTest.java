@@ -60,7 +60,7 @@ public class FreeListBatchUpdateTest extends GridCommonAbstractTest {
     @Test
     public void testBatchPutAll() throws Exception {
         try (Ignite node = startGrid(0)) {
-            Map<Integer, Object> data = randomData(0, 100_000, 8192);
+            Map<Integer, Object> data = randomData(0, 10_000, 8192);
 
             log.info("Loading 100k");
 
@@ -88,31 +88,31 @@ public class FreeListBatchUpdateTest extends GridCommonAbstractTest {
 //            }
 //
 //            assert sum + 64 == pageSize : sum;
-
-            int off = 100_000;
-
-            int end = off + ((65_536 / sizes.length) * sizes.length);
-
-            for (int i = off; i < end; i++) {
-                int objSize = sizes[sizes.length - 1 - ((i - off) % sizes.length)];
-                if (objSize == 64)
-                    objSize = 42;
-
-                data.put(i, generateObject(objSize));
-            }
-
-            long startTime = U.currentTimeMillis();
-
-            node.cache(DEFAULT_CACHE_NAME).putAll(data);
-
-            log.info("Done: " + (U.currentTimeMillis() - startTime) + " ms.");
+//
+//            int off = 10_000;
+//
+//            int end = off + ((65_536 / sizes.length) * sizes.length);
+//
+//            for (int i = off; i < end; i++) {
+//                int objSize = sizes[sizes.length - 1 - ((i - off) % sizes.length)];
+//                if (objSize == 64)
+//                    objSize = 42;
+//
+//                data.put(i, generateObject(objSize));
+//            }
+//
+//            long startTime = U.currentTimeMillis();
+//
+//            node.cache(DEFAULT_CACHE_NAME).putAll(data);
+//
+//            log.info("Done: " + (U.currentTimeMillis() - startTime) + " ms.");
 
 //            GridDhtLocalPartition.DBG = true;
 
             try (Ignite node2 = startGrid(1)) {
                 log.info("await rebalance");
 
-                U.sleep(30_000);
+                U.sleep(15_000);
             }
         }
     }
@@ -124,7 +124,7 @@ public class FreeListBatchUpdateTest extends GridCommonAbstractTest {
 
             GridCacheContext cctx = cache.context();
 
-            cctx.offheap().updateBatch(cctx, );
+//            cctx.offheap().updateBatch(cctx, );
         }
     }
 

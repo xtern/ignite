@@ -461,7 +461,7 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
         GridCacheContext cctx,
         List<KeyCacheObject> keys,
         GridDhtLocalPartition part,
-        Map<KeyCacheObject, GridCacheEntryEx> items
+        Map<KeyCacheObject, GridCacheEntryInfo> items
     ) throws IgniteCheckedException {
         dataStore(part).updateBatch(cctx, keys, items);
     }
@@ -1660,7 +1660,7 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
         @Override public void updateBatch(
             GridCacheContext cctx,
             List<KeyCacheObject> keys,
-            Map<KeyCacheObject, GridCacheEntryEx> items
+            Map<KeyCacheObject, GridCacheEntryInfo> items
 //            OffheapInvokeClosure c
         ) throws IgniteCheckedException {
             // todo ensure sorted
@@ -1685,52 +1685,63 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
             while (cur.next()) {
                 CacheDataRow row = cur.get();
 
-                try {
+//                try {
                     if (insertKeys.remove(row.key()) && needUpdate(cctx, row, items.get(row.key())))
                         updateKeys.put(row.key(), row);
-                }
-                catch (GridCacheEntryRemovedException ex) {
-                    // todo Is it safe to ignore this exception (on rebalance)?
-                    ex.printStackTrace();
-                }
+//                }
+//                catch (GridCacheEntryRemovedException ex) {
+//                    // todo Is it safe to ignore this exception (on rebalance)?
+//                    ex.printStackTrace();
+//                }
             }
 
             // Updates.
             for (Map.Entry<KeyCacheObject, CacheDataRow> e : updateKeys.entrySet()) {
                 KeyCacheObject key = e.getKey();
 
-                GridCacheEntryEx entry = items.get(key);
+                GridCacheEntryInfo entry = items.get(key);
 
-                try {
-                    update(cctx, key, entry.valueBytes(), entry.version(), entry.expireTime(), e.getValue());
-                }
-                catch (GridCacheEntryRemovedException ex) {
-                    // todo
-                    ex.printStackTrace();
-                }
+//                try {
+                log.info("update: " + key.hashCode());
+                update(cctx, key, entry.value(), entry.version(), entry.expireTime(), e.getValue());
+//                }
+//                catch (GridCacheEntryRemovedException ex) {
+//                    // todo
+//                    ex.printStackTrace();
+//                }
             }
 
             // New.
             List<DataRow> dataRows = new ArrayList<>(insertKeys.size());
 
             for (KeyCacheObject key : insertKeys) {
-                GridCacheEntryEx entry = items.get(key);
+                GridCacheEntryInfo entry = items.get(key);
 
-                try {
-                    DataRow row = makeDataRow(key, entry.valueBytes(), entry.version(), entry.expireTime(), cacheId);
+
+
+//                try {
+                    DataRow row = makeDataRow(key, entry.value(), entry.version(), entry.expireTime(), cacheId);
+
+                    assert row.value() != null : key.hashCode();
 
                     dataRows.add(row);
-                }
-                catch (GridCacheEntryRemovedException ex) {
-                    // todo
-                    ex.printStackTrace();
-                }
+
+//                log.info("key hash: " + row.hashCode() + " size=" + row.size());
+//                }
+//                catch (GridCacheEntryRemovedException ex) {
+//                    // todo
+//                    ex.printStackTrace();
+//                }
             }
 
             rowStore.freeList().insertBatch(dataRows, grp.statisticsHolderData());
 
-            for (DataRow row : dataRows)
-                dataTree.put(row);
+            log.info("Update BTree");
+            for (DataRow row : dataRows) {
+                log.info("hash " + row.hashCode());
+
+                dataTree.putx(row);
+            }
 
 //            rowStore.freeList().batchInsert();
             //cctx.
@@ -1738,7 +1749,7 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
         }
 
         // todo
-        private boolean needUpdate(GridCacheContext cctx, CacheDataRow row, GridCacheEntryEx entry) throws GridCacheEntryRemovedException {
+        private boolean needUpdate(GridCacheContext cctx, CacheDataRow row, GridCacheEntryInfo entry) {
             boolean update0;
 
             GridCacheVersion currVer = row != null ? row.version() : entry.version();
@@ -3079,6 +3090,7 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
             dataTree.destroy(new IgniteInClosure<CacheSearchRow>() {
                 @Override public void apply(CacheSearchRow row) {
                     try {
+                        log.info("Remove row: " + row.key().hashCode() + " link " + row.link());
                         rowStore.removeRow(row.link(), grp.statisticsHolderData());
                     }
                     catch (IgniteCheckedException e) {

@@ -433,7 +433,7 @@ public interface IgniteCacheOffheapManager {
         GridCacheContext cctx,
         List<KeyCacheObject> keys,
         GridDhtLocalPartition part,
-        Map<KeyCacheObject, GridCacheEntryEx> items
+        Map<KeyCacheObject, GridCacheEntryInfo> items
     ) throws IgniteCheckedException;
 
     /**
@@ -803,7 +803,7 @@ public interface IgniteCacheOffheapManager {
         public void updateBatch(
             GridCacheContext cctx,
             List<KeyCacheObject> keys,
-            Map<KeyCacheObject, GridCacheEntryEx> items) throws IgniteCheckedException;
+            Map<KeyCacheObject, GridCacheEntryInfo> items) throws IgniteCheckedException;
 
         /**
          * @param cctx Cache context.

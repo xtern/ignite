@@ -44,7 +44,7 @@ public abstract class AbstractDataLeafIO extends BPlusLeafIO<CacheSearchRow> imp
 
     /** {@inheritDoc} */
     @Override public void storeByOffset(long pageAddr, int off, CacheSearchRow row) {
-        assert row.link() != 0;
+        assert row.link() != 0 : row.hashCode();
 
         PageUtils.putLong(pageAddr, off, row.link());
         off += 8;

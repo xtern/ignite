@@ -584,10 +584,16 @@ public abstract class AbstractFreeList<T extends Storable> extends PagesList imp
 
                 long pageId = 0L;
 
-                if (remaining < MIN_SIZE_FOR_DATA_PAGE)
+//                if (written > 0)
+                System.out.println(">xxx> remain=" + remaining + " hash=" + row.hashCode() + ", written=" + written);
+
+                if (remaining >= MIN_SIZE_FOR_DATA_PAGE)
                     pageId = takeEmptyPage(REUSE_BUCKET, ioVersions(), statHolder);
                 else
                     break;
+
+                if (remaining == MIN_SIZE_FOR_DATA_PAGE)
+                    System.out.println(">xxx> that's it - writing tail " + row.hashCode());
 
                 AbstractDataPageIO<T> initIo = null;
 
@@ -628,9 +634,15 @@ public abstract class AbstractFreeList<T extends Storable> extends PagesList imp
                 if (row.size() > maxDataSize)
                     written = row.size() - (row.size() % maxDataSize);
 
+                System.out.println("already written " + written + " hash="+row.hashCode());
+
                 written = write(pageId, writeRow, initIo, row, written, FAIL_I, statHolder);
 
+                System.out.println("written " + written + " hash="+row.hashCode());
+
                 assert written != FAIL_I; // We can't fail here.
+
+                assert written == COMPLETE : written;
             }
         }
 

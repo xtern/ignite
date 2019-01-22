@@ -968,14 +968,14 @@ public class GridDhtPartitionDemander {
 
                 // todo think about sorting keys.
                 List<KeyCacheObject> keys = new ArrayList<>(mapEntries.getValue().size());
-                Map<KeyCacheObject, GridCacheEntryEx> keyToEntry = new HashMap<>(U.capacity(mapEntries.getValue().size()));
+                Map<KeyCacheObject, GridCacheEntryInfo> keyToEntry = new HashMap<>(U.capacity(mapEntries.getValue().size()));
 
                 for (T2<GridCacheMapEntry, GridCacheEntryInfo> pair : mapEntries.getValue()) {
                     KeyCacheObject key = pair.getValue().key();
 
                     keys.add(key);
 
-                    keyToEntry.put(key, pair.getKey());
+                    keyToEntry.put(key, pair.getValue());
                 }
 
                 cctx.offheap().updateBatch(cctx, keys, part, keyToEntry);
