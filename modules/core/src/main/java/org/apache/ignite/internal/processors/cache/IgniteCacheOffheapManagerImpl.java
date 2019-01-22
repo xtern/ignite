@@ -1710,51 +1710,16 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
                 }
             }
 
-            int pageSize = cctx.dataRegion().pageMemory().pageSize();
-
-            int maxDataSize = pageSize - AbstractDataPageIO.MIN_DATA_PAGE_OVERHEAD;
-
-            // rows <-> count of pages needed
-            T2<List<DataRow>, Integer> large = new  T2<>(new ArrayList<>(), 0);
-
-
-
-            // tail from large objects (sizes)
-//            List<DataRow> tails = new ArrayList<>();
-
-            // other objects
-            List<T2<Integer, DataRow>> rows = new ArrayList<>();
-
             // New.
+            List<DataRow> dataRows = new ArrayList<>(insertKeys.size());
+
             for (KeyCacheObject key : insertKeys) {
                 GridCacheEntryEx entry = items.get(key);
 
                 try {
-
-                    DataRow dataRow = makeDataRow(key, entry.valueBytes(),
-                        entry.version(),
-                        entry.expireTime(), cacheId);
-
-                    // todo bin packing by pages
-                    // 1. split into 3 bags
-                    //  A. Larger then pages +
-                    //    B. Tails
-                    //  C. Other objects
-
-                    if (dataRow.size() < maxDataSize)
-                        rows.add(new T2<>(dataRow.size(), dataRow));
-                    else {
-                        large.getKey().add(dataRow);
-
-                        large.setValue(large.getValue() + (dataRow.size() / maxDataSize));
-
-                        int tailSize = dataRow.size() % maxDataSize;
-
-                        if (tailSize > 0)
-                            rows.add(new T2<>(tailSize, dataRow));
-                    }
+                    dataRows.add(makeDataRow(key, entry.valueBytes(), entry.version(), entry.expireTime(), cacheId));
 //                    if (dataRow)
-                    // todo how splitted large objects
+                    // todo how large objects splits
 //                    CacheDataRow newRow = createRow(
 //                        cctx,
 //                        key,
@@ -1769,74 +1734,15 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
                 }
             }
 
-            //
-            rows.sort(Comparator.comparing(IgniteBiTuple::getKey));
+            rowStore.freeList().insertBatch(dataRows, grp.statisticsHolderData());
 
-//            int[] smallObjs = new int[tails.size() + rows.size()];
-//
-//            int cntr = 0;
-//
-//            for (int objSize : tails)
-//                smallObjs[cntr++] = objSize;
-//
-//            for (CacheDataRow row : rows)
-//                smallObjs[cntr++] = row.size();
 
-            // Page -> list of indexes
-            List<List<DataRow>> bins = binPack(rows, maxDataSize);
 
-            //
-            int total = large.getValue() + bins.size();
+
+//            rowStore.freeList().batchInsert();
+            //cctx.
 
         }
-
-        // todo move out
-        private List<List<DataRow>> binPack(List<T2<Integer, DataRow>> rows, int cap) {
-            // Initialize result (Count of bins)
-            int cnt = 0;
-
-            // Result.
-            List<List<DataRow>> bins = new ArrayList<>();
-
-            // Create an array to store remaining space in bins
-            // there can be at most n bins
-            int[] remains = new int[rows.size()];
-
-            // Place items one by one
-            for (int i = (rows.size() - 1); i >= 0; i--) {
-                // Find the first bin that can accommodate weight[i]
-                int j;
-
-                int size = rows.get(i).getKey();
-
-                for (j = 0; j < cnt; j++) {
-                    if (remains[j] >= size) {
-                        remains[j] -= size;
-
-                        bins.get(j).add(rows.get(i).getValue());
-
-                        break;
-                    }
-                }
-
-                // If no bin could accommodate sizes[i].
-                if (j == cnt) {
-                    remains[cnt] = cap - size;
-
-                    List<DataRow> list = new ArrayList<>();
-
-                    bins.add(list);
-
-                    list.add(rows.get(i).getValue());
-
-                    cnt++;
-                }
-            }
-
-            return bins;
-        }
-
-        //compare(KeyCac)
 
         /**
          * @param cctx Cache context.

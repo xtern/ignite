@@ -17,6 +17,10 @@
 
 package org.apache.ignite.internal.processors.cache.persistence.freelist;
 
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Comparator;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicReferenceArray;
 import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.IgniteLogger;
@@ -40,9 +44,12 @@ import org.apache.ignite.internal.processors.cache.persistence.tree.reuse.LongLi
 import org.apache.ignite.internal.processors.cache.persistence.tree.reuse.ReuseBag;
 import org.apache.ignite.internal.processors.cache.persistence.tree.reuse.ReuseList;
 import org.apache.ignite.internal.processors.cache.persistence.tree.util.PageHandler;
+import org.apache.ignite.internal.processors.cache.tree.DataRow;
 import org.apache.ignite.internal.stat.IoStatisticsHolder;
 import org.apache.ignite.internal.stat.IoStatisticsHolderNoOp;
+import org.apache.ignite.internal.util.typedef.T2;
 import org.apache.ignite.internal.util.typedef.internal.U;
+import org.apache.ignite.lang.IgniteBiTuple;
 
 /**
  */
@@ -507,6 +514,98 @@ public abstract class AbstractFreeList<T extends Storable> extends PagesList imp
             assert written != FAIL_I; // We can't fail here.
         }
         while (written != COMPLETE);
+    }
+
+    /** {@inheritDoc} */
+    @Override public void insertBatch(Collection<T> rows, IoStatisticsHolder statHolder) throws IgniteCheckedException {
+        // todo bin packaging by pages
+        // 1. split into 3 bags
+        //  A. Large objects.
+        //  B1. Tails of large objects
+        //  B2. small objects
+
+        //int pageSize = cctx.dataRegion().pageMemory().pageSize();
+
+        // Max bytes per data page.
+        int maxDataSize = pageSize() - AbstractDataPageIO.MIN_DATA_PAGE_OVERHEAD;
+
+        // Data rows <-> count of pages needed
+        List<T> largeRows = new ArrayList<>();
+
+        int largePagesCnt = 0;
+
+        // other objects
+        List<T2<Integer, T>> regular = new ArrayList<>();
+
+        for (T dataRow : rows) {
+            if (dataRow.size() < maxDataSize)
+                regular.add(new T2<>(dataRow.size(), dataRow));
+            else {
+                largeRows.add(dataRow);
+
+                largePagesCnt += (dataRow.size() / maxDataSize);
+
+                int tailSize = dataRow.size() % maxDataSize;
+
+                if (tailSize > 0)
+                    regular.add(new T2<>(tailSize, dataRow));
+            }
+
+            // Sort objects by size;
+            regular.sort(Comparator.comparing(IgniteBiTuple::getKey));
+            // Page -> list of indexes
+            List<List<T>> bins = binPack(regular, maxDataSize);
+
+            //
+            int totalPages = largePagesCnt + bins.size();
+        }
+    }
+
+    // todo move out
+    // todo experiment with "bestfit" approach
+    private List<List<T>> binPack(List<T2<Integer, T>> rows, int cap) {
+        // Initialize result (Count of bins)
+        int cnt = 0;
+
+        // Result.
+        List<List<T>> bins = new ArrayList<>();
+
+        // Create an array to store remaining space in bins
+        // there can be at most n bins
+        int[] remains = new int[rows.size()];
+
+        // Place items one by one
+        for (int i = (rows.size() - 1); i >= 0; i--) {
+            // Find the first bin that can accommodate weight[i]
+            int j;
+
+            int size = rows.get(i).getKey();
+
+            for (j = 0; j < cnt; j++) {
+                if (remains[j] >= size) {
+                    remains[j] -= size;
+
+                    bins.get(j).add(rows.get(i).getValue());
+
+                    break;
+                }
+            }
+
+            // If no bin could accommodate sizes[i].
+            if (j == cnt) {
+                remains[cnt] = cap - size;
+
+                List<T> list = new ArrayList<>();
+
+                bins.add(list);
+
+                list.add(rows.get(i).getValue());
+
+                cnt++;
+            }
+        }
+
+        return bins;
     }
 
     /**

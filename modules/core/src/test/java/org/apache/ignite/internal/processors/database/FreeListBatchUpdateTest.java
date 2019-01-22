@@ -116,6 +116,10 @@ public class FreeListBatchUpdateTest extends GridCommonAbstractTest {
         }
     }
 
+    public void checkFreeList() {
+
+    }
+
     /** */
     private Map<Integer, Object> randomData(int start, int size, int maxObjSize) {
         Map<Integer, Object> res = new HashMap<>();
