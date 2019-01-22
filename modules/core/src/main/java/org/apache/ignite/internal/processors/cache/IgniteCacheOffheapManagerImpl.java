@@ -1661,15 +1661,13 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
             invoke0(cctx, new SearchRow(cacheId, key), c);
         }
 
-        @Override public void invokeAll(
+        @Override public void updateBatch(
             GridCacheContext cctx,
             List<KeyCacheObject> keys,
             Map<KeyCacheObject, GridCacheEntryEx> items
 //            OffheapInvokeClosure c
         ) throws IgniteCheckedException {
             // todo ensure sorted
-//            Set<KeyCacheObject> keys = items.keySet();
-
             int size = keys.size();
 
             int cacheId = grp.sharedGroup() ? cctx.cacheId() : CU.UNDEFINED_CACHE_ID;
@@ -1680,8 +1678,6 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
             assert last.hashCode() >= first.hashCode() : "Keys not sorted by hash: first=" + first.hashCode() + ", last=" + last.hashCode();
 
             GridCursor<CacheDataRow> cur = dataTree.find(new SearchRow(cacheId, first), new SearchRow(cacheId, last));
-
-//            Iterator<KeyCacheObject> keyIter = keys.iterator();
 
             // todo bench perf linked vs not-linked
             Map<KeyCacheObject, CacheDataRow> updateKeys = new LinkedHashMap<>();
@@ -1717,16 +1713,9 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
                 GridCacheEntryEx entry = items.get(key);
 
                 try {
-                    dataRows.add(makeDataRow(key, entry.valueBytes(), entry.version(), entry.expireTime(), cacheId));
-//                    if (dataRow)
-                    // todo how large objects splits
-//                    CacheDataRow newRow = createRow(
-//                        cctx,
-//                        key,
-//                        entry.valueBytes(),
-//                        entry.version(),
-//                        entry.expireTime(),
-//                        null);
+                    DataRow row = makeDataRow(key, entry.valueBytes(), entry.version(), entry.expireTime(), cacheId);
+
+                    dataRows.add(row);
                 }
                 catch (GridCacheEntryRemovedException ex) {
                     // todo
@@ -1736,8 +1725,8 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
 
             rowStore.freeList().insertBatch(dataRows, grp.statisticsHolderData());
 
-
-
+            for (DataRow row : dataRows)
+                dataTree.put(row);
 
 //            rowStore.freeList().batchInsert();
             //cctx.

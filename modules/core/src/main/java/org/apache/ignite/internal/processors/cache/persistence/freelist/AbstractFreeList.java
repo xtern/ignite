@@ -20,7 +20,9 @@ package org.apache.ignite.internal.processors.cache.persistence.freelist;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicReferenceArray;
 import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.IgniteLogger;
@@ -32,6 +34,7 @@ import org.apache.ignite.internal.pagemem.wal.record.delta.DataPageInsertFragmen
 import org.apache.ignite.internal.pagemem.wal.record.delta.DataPageInsertRecord;
 import org.apache.ignite.internal.pagemem.wal.record.delta.DataPageRemoveRecord;
 import org.apache.ignite.internal.pagemem.wal.record.delta.DataPageUpdateRecord;
+import org.apache.ignite.internal.processors.cache.persistence.CacheDataRow;
 import org.apache.ignite.internal.processors.cache.persistence.DataRegion;
 import org.apache.ignite.internal.processors.cache.persistence.DataRegionMetricsImpl;
 import org.apache.ignite.internal.processors.cache.persistence.Storable;
@@ -47,7 +50,9 @@ import org.apache.ignite.internal.processors.cache.persistence.tree.util.PageHan
 import org.apache.ignite.internal.processors.cache.tree.DataRow;
 import org.apache.ignite.internal.stat.IoStatisticsHolder;
 import org.apache.ignite.internal.stat.IoStatisticsHolderNoOp;
+import org.apache.ignite.internal.util.lang.GridTuple3;
 import org.apache.ignite.internal.util.typedef.T2;
+import org.apache.ignite.internal.util.typedef.T3;
 import org.apache.ignite.internal.util.typedef.internal.U;
 import org.apache.ignite.lang.IgniteBiTuple;
 
@@ -535,11 +540,11 @@ public abstract class AbstractFreeList<T extends Storable> extends PagesList imp
         int largePagesCnt = 0;
 
         // other objects
-        List<T2<Integer, T>> regular = new ArrayList<>();
+        List<T3<Integer, T, Boolean>> regular = new ArrayList<>();
 
         for (T dataRow : rows) {
             if (dataRow.size() < maxDataSize)
-                regular.add(new T2<>(dataRow.size(), dataRow));
+                regular.add(new T3<>(dataRow.size(), dataRow, false));
             else {
                 largeRows.add(dataRow);
 
@@ -548,22 +553,92 @@ public abstract class AbstractFreeList<T extends Storable> extends PagesList imp
                 int tailSize = dataRow.size() % maxDataSize;
 
                 if (tailSize > 0)
-                    regular.add(new T2<>(tailSize, dataRow));
+                    regular.add(new T3<>(tailSize, dataRow, true));
             }
-
-            // Sort objects by size;
-            regular.sort(Comparator.comparing(IgniteBiTuple::getKey));
-            // Page -> list of indexes
-            List<List<T>> bins = binPack(regular, maxDataSize);
-
-            //
-            int totalPages = largePagesCnt + bins.size();
         }
+
+        // Sort objects by size;
+        regular.sort(Comparator.comparing(GridTuple3::get1));
+        // Page -> list of indexes
+
+        // Mapping from row to bin index.
+        Map<T, Integer> binMap = new HashMap<>();
+
+        List<List<T>> bins = binPack(regular, maxDataSize, binMap);
+        //
+        int totalPages = largePagesCnt + bins.size();
+
+        System.out.println(">xxx> total pages required: " + totalPages);
+
+        // Writing large objects.
+        for (T row : largeRows) {
+            int rowSize = row.size();
+
+            int written = 0;
+
+            do {
+                if (written != 0)
+                    memMetrics.incrementLargeEntriesPages();
+
+                int remaining = rowSize - written;
+
+                long pageId = 0L;
+
+                if (remaining < MIN_SIZE_FOR_DATA_PAGE)
+                    pageId = takeEmptyPage(REUSE_BUCKET, ioVersions(), statHolder);
+                else
+                    break;
+
+                AbstractDataPageIO<T> initIo = null;
+
+                if (pageId == 0L) {
+                    pageId = allocateDataPage(row.partition());
+
+                    initIo = ioVersions().latest();
+                }
+                else if (PageIdUtils.tag(pageId) != PageIdAllocator.FLAG_DATA)
+                    pageId = initReusedPage(pageId, row.partition(), statHolder);
+                else
+                    pageId = PageIdUtils.changePartitionId(pageId, (row.partition()));
+
+                written = write(pageId, writeRow, initIo, row, written, FAIL_I, statHolder);
+
+                assert written != FAIL_I; // We can't fail here.
+            }
+            while (written != COMPLETE);
+        }
+
+        // Writing remaining objects.
+        for (List<T> bin : bins) {
+            // Each bin = page.
+            long pageId = 0;
+
+            AbstractDataPageIO<T> initIo = null;
+
+            for (T row : bin) {
+                if (pageId == 0) {
+                    pageId = allocateDataPage(row.partition());
+
+                    initIo = ioVersions().latest();
+                }
+
+                int written = 0;
+
+                // Assuming that large objects was written properly.
+                if (row.size() > maxDataSize)
+                    written = row.size() - (row.size() % maxDataSize);
+
+                written = write(pageId, writeRow, initIo, row, written, FAIL_I, statHolder);
+
+                assert written != FAIL_I; // We can't fail here.
+            }
+        }
+
     }
 
     // todo move out
     // todo experiment with "bestfit" approach
-    private List<List<T>> binPack(List<T2<Integer, T>> rows, int cap) {
+    private List<List<T>> binPack(List<T3<Integer, T, Boolean>> rows, int cap, Map<T, Integer> binMap) {
         // Initialize result (Count of bins)
         int cnt = 0;
 
@@ -579,13 +654,16 @@ public abstract class AbstractFreeList<T extends Storable> extends PagesList imp
             // Find the first bin that can accommodate weight[i]
             int j;
 
-            int size = rows.get(i).getKey();
+            int size = rows.get(i).get1();
 
             for (j = 0; j < cnt; j++) {
                 if (remains[j] >= size) {
                     remains[j] -= size;
 
-                    bins.get(j).add(rows.get(i).getValue());
+                    T row = rows.get(i).get2();
+
+                    bins.get(j).add(row);
+                    binMap.put(row, j);
 
                     break;
                 }
@@ -599,7 +677,11 @@ public abstract class AbstractFreeList<T extends Storable> extends PagesList imp
 
                 bins.add(list);
 
-                list.add(rows.get(i).getValue());
+                T row = rows.get(i).get2();
+
+                list.add(row);
+
+                binMap.put(row, j);
 
                 cnt++;
             }

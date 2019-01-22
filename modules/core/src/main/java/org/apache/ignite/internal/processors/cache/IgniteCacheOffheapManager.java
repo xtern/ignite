@@ -791,6 +791,17 @@ public interface IgniteCacheOffheapManager {
 
         /**
          * @param cctx Cache context.
+         * @param keys Sorted keys.
+         * @param items todo
+         * @throws IgniteCheckedException If failed.
+         */
+        public void updateBatch(
+            GridCacheContext cctx,
+            List<KeyCacheObject> keys,
+            Map<KeyCacheObject, GridCacheEntryEx> items) throws IgniteCheckedException;
+
+        /**
+         * @param cctx Cache context.
          * @param key Key.
          * @param val Value.
          * @param ver Version.
@@ -969,16 +980,6 @@ public interface IgniteCacheOffheapManager {
          * @throws IgniteCheckedException If failed.
          */
         public void invoke(GridCacheContext cctx, KeyCacheObject key, OffheapInvokeClosure c) throws IgniteCheckedException;
-
-        /**
-         * @param cctx Cache context.
-         * @param keys Keys.
-         * @param items todo
-         * @throws IgniteCheckedException If failed.
-         */
-        public void invokeAll(GridCacheContext cctx,
-            List<KeyCacheObject> keys,
-            Map<KeyCacheObject, GridCacheEntryEx> items) throws IgniteCheckedException;
 
         /**
          *

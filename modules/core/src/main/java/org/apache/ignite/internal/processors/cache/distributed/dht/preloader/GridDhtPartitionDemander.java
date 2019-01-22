@@ -1093,162 +1093,162 @@ public class GridDhtPartitionDemander {
     }
 
 
-    private void experimental() {
-        // abstraction
+//    private void experimental() {
+//        // abstraction
+//
+//        Collection<GridCacheMapEntry> entries;
+//
+//        Collection<KeyCacheObject> keys = null;
+//
+//        GridCacheContext cctx;
+//
+//        GridDhtLocalPartition part = null;
+//
+////        UpdateAllClosure closure;
+//
+//        // invokeRange
+//        cctx.offheap().invokeAll(cctx, keys, part, closure);
+//        //cctx.offheap().dataStore(part).c
+//    }
 
-        Collection<GridCacheMapEntry> entries;
-
-        Collection<KeyCacheObject> keys = null;
-
-        GridCacheContext cctx;
-
-        GridDhtLocalPartition part = null;
-
-        UpdateAllClosure closure;
-
-        // invokeRange
-        cctx.offheap().invokeAll(cctx, keys, part, closure);
-        //cctx.offheap().dataStore(part).c
-    }
-
-    /**
-     *
-     */
-    public static class UpdateAllClosure implements IgniteCacheOffheapManager.OffheapInvokeClosure {
-        /** */
-        private final GridCacheMapEntry entry;
-
-        /** */
-        @Nullable private final CacheObject val;
-
-        /** */
-        private final GridCacheVersion ver;
-
-        /** */
-        private final long expireTime;
-
-        /** */
-        @Nullable private final IgnitePredicate<CacheDataRow> predicate;
-
-        /** */
-        private CacheDataRow newRow;
-
-        /** */
-        private CacheDataRow oldRow;
-
-        /** */
-        private IgniteTree.OperationType treeOp = IgniteTree.OperationType.PUT;
-
-        /**
-         * @param entry Entry.
-         * @param val New value.
-         * @param ver New version.
-         * @param expireTime New expire time.
-         * @param predicate Optional predicate.
-         */
-        public UpdateClosure(GridCacheMapEntry entry, @Nullable CacheObject val, GridCacheVersion ver, long expireTime,
-            @Nullable IgnitePredicate<CacheDataRow> predicate) {
-            this.entry = entry;
-            this.val = val;
-            this.ver = ver;
-            this.expireTime = expireTime;
-            this.predicate = predicate;
-        }
-
-        /** {@inheritDoc} */
-        @Override public void call(@Nullable CacheDataRow oldRow) throws IgniteCheckedException {
-            if (oldRow != null) {
-                oldRow.key(entry.key);
-
-                oldRow = checkRowExpired(oldRow);
-            }
-
-            this.oldRow = oldRow;
-
-            if (predicate != null && !predicate.apply(oldRow)) {
-                treeOp = IgniteTree.OperationType.NOOP;
-
-                return;
-            }
-
-            if (val != null) {
-                newRow = entry.cctx.offheap().dataStore(entry.localPartition()).createRow(
-                    entry.cctx,
-                    entry.key,
-                    val,
-                    ver,
-                    expireTime,
-                    oldRow);
-
-                treeOp = oldRow != null && oldRow.link() == newRow.link() ?
-                    IgniteTree.OperationType.NOOP : IgniteTree.OperationType.PUT;
-            }
-            else
-                treeOp = oldRow != null ? IgniteTree.OperationType.REMOVE : IgniteTree.OperationType.NOOP;
-        }
-
-        /** {@inheritDoc} */
-        @Override public CacheDataRow newRow() {
-            return newRow;
-        }
-
-        /** {@inheritDoc} */
-        @Override public IgniteTree.OperationType operationType() {
-            return treeOp;
-        }
-
-        /** {@inheritDoc} */
-        @Nullable @Override public CacheDataRow oldRow() {
-            return oldRow;
-        }
-
-        /**
-         * Checks row for expiration and fire expire events if needed.
-         *
-         * @param row old row.
-         * @return {@code Null} if row was expired, row itself otherwise.
-         * @throws IgniteCheckedException
-         */
-        private CacheDataRow checkRowExpired(CacheDataRow row) throws IgniteCheckedException {
-            assert row != null;
-
-            if (!(row.expireTime() > 0 && row.expireTime() < U.currentTimeMillis()))
-                return row;
-
-            GridCacheContext cctx = entry.context();
-
-            CacheObject expiredVal = row.value();
-
-            if (cctx.deferredDelete() && !entry.detached() && !entry.isInternal()) {
-                entry.update(null, CU.TTL_ETERNAL, CU.EXPIRE_TIME_ETERNAL, entry.ver, true);
-
-                if (!entry.deletedUnlocked() && !entry.isStartVersion())
-                    entry.deletedUnlocked(true);
-            }
-            else
-                entry.markObsolete0(cctx.versions().next(), true, null);
-
-            if (cctx.events().isRecordable(EVT_CACHE_OBJECT_EXPIRED)) {
-                cctx.events().addEvent(entry.partition(),
-                    entry.key(),
-                    cctx.localNodeId(),
-                    null,
-                    EVT_CACHE_OBJECT_EXPIRED,
-                    null,
-                    false,
-                    expiredVal,
-                    expiredVal != null,
-                    null,
-                    null,
-                    null,
-                    true);
-            }
-
-            cctx.continuousQueries().onEntryExpired(entry, entry.key(), expiredVal);
-
-            return null;
-        }
-    }
+//    /**
+//     *
+//     */
+//    public static class UpdateAllClosure implements IgniteCacheOffheapManager.OffheapInvokeClosure {
+//        /** */
+//        private final GridCacheMapEntry entry;
+//
+//        /** */
+//        @Nullable private final CacheObject val;
+//
+//        /** */
+//        private final GridCacheVersion ver;
+//
+//        /** */
+//        private final long expireTime;
+//
+//        /** */
+//        @Nullable private final IgnitePredicate<CacheDataRow> predicate;
+//
+//        /** */
+//        private CacheDataRow newRow;
+//
+//        /** */
+//        private CacheDataRow oldRow;
+//
+//        /** */
+//        private IgniteTree.OperationType treeOp = IgniteTree.OperationType.PUT;
+//
+//        /**
+//         * @param entry Entry.
+//         * @param val New value.
+//         * @param ver New version.
+//         * @param expireTime New expire time.
+//         * @param predicate Optional predicate.
+//         */
+//        public UpdateClosure(GridCacheMapEntry entry, @Nullable CacheObject val, GridCacheVersion ver, long expireTime,
+//            @Nullable IgnitePredicate<CacheDataRow> predicate) {
+//            this.entry = entry;
+//            this.val = val;
+//            this.ver = ver;
+//            this.expireTime = expireTime;
+//            this.predicate = predicate;
+//        }
+//
+//        /** {@inheritDoc} */
+//        @Override public void call(@Nullable CacheDataRow oldRow) throws IgniteCheckedException {
+//            if (oldRow != null) {
+//                oldRow.key(entry.key);
+//
+//                oldRow = checkRowExpired(oldRow);
+//            }
+//
+//            this.oldRow = oldRow;
+//
+//            if (predicate != null && !predicate.apply(oldRow)) {
+//                treeOp = IgniteTree.OperationType.NOOP;
+//
+//                return;
+//            }
+//
+//            if (val != null) {
+//                newRow = entry.cctx.offheap().dataStore(entry.localPartition()).createRow(
+//                    entry.cctx,
+//                    entry.key,
+//                    val,
+//                    ver,
+//                    expireTime,
+//                    oldRow);
+//
+//                treeOp = oldRow != null && oldRow.link() == newRow.link() ?
+//                    IgniteTree.OperationType.NOOP : IgniteTree.OperationType.PUT;
+//            }
+//            else
+//                treeOp = oldRow != null ? IgniteTree.OperationType.REMOVE : IgniteTree.OperationType.NOOP;
+//        }
+//
+//        /** {@inheritDoc} */
+//        @Override public CacheDataRow newRow() {
+//            return newRow;
+//        }
+//
+//        /** {@inheritDoc} */
+//        @Override public IgniteTree.OperationType operationType() {
+//            return treeOp;
+//        }
+//
+//        /** {@inheritDoc} */
+//        @Nullable @Override public CacheDataRow oldRow() {
+//            return oldRow;
+//        }
+//
+//        /**
+//         * Checks row for expiration and fire expire events if needed.
+//         *
+//         * @param row old row.
+//         * @return {@code Null} if row was expired, row itself otherwise.
+//         * @throws IgniteCheckedException
+//         */
+//        private CacheDataRow checkRowExpired(CacheDataRow row) throws IgniteCheckedException {
+//            assert row != null;
+//
+//            if (!(row.expireTime() > 0 && row.expireTime() < U.currentTimeMillis()))
+//                return row;
+//
+//            GridCacheContext cctx = entry.context();
+//
+//            CacheObject expiredVal = row.value();
+//
+//            if (cctx.deferredDelete() && !entry.detached() && !entry.isInternal()) {
+//                entry.update(null, CU.TTL_ETERNAL, CU.EXPIRE_TIME_ETERNAL, entry.ver, true);
+//
+//                if (!entry.deletedUnlocked() && !entry.isStartVersion())
+//                    entry.deletedUnlocked(true);
+//            }
+//            else
+//                entry.markObsolete0(cctx.versions().next(), true, null);
+//
+//            if (cctx.events().isRecordable(EVT_CACHE_OBJECT_EXPIRED)) {
+//                cctx.events().addEvent(entry.partition(),
+//                    entry.key(),
+//                    cctx.localNodeId(),
+//                    null,
+//                    EVT_CACHE_OBJECT_EXPIRED,
+//                    null,
+//                    false,
+//                    expiredVal,
+//                    expiredVal != null,
+//                    null,
+//                    null,
+//                    null,
+//                    true);
+//            }
+//
+//            cctx.continuousQueries().onEntryExpired(entry, entry.key(), expiredVal);
+//
+//            return null;
+//        }
+//    }
 
     /**
      * Adds {@code entry} to partition {@code p}.
