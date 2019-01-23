@@ -3090,7 +3090,7 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
             dataTree.destroy(new IgniteInClosure<CacheSearchRow>() {
                 @Override public void apply(CacheSearchRow row) {
                     try {
-                        log.info("Remove row: " + row.key().hashCode() + " link " + row.link());
+//                        log.info("Remove row: " + row.key().hashCode() + " link " + row.link());
                         rowStore.removeRow(row.link(), grp.statisticsHolderData());
                     }
                     catch (IgniteCheckedException e) {

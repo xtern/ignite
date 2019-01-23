@@ -21,6 +21,7 @@ import java.util.IdentityHashMap;
 import java.util.Map;
 import java.util.concurrent.ThreadLocalRandom;
 import org.apache.ignite.Ignite;
+import org.apache.ignite.IgniteCache;
 import org.apache.ignite.IgniteDataStreamer;
 import org.apache.ignite.cache.CacheMode;
 import org.apache.ignite.cache.affinity.rendezvous.RendezvousAffinityFunction;
@@ -59,20 +60,26 @@ public class FreeListBatchUpdateTest extends GridCommonAbstractTest {
      */
     @Test
     public void testBatchPutAll() throws Exception {
-        try (Ignite node = startGrid(0)) {
-            Map<Integer, Object> data = randomData(0, 10_000, 8192);
+        Ignite node = startGrid(0);
 
-            log.info("Loading 100k");
+        int max = 5;
 
-            try (IgniteDataStreamer<Integer, Object> streamer = node.dataStreamer(DEFAULT_CACHE_NAME)) {
-                streamer.addData(data);
-            }
+        //try () {
+        Map<Integer, Object> data = randomData(0, max, 2000);
 
-            log.info("Done");
+        node.cache(DEFAULT_CACHE_NAME).putAll(data);
 
-            data = new IdentityHashMap<>();
+//        log.info("Loading 100k");
+//
+//        try (IgniteDataStreamer<Integer, Object> streamer = node.dataStreamer(DEFAULT_CACHE_NAME)) {
+//            streamer.addData(data);
+//        }
 
-            int[] sizes = {42, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 2048};
+        log.info("Done");
+
+//        data = new IdentityHashMap<>();
+//
+//        int[] sizes = {42, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 2048};
 
 //            int sum = 0, pageSize = 4096, start = 64, idx = 0;
 //
@@ -109,12 +116,41 @@ public class FreeListBatchUpdateTest extends GridCommonAbstractTest {
 
 //            GridDhtLocalPartition.DBG = true;
 
-            try (Ignite node2 = startGrid(1)) {
-                log.info("await rebalance");
+        IgniteCache cache = node.cache(DEFAULT_CACHE_NAME);
 
-                U.sleep(15_000);
-            }
-        }
+        assert cache.size() == max : cache.size();
+
+        for (int i = 0; i < max; i++)
+            assert cache.get(i) != null : i;
+
+        IgniteEx node2 = startGrid(1);
+
+        log.info("await rebalance");
+
+        for (IgniteInternalCache cache0 : node2.context().cache().caches())
+            cache0.context().preloader().rebalanceFuture().get();
+
+        log.info("starting verification on node2");
+
+        cache = node2.cache(DEFAULT_CACHE_NAME);
+
+        assert cache.size() == max : cache.size();
+
+        for (int i = 0; i < max; i++)
+            assert cache.get(i) != null : i;
+
+        log.info("stop crd");
+
+        stopGrid(0);
+
+        log.info("There is someone following you");
+
+        U.sleep(3_000);
+
+        log.info("Stopping last standing");
+
+        stopGrid(0);
+//        }
     }
 
     @Test

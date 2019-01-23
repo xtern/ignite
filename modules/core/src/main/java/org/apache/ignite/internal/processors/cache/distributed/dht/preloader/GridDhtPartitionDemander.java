@@ -468,8 +468,8 @@ public class GridDhtPartitionDemander {
                 parts = fut.remaining.get(node.id());
 
                 U.log(log, "Prepared rebalancing [grp=" + grp.cacheOrGroupName()
-                        + ", mode=" + cfg.getRebalanceMode() + ", supplier=" + node.id() + ", partitionsCount=" + parts.size()
-                        + ", topVer=" + fut.topologyVersion() + ", parallelism=" + totalStripes + "]");
+                    + ", mode=" + cfg.getRebalanceMode() + ", supplier=" + node.id() + ", partitionsCount=" + parts.size()
+                    + ", topVer=" + fut.topologyVersion() + ", parallelism=" + totalStripes + "]");
             }
 
             int stripes = totalStripes;
@@ -798,6 +798,7 @@ public class GridDhtPartitionDemander {
 //                                                cctx.cache().metrics0().onRebalanceKeyReceived();
 //                                        }
 //                                    }
+
                                     List<GridCacheEntryInfo> infosBatch = new ArrayList<>(100);
 
                                     for (int i = 0; i < 100; i++) {
@@ -807,7 +808,8 @@ public class GridDhtPartitionDemander {
                                         infosBatch.add(infos.next());
                                     }
 
-                                    preloadEntries(node, p, infosBatch, topVer);
+                                    //preloadEntries(node, p, infosBatch, topVer);
+                                    preloadEntries0(node, p, infosBatch, topVer);
 
                                     // todo update mtrics properly
                                     for (GridCacheContext cctx : grp.caches()) {
@@ -1203,6 +1205,7 @@ public class GridDhtPartitionDemander {
                                 else
                                     update0 = isStartVer;
 
+                                log.info("pred : " + update0);
                                 return update0;
                             }
                         };
@@ -1232,8 +1235,7 @@ public class GridDhtPartitionDemander {
 
 //                            this.oldRow = oldRow;
 
-                            if (pred != null && !pred.apply(oldRow))
-                                continue;
+
 
                             if (val != null) {
 //                                CacheDataRow newRow = cctx.offheap().dataStore(part).createRow(
@@ -1266,9 +1268,11 @@ public class GridDhtPartitionDemander {
                             }
                         }
                         else {
+//                            if (pred != null && !pred.apply(oldRow))
+//                                continue;
                             cctx.offheap().invoke(cctx, entry.key(), part, closure);
 
-                            update = closure.operationType() == IgniteTree.OperationType.NOOP;
+                            update = closure.operationType() != IgniteTree.OperationType.NOOP;
                         }
 
                         if (update) {
@@ -1825,10 +1829,10 @@ public class GridDhtPartitionDemander {
                     int remainingRoutines = remaining.size() - 1;
 
                     U.log(log, "Completed " + ((remainingRoutines == 0 ? "(final) " : "") +
-                            "rebalancing [grp=" + grp.cacheOrGroupName() +
-                            ", supplier=" + nodeId +
-                            ", topVer=" + topologyVersion() +
-                            ", progress=" + (routines - remainingRoutines) + "/" + routines + "]"));
+                        "rebalancing [grp=" + grp.cacheOrGroupName() +
+                        ", supplier=" + nodeId +
+                        ", topVer=" + topologyVersion() +
+                        ", progress=" + (routines - remainingRoutines) + "/" + routines + "]"));
 
                     remaining.remove(nodeId);
                 }
@@ -1932,3 +1936,4 @@ public class GridDhtPartitionDemander {
         }
     }
 }
+
