@@ -691,6 +691,8 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
 
         CacheDataRow row = dataStore != null ? dataStore.find(cctx, key) : null;
 
+        log.info(">xxx> Key=" + key + " dataStore=" + dataStore + " row=" + row);
+
         assert row == null || row.value() != null : row;
 
         return row;
@@ -1718,9 +1720,13 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
                 GridCacheEntryInfo entry = items.get(key);
 
 
+                CacheObject val = entry.value();
+                val.valueBytes(cctx.cacheObjectContext());
+                key.valueBytes(cctx.cacheObjectContext());
 
 //                try {
-                    DataRow row = makeDataRow(key, entry.value(), entry.version(), entry.expireTime(), cacheId);
+                long expTime = entry.ttl() < 0 ? CU.toExpireTime(entry.ttl()) : entry.ttl();
+                    DataRow row = makeDataRow(key, val, entry.version(), expTime, cacheId);
 
                     assert row.value() != null : key.hashCode();
 
@@ -1735,10 +1741,18 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
             }
 
             rowStore.freeList().insertBatch(dataRows, grp.statisticsHolderData());
+//            , (row) -> {
+//                try {
+//                    log.info(">xxx> insert row " + row.hashCode());
+//                    dataTree.putx((CacheDataRow)row);
+//                } catch (IgniteCheckedException ex) {
+//                    ex.printStackTrace();
+//                }
+//            });
 
             log.info("Update BTree");
             for (DataRow row : dataRows) {
-                log.info("hash " + row.hashCode());
+//                log.info("hash " + row.hashCode());
 
                 dataTree.putx(row);
             }

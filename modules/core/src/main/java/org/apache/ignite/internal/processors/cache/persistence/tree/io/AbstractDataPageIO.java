@@ -31,6 +31,7 @@ import org.apache.ignite.internal.processors.cache.persistence.Storable;
 import org.apache.ignite.internal.processors.cache.persistence.tree.util.PageHandler;
 import org.apache.ignite.internal.util.GridStringBuilder;
 import org.apache.ignite.internal.util.typedef.internal.SB;
+import org.apache.ignite.internal.util.typedef.internal.U;
 import org.jetbrains.annotations.Nullable;
 
 import static org.apache.ignite.internal.util.GridUnsafe.bufferAddress;
@@ -807,6 +808,9 @@ public abstract class AbstractDataPageIO<T extends Storable> extends PageIO impl
         int fullEntrySize = getPageEntrySize(rowSize, SHOW_PAYLOAD_LEN | SHOW_ITEM);
 
         int directCnt = getDirectCount(pageAddr);
+
+        System.out.println(">xxx> pageAddr="+pageAddr+", but dirCnt="+directCnt);
+
         int indirectCnt = getIndirectCount(pageAddr);
 
         int dataOff = getDataOffsetForWrite(pageAddr, fullEntrySize, directCnt, indirectCnt, pageSize);
@@ -814,6 +818,8 @@ public abstract class AbstractDataPageIO<T extends Storable> extends PageIO impl
         writeRowData(pageAddr, dataOff, rowSize, row, true);
 
         int itemId = addItem(pageAddr, fullEntrySize, directCnt, indirectCnt, dataOff, pageSize);
+
+        System.out.println(">xxx> link pageId="+pageId + ", itemId="+itemId);
 
         setLinkByPageId(row, pageId, itemId);
     }
@@ -892,6 +898,8 @@ public abstract class AbstractDataPageIO<T extends Storable> extends PageIO impl
         setFirstEntryOffset(pageAddr, dataOff, pageSize);
 
         int itemId = insertItem(pageAddr, dataOff, directCnt, indirectCnt, pageSize);
+
+//        System.out.println(">xxx> pageAddr=" + pageAddr + "itemId=" + itemId + ", off=" + dataOff + ", cnt=" + directCnt + ", indcnt=" + indirectCnt);
 
         assert checkIndex(itemId) : itemId;
         assert getIndirectCount(pageAddr) <= getDirectCount(pageAddr);
@@ -1104,6 +1112,9 @@ public abstract class AbstractDataPageIO<T extends Storable> extends PageIO impl
         setItem(pageAddr, directCnt, directItemFromOffset(dataOff));
 
         setDirectCount(pageAddr, directCnt + 1);
+
+        System.out.println("pageAddr " + pageAddr + " directCnt="+getDirectCount(pageAddr));
+
         assert getDirectCount(pageAddr) == directCnt + 1;
 
         return directCnt; // Previous directCnt will be our itemId.

@@ -55,6 +55,7 @@ import org.apache.ignite.internal.util.typedef.T2;
 import org.apache.ignite.internal.util.typedef.T3;
 import org.apache.ignite.internal.util.typedef.internal.U;
 import org.apache.ignite.lang.IgniteBiTuple;
+import org.apache.ignite.lang.IgniteInClosure;
 
 /**
  */
@@ -168,6 +169,8 @@ public abstract class AbstractFreeList<T extends Storable> extends PagesList imp
             assert oldFreeSpace > 0 : oldFreeSpace;
 
             // If the full row does not fit into this page write only a fragment.
+            System.out.println(">xxx> free=" + oldFreeSpace + ", rowSize=" + rowSize + " hash=" + row.hashCode());
+
             written = (written == 0 && oldFreeSpace >= rowSize) ? addRow(pageId, page, pageAddr, io, row, rowSize) :
                 addRowFragment(pageId, page, pageAddr, io, row, written, rowSize);
 
@@ -246,6 +249,8 @@ public abstract class AbstractFreeList<T extends Storable> extends PagesList imp
             int written,
             int rowSize
         ) throws IgniteCheckedException {
+//            assert false : "We cannot be here!";
+
             // Read last link before the fragment write, because it will be updated there.
             long lastLink = row.link();
 
@@ -564,7 +569,7 @@ public abstract class AbstractFreeList<T extends Storable> extends PagesList imp
         // Mapping from row to bin index.
         Map<T, Integer> binMap = new HashMap<>();
 
-        List<List<T>> bins = binPack(regular, maxDataSize, binMap);
+        List<T2<List<T>, Integer>> bins = binPack(regular, maxDataSize, binMap);
         //
         int totalPages = largePagesCnt + bins.size();
 
@@ -615,18 +620,43 @@ public abstract class AbstractFreeList<T extends Storable> extends PagesList imp
         }
 
         // Writing remaining objects.
-        for (List<T> bin : bins) {
-            // Each bin = page.
+        for (T2<List<T>, Integer> bin : bins) {
             long pageId = 0;
 
-            AbstractDataPageIO<T> initIo = null;
+            int remaining = bin.get2();
 
-            for (T row : bin) {
+            System.out.println(">xxx> remaining: " + remaining + ", cnt="+bin.get1().size());
+
+//            for (int b = remaining < MIN_SIZE_FOR_DATA_PAGE ? bucket(remaining, false) + 1 : REUSE_BUCKET; b < BUCKETS; b++) {
+//                pageId = takeEmptyPage(b, ioVersions(), statHolder);
+//
+//                if (pageId != 0L)
+//                    break;
+//            }
+//            }
+
+            for (T row : bin.get1()) {
+
+                AbstractDataPageIO<T> initIo = null;
+
                 if (pageId == 0) {
                     pageId = allocateDataPage(row.partition());
 
+                    System.out.println("alloc page " + pageId);
+
                     initIo = ioVersions().latest();
+                } else if (PageIdUtils.tag(pageId) != PageIdAllocator.FLAG_DATA) {
+                    System.out.println("reuse page...");
+                    pageId = initReusedPage(pageId, row.partition(), statHolder);
+                } else {
+
+
+                    pageId = PageIdUtils.changePartitionId(pageId, row.partition());
+
+                    System.out.println("change part " + pageId);
                 }
+
+                assert pageId != 0;
 
                 int written = 0;
 
@@ -634,11 +664,13 @@ public abstract class AbstractFreeList<T extends Storable> extends PagesList imp
                 if (row.size() > maxDataSize)
                     written = row.size() - (row.size() % maxDataSize);
 
-                System.out.println("already written " + written + " hash="+row.hashCode());
+//                System.out.println("already written " + written + " hash="+row.hashCode());
+
+                System.out.println(">xxx> hash=" + row.hashCode() + " page=" + pageId);
 
                 written = write(pageId, writeRow, initIo, row, written, FAIL_I, statHolder);
 
-                System.out.println("written " + written + " hash="+row.hashCode());
+//                System.out.println("written " + written + " hash="+row.hashCode());
 
                 assert written != FAIL_I; // We can't fail here.
 
@@ -650,12 +682,12 @@ public abstract class AbstractFreeList<T extends Storable> extends PagesList imp
 
     // todo move out
     // todo experiment with "bestfit" approach
-    private List<List<T>> binPack(List<T3<Integer, T, Boolean>> rows, int cap, Map<T, Integer> binMap) {
+    private List<T2<List<T>, Integer>> binPack(List<T3<Integer, T, Boolean>> rows, int cap, Map<T, Integer> binMap) {
         // Initialize result (Count of bins)
         int cnt = 0;
 
         // Result.
-        List<List<T>> bins = new ArrayList<>();
+        List<T2<List<T>, Integer>> bins = new ArrayList<>();
 
         // Create an array to store remaining space in bins
         // there can be at most n bins
@@ -666,7 +698,7 @@ public abstract class AbstractFreeList<T extends Storable> extends PagesList imp
             // Find the first bin that can accommodate weight[i]
             int j;
 
-            int size = rows.get(i).get1();
+            int size = rows.get(i).get1() + 4; // +pointer?
 
             for (j = 0; j < cnt; j++) {
                 if (remains[j] >= size) {
@@ -674,7 +706,9 @@ public abstract class AbstractFreeList<T extends Storable> extends PagesList imp
 
                     T row = rows.get(i).get2();
 
-                    bins.get(j).add(row);
+                    bins.get(j).get1().add(row);
+                    bins.get(j).set2(bins.get(j).get2() + size);
+
                     binMap.put(row, j);
 
                     break;
@@ -687,7 +721,7 @@ public abstract class AbstractFreeList<T extends Storable> extends PagesList imp
 
                 List<T> list = new ArrayList<>();
 
-                bins.add(list);
+                bins.add(new T2<>(list, size));
 
                 T row = rows.get(i).get2();
 
@@ -772,7 +806,7 @@ public abstract class AbstractFreeList<T extends Storable> extends PagesList imp
 
         long nextLink = write(pageId, rmvRow, bag, itemId, FAIL_L, statHolder);
 
-        assert nextLink != FAIL_L; // Can't fail here.
+        assert nextLink != FAIL_L : pageId; // Can't fail here.
 
         while (nextLink != 0L) {
             memMetrics.decrementLargeEntriesPages();
