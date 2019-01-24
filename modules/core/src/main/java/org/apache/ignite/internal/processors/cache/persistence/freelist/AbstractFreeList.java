@@ -144,12 +144,14 @@ public abstract class AbstractFreeList<T extends Storable> extends PagesList imp
     }
 
     /** */
-    private final PageHandler<T, Integer> writeRow = new WriteRowHandler();
+    private final PageHandler<T, Integer> writeRow = new WriteRowHandlerFreeList();
+
+    private final PageHandler<T, Integer> writeRowUpdate = new WriteRowHandler();
 
     /**
      *
      */
-    private final class WriteRowHandler extends PageHandler<T, Integer> {
+    private class WriteRowHandler extends PageHandler<T, Integer> {
         @Override public Integer run(
             int cacheId,
             long pageId,
@@ -174,14 +176,15 @@ public abstract class AbstractFreeList<T extends Storable> extends PagesList imp
             written = (written == 0 && oldFreeSpace >= rowSize) ? addRow(pageId, page, pageAddr, io, row, rowSize) :
                 addRowFragment(pageId, page, pageAddr, io, row, written, rowSize);
 
-            // Reread free space after update.
-            int newFreeSpace = io.getFreeSpace(pageAddr);
-
-            if (newFreeSpace > MIN_PAGE_FREE_SPACE) {
-                int bucket = bucket(newFreeSpace, false);
-
-                put(null, pageId, page, pageAddr, bucket, statHolder);
-            }
+//            // Reread free space after update.
+//            int newFreeSpace = io.getFreeSpace(pageAddr);
+//
+//            if (newFreeSpace > MIN_PAGE_FREE_SPACE) {
+//                int bucket = bucket(newFreeSpace, false);
+//
+//                System.out.println(">xxx> put pageId="+pageId+", to bucket="+bucket+", free="+newFreeSpace);
+//                put(null, pageId, page, pageAddr, bucket, statHolder);
+//            }
 
             if (written == rowSize)
                 evictionTracker.touchPage(pageId);
@@ -200,7 +203,7 @@ public abstract class AbstractFreeList<T extends Storable> extends PagesList imp
          * @return Written size which is always equal to row size here.
          * @throws IgniteCheckedException If failed.
          */
-        private int addRow(
+        protected int addRow(
             long pageId,
             long page,
             long pageAddr,
@@ -240,7 +243,7 @@ public abstract class AbstractFreeList<T extends Storable> extends PagesList imp
          * @return Updated written size.
          * @throws IgniteCheckedException If failed.
          */
-        private int addRowFragment(
+        protected int addRowFragment(
             long pageId,
             long page,
             long pageAddr,
@@ -270,6 +273,35 @@ public abstract class AbstractFreeList<T extends Storable> extends PagesList imp
             }
 
             return written + payloadSize;
+        }
+    }
+
+    private class WriteRowHandlerFreeList extends WriteRowHandler {
+        @Override public Integer run(
+            int cacheId,
+            long pageId,
+            long page,
+            long pageAddr,
+            PageIO iox,
+            Boolean walPlc,
+            T row,
+            int written,
+            IoStatisticsHolder statHolder)
+            throws IgniteCheckedException {
+            written = super.run(cacheId, pageId, page, pageAddr, iox, walPlc, row, written, statHolder);
+
+            // Reread free space after update.
+            int newFreeSpace = ((AbstractDataPageIO<T>)iox).getFreeSpace(pageAddr);
+
+            if (newFreeSpace > MIN_PAGE_FREE_SPACE) {
+                int bucket = bucket(newFreeSpace, false);
+
+                System.out.println(">xxx> put pageId=" + pageId + ", to bucket=" + bucket + ", free=" + newFreeSpace);
+
+                put(null, pageId, page, pageAddr, bucket, statHolder);
+            }
+
+            return written;
         }
     }
 
@@ -573,9 +605,9 @@ public abstract class AbstractFreeList<T extends Storable> extends PagesList imp
         //
         //int totalPages = largePagesCnt + bins.size();
 
-        System.out.println("\n\n>xxx> LARGE PAGES: " + largePagesCnt);
+        System.out.println("\n\n>xxx> LARGE OBJ PAGES: " + largePagesCnt);
 
-        System.out.println(">>> ------------------[ LARGE OBJECTS] ------------");
+//        System.out.println(">>> ------------------[ LARGE OBJECTS] ------------");
         // Writing large objects.
         for (T row : largeRows) {
             int rowSize = row.size();
@@ -591,15 +623,15 @@ public abstract class AbstractFreeList<T extends Storable> extends PagesList imp
                 long pageId = 0L;
 
 //                if (written > 0)
-                System.out.println(">xxx> remain=" + remaining + " hash=" + row.hashCode() + ", written=" + written);
+//                System.out.println(">xxx> remain=" + remaining + " hash=" + row.hashCode() + ", written=" + written);
 
                 if (remaining >= MIN_SIZE_FOR_DATA_PAGE)
                     pageId = takeEmptyPage(REUSE_BUCKET, ioVersions(), statHolder);
                 else
                     break;
 
-                if (remaining == MIN_SIZE_FOR_DATA_PAGE)
-                    System.out.println(">xxx> that's it - writing tail " + row.hashCode());
+//                if (remaining == MIN_SIZE_FOR_DATA_PAGE)
+//                    System.out.println(">xxx> that's it - writing tail " + row.hashCode());
 
                 AbstractDataPageIO<T> initIo = null;
 
@@ -615,32 +647,42 @@ public abstract class AbstractFreeList<T extends Storable> extends PagesList imp
 
                 written = write(pageId, writeRow, initIo, row, written, FAIL_I, statHolder);
 
-                System.out.println(">xxx> [large] written=" + written + ", hash=" + row.hashCode());
+//                System.out.println(">xxx> [large] written=" + written + ", hash=" + row.hashCode());
 
                 assert written != FAIL_I; // We can't fail here.
             }
             while (written != COMPLETE);
         }
 
-        System.out.println("\n\n>xxx> SMALL PAGES: " + bins.size());
-        System.out.println(">>> ------------------[ TAILS ] ------------");
+        System.out.println("\n\n>xxx> SMALL OBJ PAGES: " + bins.size());
+//        System.out.println(">>> ------------------[ TAILS ] ------------");
         // Writing remaining objects.
         for (T2<List<T>, Integer> bin : bins) {
             long pageId = 0;
 
             int remaining = bin.get2();
 
-            System.out.println("\n----------------------------------------------\n>xxx> remaining page total: " + remaining + ", cnt="+bin.get1().size());
+            int buck = bucket(remaining, false) + 1;
 
-//            for (int b = remaining < MIN_SIZE_FOR_DATA_PAGE ? bucket(remaining, false) + 1 : REUSE_BUCKET; b < BUCKETS; b++) {
-//                pageId = takeEmptyPage(b, ioVersions(), statHolder);
-//
-//                if (pageId != 0L)
-//                    break;
-//            }
+            System.out.println("\n----------------------------------------------" +
+                "\n>xxx> remaining page total: " + remaining + ", cnt=" + bin.get1().size() + " bucket=" + buck);
+
+            for (int b = remaining < MIN_SIZE_FOR_DATA_PAGE ? buck : REUSE_BUCKET; b < BUCKETS; b++) {
+                pageId = takeEmptyPage(b, ioVersions(), statHolder);
+
+                if (pageId != 0L) {
+                    System.out.println(">xxx> found pageId=" + pageId + ", bucket=" + b);
+
+                    break;
+                }
+            }
 //            }
 
-            for (T row : bin.get1()) {
+
+            for (int i = 0; i < bin.get1().size(); i++){
+                T row = bin.get1().get(i);
+
+                boolean last = i == bin.get1().size() - 1;
 
                 AbstractDataPageIO<T> initIo = null;
 
@@ -671,13 +713,11 @@ public abstract class AbstractFreeList<T extends Storable> extends PagesList imp
 
 //                System.out.println("already written " + written + " hash="+row.hashCode());
 
-                written = write(pageId, writeRow, initIo, row, written, FAIL_I, statHolder);
+                written = write(pageId, last ? writeRow : writeRowUpdate, initIo, row, written, FAIL_I, statHolder);
 
-                System.out.println(">xxx> hash=" + row.hashCode() + " page=" + pageId + " written=" + (written == COMPLETE ? (row.size() % 4030) : written));
+                System.out.println(">xxx> hash=" + row.hashCode() + " page=" + pageId + " written=" + (written == COMPLETE ? (row.size() % maxDataSize) : written));
 
 //                System.out.println("written " + written + " hash="+row.hashCode());
-
-                assert written != FAIL_I; // We can't fail here.
 
                 assert written == COMPLETE : written;
             }

@@ -691,7 +691,7 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
 
         CacheDataRow row = dataStore != null ? dataStore.find(cctx, key) : null;
 
-        log.info(">xxx> Key=" + key + " dataStore=" + dataStore + " row=" + row);
+//        log.info(">xxx> Key=" + key + " dataStore=" + dataStore + " row=" + row);
 
         assert row == null || row.value() != null : row;
 

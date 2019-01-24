@@ -1113,8 +1113,6 @@ public abstract class AbstractDataPageIO<T extends Storable> extends PageIO impl
 
         setDirectCount(pageAddr, directCnt + 1);
 
-
-
         System.out.println("pageAddr " + pageAddr + " directCnt="+getDirectCount(pageAddr) + " free="+getFreeSpace(pageAddr));
 
         assert getDirectCount(pageAddr) == directCnt + 1;

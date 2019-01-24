@@ -62,10 +62,10 @@ public class FreeListBatchUpdateTest extends GridCommonAbstractTest {
     public void testBatchPutAll() throws Exception {
         Ignite node = startGrid(0);
 
-        int max = 1000;
+        int max = 10_000;
 
         //try () {
-        Map<Integer, Object> data = randomData(0, max, 4096,8192);
+        Map<Integer, Object> data = randomData(0, max, 0,2048);
 
         node.cache(DEFAULT_CACHE_NAME).putAll(data);
 
@@ -148,8 +148,6 @@ public class FreeListBatchUpdateTest extends GridCommonAbstractTest {
         stopGrid(0);
 
         log.info("There is someone following you");
-
-
 
         log.info("Stopping last standing");
 
