@@ -62,14 +62,16 @@ public class FreeListBatchUpdateTest extends GridCommonAbstractTest {
     public void testBatchPutAll() throws Exception {
         Ignite node = startGrid(0);
 
-        int max = 10_000;
+        int max = 200_000;
 
         //try () {
         Map<Integer, Object> data = randomData(0, max, 0,2048);
 
+        log.info("Loading 200k");
+
         node.cache(DEFAULT_CACHE_NAME).putAll(data);
 
-//        log.info("Loading 100k");
+
 //
 //        try (IgniteDataStreamer<Integer, Object> streamer = node.dataStreamer(DEFAULT_CACHE_NAME)) {
 //            streamer.addData(data);
@@ -130,7 +132,7 @@ public class FreeListBatchUpdateTest extends GridCommonAbstractTest {
         for (IgniteInternalCache cache0 : node2.context().cache().caches())
             cache0.context().preloader().rebalanceFuture().get();
 
-        U.sleep(1_000);
+
 
         log.info("starting verification on node2");
 
@@ -141,7 +143,7 @@ public class FreeListBatchUpdateTest extends GridCommonAbstractTest {
         for (int i = 0; i < max; i++)
             assert cache.get(i) != null : i;
 
-        U.sleep(10_000);
+//        U.sleep(10_000);
 
         log.info("stop crd");
 

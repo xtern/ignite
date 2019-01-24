@@ -809,7 +809,7 @@ public abstract class AbstractDataPageIO<T extends Storable> extends PageIO impl
 
         int directCnt = getDirectCount(pageAddr);
 
-        System.out.println(">xxx> pageAddr="+pageAddr+", but dirCnt="+directCnt);
+//        System.out.println(">xxx> pageAddr="+pageAddr+", but dirCnt="+directCnt);
 
         int indirectCnt = getIndirectCount(pageAddr);
 
@@ -819,7 +819,7 @@ public abstract class AbstractDataPageIO<T extends Storable> extends PageIO impl
 
         int itemId = addItem(pageAddr, fullEntrySize, directCnt, indirectCnt, dataOff, pageSize);
 
-        System.out.println(">xxx> link pageId="+pageId + ", itemId="+itemId);
+//        System.out.println(">xxx> link pageId="+pageId + ", itemId="+itemId);
 
         setLinkByPageId(row, pageId, itemId);
     }
@@ -1113,7 +1113,7 @@ public abstract class AbstractDataPageIO<T extends Storable> extends PageIO impl
 
         setDirectCount(pageAddr, directCnt + 1);
 
-        System.out.println("pageAddr " + pageAddr + " directCnt="+getDirectCount(pageAddr) + " free="+getFreeSpace(pageAddr));
+//        System.out.println("pageAddr " + pageAddr + " directCnt="+getDirectCount(pageAddr) + " free="+getFreeSpace(pageAddr));
 
         assert getDirectCount(pageAddr) == directCnt + 1;
 

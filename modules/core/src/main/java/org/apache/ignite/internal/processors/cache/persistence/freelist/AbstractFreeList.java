@@ -171,7 +171,7 @@ public abstract class AbstractFreeList<T extends Storable> extends PagesList imp
             assert oldFreeSpace > 0 : oldFreeSpace;
 
             // If the full row does not fit into this page write only a fragment.
-            System.out.println(">xxx> free=" + oldFreeSpace + ", rowSize=" + rowSize + " hash=" + row.hashCode());
+//            System.out.println(">xxx> free=" + oldFreeSpace + ", rowSize=" + rowSize + " hash=" + row.hashCode());
 
             written = (written == 0 && oldFreeSpace >= rowSize) ? addRow(pageId, page, pageAddr, io, row, rowSize) :
                 addRowFragment(pageId, page, pageAddr, io, row, written, rowSize);
@@ -296,7 +296,7 @@ public abstract class AbstractFreeList<T extends Storable> extends PagesList imp
             if (newFreeSpace > MIN_PAGE_FREE_SPACE) {
                 int bucket = bucket(newFreeSpace, false);
 
-                System.out.println(">xxx> put pageId=" + pageId + ", to bucket=" + bucket + ", free=" + newFreeSpace);
+//                System.out.println(">xxx> put pageId=" + pageId + ", to bucket=" + bucket + ", free=" + newFreeSpace);
 
                 put(null, pageId, page, pageAddr, bucket, statHolder);
             }
@@ -605,7 +605,7 @@ public abstract class AbstractFreeList<T extends Storable> extends PagesList imp
         //
         //int totalPages = largePagesCnt + bins.size();
 
-        System.out.println("\n\n>xxx> LARGE OBJ PAGES: " + largePagesCnt);
+//        System.out.println("\n\n>xxx> LARGE OBJ PAGES: " + largePagesCnt);
 
 //        System.out.println(">>> ------------------[ LARGE OBJECTS] ------------");
         // Writing large objects.
@@ -654,7 +654,7 @@ public abstract class AbstractFreeList<T extends Storable> extends PagesList imp
             while (written != COMPLETE);
         }
 
-        System.out.println("\n\n>xxx> SMALL OBJ PAGES: " + bins.size());
+//        System.out.println("\n\n>xxx> SMALL OBJ PAGES: " + bins.size());
 //        System.out.println(">>> ------------------[ TAILS ] ------------");
         // Writing remaining objects.
         for (T2<List<T>, Integer> bin : bins) {
@@ -664,14 +664,14 @@ public abstract class AbstractFreeList<T extends Storable> extends PagesList imp
 
             int buck = bucket(remaining, false) + 1;
 
-            System.out.println("\n----------------------------------------------" +
-                "\n>xxx> remaining page total: " + remaining + ", cnt=" + bin.get1().size() + " bucket=" + buck);
+//            System.out.println("\n----------------------------------------------" +
+//                "\n>xxx> remaining page total: " + remaining + ", cnt=" + bin.get1().size() + " bucket=" + buck);
 
             for (int b = remaining < MIN_SIZE_FOR_DATA_PAGE ? buck : REUSE_BUCKET; b < BUCKETS; b++) {
                 pageId = takeEmptyPage(b, ioVersions(), statHolder);
 
                 if (pageId != 0L) {
-                    System.out.println(">xxx> found pageId=" + pageId + ", bucket=" + b);
+//                    System.out.println(">xxx> found pageId=" + pageId + ", bucket=" + b);
 
                     break;
                 }
@@ -715,7 +715,7 @@ public abstract class AbstractFreeList<T extends Storable> extends PagesList imp
 
                 written = write(pageId, last ? writeRow : writeRowUpdate, initIo, row, written, FAIL_I, statHolder);
 
-                System.out.println(">xxx> hash=" + row.hashCode() + " page=" + pageId + " written=" + (written == COMPLETE ? (row.size() % maxDataSize) : written));
+//                System.out.println(">xxx> hash=" + row.hashCode() + " page=" + pageId + " written=" + (written == COMPLETE ? (row.size() % maxDataSize) : written));
 
 //                System.out.println("written " + written + " hash="+row.hashCode());
 

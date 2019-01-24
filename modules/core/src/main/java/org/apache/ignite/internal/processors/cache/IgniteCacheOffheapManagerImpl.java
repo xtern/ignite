@@ -1750,12 +1750,9 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
 //                }
 //            });
 
-            log.info("Update BTree");
-            for (DataRow row : dataRows) {
-//                log.info("hash " + row.hashCode());
-
+//            log.info("Update BTree");
+            for (DataRow row : dataRows)
                 dataTree.putx(row);
-            }
 
 //            rowStore.freeList().batchInsert();
             //cctx.
