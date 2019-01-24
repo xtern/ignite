@@ -571,10 +571,11 @@ public abstract class AbstractFreeList<T extends Storable> extends PagesList imp
 
         List<T2<List<T>, Integer>> bins = binPack(regular, maxDataSize, binMap);
         //
-        int totalPages = largePagesCnt + bins.size();
+        //int totalPages = largePagesCnt + bins.size();
 
-        System.out.println(">xxx> total pages required: " + totalPages);
+        System.out.println("\n\n>xxx> LARGE PAGES: " + largePagesCnt);
 
+        System.out.println(">>> ------------------[ LARGE OBJECTS] ------------");
         // Writing large objects.
         for (T row : largeRows) {
             int rowSize = row.size();
@@ -614,18 +615,22 @@ public abstract class AbstractFreeList<T extends Storable> extends PagesList imp
 
                 written = write(pageId, writeRow, initIo, row, written, FAIL_I, statHolder);
 
+                System.out.println(">xxx> [large] written=" + written + ", hash=" + row.hashCode());
+
                 assert written != FAIL_I; // We can't fail here.
             }
             while (written != COMPLETE);
         }
 
+        System.out.println("\n\n>xxx> SMALL PAGES: " + bins.size());
+        System.out.println(">>> ------------------[ TAILS ] ------------");
         // Writing remaining objects.
         for (T2<List<T>, Integer> bin : bins) {
             long pageId = 0;
 
             int remaining = bin.get2();
 
-            System.out.println(">xxx> remaining: " + remaining + ", cnt="+bin.get1().size());
+            System.out.println("\n----------------------------------------------\n>xxx> remaining page total: " + remaining + ", cnt="+bin.get1().size());
 
 //            for (int b = remaining < MIN_SIZE_FOR_DATA_PAGE ? bucket(remaining, false) + 1 : REUSE_BUCKET; b < BUCKETS; b++) {
 //                pageId = takeEmptyPage(b, ioVersions(), statHolder);
@@ -642,18 +647,18 @@ public abstract class AbstractFreeList<T extends Storable> extends PagesList imp
                 if (pageId == 0) {
                     pageId = allocateDataPage(row.partition());
 
-                    System.out.println("alloc page " + pageId);
+//                    System.out.println("alloc page " + pageId);
 
                     initIo = ioVersions().latest();
                 } else if (PageIdUtils.tag(pageId) != PageIdAllocator.FLAG_DATA) {
-                    System.out.println("reuse page...");
+//                    System.out.println("reuse page...");
                     pageId = initReusedPage(pageId, row.partition(), statHolder);
                 } else {
 
 
                     pageId = PageIdUtils.changePartitionId(pageId, row.partition());
 
-                    System.out.println("change part " + pageId);
+//                    System.out.println("change part " + pageId);
                 }
 
                 assert pageId != 0;
@@ -666,9 +671,9 @@ public abstract class AbstractFreeList<T extends Storable> extends PagesList imp
 
 //                System.out.println("already written " + written + " hash="+row.hashCode());
 
-                System.out.println(">xxx> hash=" + row.hashCode() + " page=" + pageId);
-
                 written = write(pageId, writeRow, initIo, row, written, FAIL_I, statHolder);
+
+                System.out.println(">xxx> hash=" + row.hashCode() + " page=" + pageId + " written=" + (written == COMPLETE ? (row.size() % 4030) : written));
 
 //                System.out.println("written " + written + " hash="+row.hashCode());
 
@@ -698,7 +703,9 @@ public abstract class AbstractFreeList<T extends Storable> extends PagesList imp
             // Find the first bin that can accommodate weight[i]
             int j;
 
-            int size = rows.get(i).get1() + 4; // +pointer?
+            T3<Integer, T, Boolean> t3 = rows.get(i);
+
+            int size = t3.get1() + (t3.get3() ? 12 : 4); // +pointer?
 
             for (j = 0; j < cnt; j++) {
                 if (remains[j] >= size) {

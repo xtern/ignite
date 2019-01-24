@@ -65,7 +65,7 @@ public class FreeListBatchUpdateTest extends GridCommonAbstractTest {
         int max = 1000;
 
         //try () {
-        Map<Integer, Object> data = randomData(0, max, 8192);
+        Map<Integer, Object> data = randomData(0, max, 4096,8192);
 
         node.cache(DEFAULT_CACHE_NAME).putAll(data);
 
@@ -169,11 +169,11 @@ public class FreeListBatchUpdateTest extends GridCommonAbstractTest {
     }
 
     /** */
-    private Map<Integer, Object> randomData(int start, int size, int maxObjSize) {
+    private Map<Integer, Object> randomData(int start, int size, int minSize, int maxSize) {
         Map<Integer, Object> res = new HashMap<>();
 
         for (int i = start; i < start + size; i++) {
-            Object obj = generateObject(HDR_SIZE + ThreadLocalRandom.current().nextInt(maxObjSize) + 1);
+            Object obj = generateObject(minSize + HDR_SIZE + ThreadLocalRandom.current().nextInt(maxSize - minSize) + 1);
 
             res.put(i, obj);
         }

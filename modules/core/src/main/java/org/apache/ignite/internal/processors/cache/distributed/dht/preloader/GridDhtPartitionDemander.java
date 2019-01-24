@@ -996,7 +996,7 @@ public class GridDhtPartitionDemander {
 
                         long expTime = info.ttl() < 0 ? CU.toExpireTime(info.ttl()) : info.ttl();
 
-                        log.info("finish preload: " + info.key().hashCode());
+//                        log.info("finish preload: " + info.key().hashCode());
 
                         e.get1().finishPreload(info.value(), expTime, info.ttl(), info.version(), true,
                             topVer,
