@@ -137,6 +137,7 @@ import org.apache.ignite.internal.processors.query.schema.SchemaExchangeWorkerTa
 import org.apache.ignite.internal.processors.query.schema.SchemaNodeLeaveExchangeWorkerTask;
 import org.apache.ignite.internal.processors.query.schema.message.SchemaAbstractDiscoveryMessage;
 import org.apache.ignite.internal.processors.query.schema.message.SchemaProposeDiscoveryMessage;
+import org.apache.ignite.internal.processors.security.IgniteSecuritySession;
 import org.apache.ignite.internal.processors.security.SecurityContext;
 import org.apache.ignite.internal.processors.service.GridServiceProcessor;
 import org.apache.ignite.internal.processors.timeout.GridTimeoutObject;
@@ -200,6 +201,7 @@ import static org.apache.ignite.internal.IgniteNodeAttributes.ATTR_CONSISTENCY_C
 import static org.apache.ignite.internal.IgniteNodeAttributes.ATTR_TX_CONFIG;
 import static org.apache.ignite.internal.processors.cache.GridCacheUtils.isNearEnabled;
 import static org.apache.ignite.internal.processors.cache.GridCacheUtils.isPersistentCache;
+import static org.apache.ignite.internal.processors.security.SecurityUtils.nodeSecurityContext;
 import static org.apache.ignite.internal.util.IgniteUtils.doInParallel;
 
 /**
@@ -283,6 +285,9 @@ public class GridCacheProcessor extends GridProcessorAdapter {
 
     /** Tmp storage for meta migration. */
     private MetaStorage.TmpStorage tmpStorage;
+
+    /** Node's local cache configurations (both from static configuration and from persistent caches). */
+    private CacheJoinNodeDiscoveryData localConfigs;
 
     /**
      * @param ctx Kernal context.
@@ -782,6 +787,8 @@ public class GridCacheProcessor extends GridProcessorAdapter {
             templates,
             startAllCachesOnClientStart()
         );
+
+        localConfigs = discoData;
 
         cachesInfo.onStart(discoData);
     }
@@ -1982,6 +1989,11 @@ public class GridCacheProcessor extends GridProcessorAdapter {
      * @return Caches to be started when this node starts.
      */
     @Nullable public LocalJoinCachesContext localJoinCachesContext() {
+        if (ctx.discovery().localNode().order() == 1 && localConfigs != null)
+            cachesInfo.filterDynamicCacheDescriptors(localConfigs);
+
+        localConfigs = null;
+
         return cachesInfo.localJoinCachesContext();
     }
 
@@ -3272,7 +3284,7 @@ public class GridCacheProcessor extends GridProcessorAdapter {
     }
 
     /** {@inheritDoc} */
-    @Nullable @Override public IgniteNodeValidationResult validateNode(
+    @Override public @Nullable IgniteNodeValidationResult validateNode(
         ClusterNode node, JoiningNodeDiscoveryData discoData
     ) {
         if(!cachesInfo.isMergeConfigSupports(node))
@@ -3283,24 +3295,30 @@ public class GridCacheProcessor extends GridProcessorAdapter {
 
             boolean isGridActive = ctx.state().clusterState().active();
 
-            StringBuilder errorMessage = new StringBuilder();
+            StringBuilder errorMsg = new StringBuilder();
+
+            SecurityContext secCtx = null;
+
+            if (ctx.security().enabled()) {
+                try {
+                    secCtx = nodeSecurityContext(marsh, U.resolveClassLoader(ctx.config()), node);
+                }
+                catch (SecurityException se) {
+                    errorMsg.append(se.getMessage());
+                }
+            }
 
             for (CacheJoinNodeDiscoveryData.CacheInfo cacheInfo : nodeData.caches().values()) {
-                try {
-                    byte[] secCtxBytes = node.attribute(IgniteNodeAttributes.ATTR_SECURITY_SUBJECT_V2);
-
-                    if (secCtxBytes != null) {
-                        SecurityContext secCtx = U.unmarshal(marsh, secCtxBytes, U.resolveClassLoader(ctx.config()));
-
-                        if (secCtx != null && cacheInfo.cacheType() == CacheType.USER)
-                            authorizeCacheCreate(cacheInfo.cacheData().config(), secCtx);
+                if (secCtx != null && cacheInfo.cacheType() == CacheType.USER) {
+                    try (IgniteSecuritySession s = ctx.security().startSession(secCtx)) {
+                        authorizeCacheCreate(cacheInfo.cacheData().config());
                     }
-                }
-                catch (SecurityException | IgniteCheckedException ex) {
-                    if (errorMessage.length() > 0)
-                        errorMessage.append("\n");
+                    catch (SecurityException ex) {
+                        if (errorMsg.length() > 0)
+                            errorMsg.append("\n");
 
-                    errorMessage.append(ex.getMessage());
+                        errorMsg.append(ex.getMessage());
+                    }
                 }
 
                 DynamicCacheDescriptor localDesc = cacheDescriptor(cacheInfo.cacheData().config().getName());
@@ -3311,19 +3329,19 @@ public class GridCacheProcessor extends GridProcessorAdapter {
                 QuerySchemaPatch schemaPatch = localDesc.makeSchemaPatch(cacheInfo.cacheData().queryEntities());
 
                 if (schemaPatch.hasConflicts() || (isGridActive && !schemaPatch.isEmpty())) {
-                    if (errorMessage.length() > 0)
-                        errorMessage.append("\n");
+                    if (errorMsg.length() > 0)
+                        errorMsg.append("\n");
 
                     if (schemaPatch.hasConflicts())
-                        errorMessage.append(String.format(MERGE_OF_CONFIG_CONFLICTS_MESSAGE,
+                        errorMsg.append(String.format(MERGE_OF_CONFIG_CONFLICTS_MESSAGE,
                             localDesc.cacheName(), schemaPatch.getConflictsMessage()));
                     else
-                        errorMessage.append(String.format(MERGE_OF_CONFIG_REQUIRED_MESSAGE, localDesc.cacheName()));
+                        errorMsg.append(String.format(MERGE_OF_CONFIG_REQUIRED_MESSAGE, localDesc.cacheName()));
                 }
             }
 
-            if (errorMessage.length() > 0) {
-                String msg = errorMessage.toString();
+            if (errorMsg.length() > 0) {
+                String msg = errorMsg.toString();
 
                 return new IgniteNodeValidationResult(node.id(), msg, msg);
             }
@@ -4284,10 +4302,9 @@ public class GridCacheProcessor extends GridProcessorAdapter {
      * Authorize creating cache.
      *
      * @param cfg Cache configuration.
-     * @param secCtx Optional security context.
      */
-    private void authorizeCacheCreate(CacheConfiguration cfg, SecurityContext secCtx) {
-        ctx.security().authorize(null, SecurityPermission.CACHE_CREATE, secCtx);
+    private void authorizeCacheCreate(CacheConfiguration cfg) {
+        ctx.security().authorize(cfg.getName(), SecurityPermission.CACHE_CREATE);
 
         if (cfg != null && cfg.isOnheapCacheEnabled() &&
             IgniteSystemProperties.getBoolean(IgniteSystemProperties.IGNITE_DISABLE_ONHEAP_CACHE))
@@ -4295,17 +4312,16 @@ public class GridCacheProcessor extends GridProcessorAdapter {
     }
 
     /**
-     * Authorize dynamic cache management for this node.
+     * Authorize dynamic cache management.
      *
      * @param req start/stop cache request.
      */
     private void authorizeCacheChange(DynamicCacheChangeRequest req) {
-        // Null security context means authorize this node.
         if (req.cacheType() == null || req.cacheType() == CacheType.USER) {
             if (req.stop())
-                ctx.security().authorize(null, SecurityPermission.CACHE_DESTROY, null);
+                ctx.security().authorize(req.cacheName(), SecurityPermission.CACHE_DESTROY);
             else
-                authorizeCacheCreate(req.startCacheConfiguration(), null);
+                authorizeCacheCreate(req.startCacheConfiguration());
         }
     }
 
