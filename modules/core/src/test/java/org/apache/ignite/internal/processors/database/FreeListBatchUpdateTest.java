@@ -65,7 +65,7 @@ public class FreeListBatchUpdateTest extends GridCommonAbstractTest {
         int max = 200_000;
 
         //try () {
-        Map<Integer, Object> data = randomData(0, max, 0,2048);
+        Map<Integer, Object> data = randomData(0, max, 0,8192);
 
         log.info("Loading 200k");
 
