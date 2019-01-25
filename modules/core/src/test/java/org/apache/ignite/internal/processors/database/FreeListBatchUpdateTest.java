@@ -16,8 +16,8 @@
  */
 package org.apache.ignite.internal.processors.database;
 
+import java.util.Arrays;
 import java.util.HashMap;
-import java.util.IdentityHashMap;
 import java.util.Map;
 import java.util.concurrent.ThreadLocalRandom;
 import org.apache.ignite.Ignite;
@@ -28,7 +28,6 @@ import org.apache.ignite.cache.affinity.rendezvous.RendezvousAffinityFunction;
 import org.apache.ignite.configuration.CacheConfiguration;
 import org.apache.ignite.configuration.IgniteConfiguration;
 import org.apache.ignite.internal.IgniteEx;
-import org.apache.ignite.internal.processors.cache.GridCacheContext;
 import org.apache.ignite.internal.processors.cache.IgniteInternalCache;
 import org.apache.ignite.internal.util.typedef.internal.U;
 import org.apache.ignite.testframework.junits.common.GridCommonAbstractTest;
@@ -62,68 +61,30 @@ public class FreeListBatchUpdateTest extends GridCommonAbstractTest {
     public void testBatchPutAll() throws Exception {
         Ignite node = startGrid(0);
 
-        int max = 200_000;
+        int cnt = 200_000;
+        int minSize = 0;
+        int maxSize = 8192;
+        int start = 0;
 
-        //try () {
-        Map<Integer, Object> data = randomData(0, max, 0,8192);
+        log.info("Loading " + cnt + " random entries per " + minSize + " - " + maxSize + " bytes.");
 
-        log.info("Loading 200k");
+        Map<Integer, byte[]> srcMap = new HashMap<>();
 
-        node.cache(DEFAULT_CACHE_NAME).putAll(data);
+        for (int i = start; i < start + cnt; i++) {
+            byte[] obj = generateObject(minSize + HDR_SIZE + ThreadLocalRandom.current().nextInt(maxSize - minSize) + 1);
 
+            srcMap.put(i, obj);
+        }
 
-//
-//        try (IgniteDataStreamer<Integer, Object> streamer = node.dataStreamer(DEFAULT_CACHE_NAME)) {
-//            streamer.addData(data);
-//        }
+        try (IgniteDataStreamer<Integer, byte[]> streamer = node.dataStreamer(DEFAULT_CACHE_NAME)) {
+            streamer.addData(srcMap);
+        }
 
         log.info("Done");
 
-//        data = new IdentityHashMap<>();
-//
-//        int[] sizes = {42, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 2048};
-
-//            int sum = 0, pageSize = 4096, start = 64, idx = 0;
-//
-//            while ((sum + start) <= pageSize) {
-////                if (sum > start)
-//
-//
-//                sum += start;
-//
-//                sizes[idx++] = start;
-//
-//                start *= 2;
-//            }
-//
-//            assert sum + 64 == pageSize : sum;
-//
-//            int off = 10_000;
-//
-//            int end = off + ((65_536 / sizes.length) * sizes.length);
-//
-//            for (int i = off; i < end; i++) {
-//                int objSize = sizes[sizes.length - 1 - ((i - off) % sizes.length)];
-//                if (objSize == 64)
-//                    objSize = 42;
-//
-//                data.put(i, generateObject(objSize));
-//            }
-//
-//            long startTime = U.currentTimeMillis();
-//
-//            node.cache(DEFAULT_CACHE_NAME).putAll(data);
-//
-//            log.info("Done: " + (U.currentTimeMillis() - startTime) + " ms.");
-
-//            GridDhtLocalPartition.DBG = true;
-
         IgniteCache cache = node.cache(DEFAULT_CACHE_NAME);
 
-        assert cache.size() == max : cache.size();
-
-        for (int i = 0; i < max; i++)
-            assert cache.get(i) != null : i;
+        validateCacheEntries(cache, srcMap);
 
         IgniteEx node2 = startGrid(1);
 
@@ -132,57 +93,37 @@ public class FreeListBatchUpdateTest extends GridCommonAbstractTest {
         for (IgniteInternalCache cache0 : node2.context().cache().caches())
             cache0.context().preloader().rebalanceFuture().get();
 
+        // Just in case.
+        U.sleep(2_000);
 
+        log.info("Verification on node2");
 
-        log.info("starting verification on node2");
-
-        cache = node2.cache(DEFAULT_CACHE_NAME);
-
-        assert cache.size() == max : cache.size();
-
-        for (int i = 0; i < max; i++)
-            assert cache.get(i) != null : i;
-
-//        U.sleep(10_000);
-
-        log.info("stop crd");
-
-        stopGrid(0);
-
-        log.info("There is someone following you");
-
-        log.info("Stopping last standing");
-
-        stopGrid(0);
-//        }
+        validateCacheEntries(node2.cache(DEFAULT_CACHE_NAME), srcMap);
     }
 
-    @Test
-    public void checkFreeList() throws Exception {
-        try (IgniteEx node = startGrid(0)) {
-            IgniteInternalCache cache = node.cachex(DEFAULT_CACHE_NAME);
+    /**
+     * @param cache Cache.
+     * @param map Map.
+     */
+    @SuppressWarnings("unchecked")
+    private void validateCacheEntries(IgniteCache cache, Map<Integer, byte[]> map) {
+        assertEquals(map.size(), cache.size());
 
-            GridCacheContext cctx = cache.context();
+        for (Map.Entry<Integer, byte[]> e : map.entrySet()) {
+            String idx = "idx=" + e.getKey();
 
-//            cctx.offheap().updateBatch(cctx, );
+            byte[] bytes = (byte[])cache.get(e.getKey());
+
+            assertNotNull(idx, bytes);
+
+            assertEquals(idx + ": length not equal", e.getValue().length, bytes.length);
+
+            assertTrue(Arrays.equals(e.getValue(), bytes));
         }
     }
 
     /** */
-    private Map<Integer, Object> randomData(int start, int size, int minSize, int maxSize) {
-        Map<Integer, Object> res = new HashMap<>();
-
-        for (int i = start; i < start + size; i++) {
-            Object obj = generateObject(minSize + HDR_SIZE + ThreadLocalRandom.current().nextInt(maxSize - minSize) + 1);
-
-            res.put(i, obj);
-        }
-
-        return res;
-    }
-
-    /** */
-    private Object generateObject(int size) {
+    private byte[] generateObject(int size) {
         assert size >= HDR_SIZE : size;
 
         return new byte[size - HDR_SIZE];

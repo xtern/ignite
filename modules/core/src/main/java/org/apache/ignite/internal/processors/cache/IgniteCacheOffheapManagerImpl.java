@@ -1629,6 +1629,8 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
          * @param dataRow New row.
          * @return {@code True} if it is possible to update old row data.
          * @throws IgniteCheckedException If failed.
+         *
+         * todo think about this meth
          */
         private boolean canUpdateOldRow(GridCacheContext cctx, @Nullable CacheDataRow oldRow, DataRow dataRow)
             throws IgniteCheckedException {
@@ -1639,7 +1641,7 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
                 return false;
 
             // Use grp.sharedGroup() flag since it is possible cacheId is not yet set here.
-            boolean sizeWithCacheId = grp.sharedGroup();
+//            boolean sizeWithCacheId = grp.sharedGroup();
 
             int oldLen = oldRow.size();
 
@@ -1687,14 +1689,8 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
             while (cur.next()) {
                 CacheDataRow row = cur.get();
 
-//                try {
-                    if (insertKeys.remove(row.key()) && needUpdate(cctx, row, items.get(row.key())))
-                        updateKeys.put(row.key(), row);
-//                }
-//                catch (GridCacheEntryRemovedException ex) {
-//                    // todo Is it safe to ignore this exception (on rebalance)?
-//                    ex.printStackTrace();
-//                }
+                if (insertKeys.remove(row.key()) && needUpdate(cctx, row, items.get(row.key())))
+                    updateKeys.put(row.key(), row);
             }
 
             // Updates.
@@ -1703,14 +1699,9 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
 
                 GridCacheEntryInfo entry = items.get(key);
 
-//                try {
                 log.info("update: " + key.hashCode());
+
                 update(cctx, key, entry.value(), entry.version(), entry.expireTime(), e.getValue());
-//                }
-//                catch (GridCacheEntryRemovedException ex) {
-//                    // todo
-//                    ex.printStackTrace();
-//                }
             }
 
             // New.
@@ -1724,39 +1715,19 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
                 val.valueBytes(cctx.cacheObjectContext());
                 key.valueBytes(cctx.cacheObjectContext());
 
-//                try {
                 long expTime = entry.ttl() < 0 ? CU.toExpireTime(entry.ttl()) : entry.ttl();
-                    DataRow row = makeDataRow(key, val, entry.version(), expTime, cacheId);
 
-                    assert row.value() != null : key.hashCode();
+                DataRow row = makeDataRow(key, val, entry.version(), expTime, cacheId);
 
-                    dataRows.add(row);
+                assert row.value() != null : key.hashCode();
 
-//                log.info("key hash: " + row.hashCode() + " size=" + row.size());
-//                }
-//                catch (GridCacheEntryRemovedException ex) {
-//                    // todo
-//                    ex.printStackTrace();
-//                }
+                dataRows.add(row);
             }
 
             rowStore.freeList().insertBatch(dataRows, grp.statisticsHolderData());
-//            , (row) -> {
-//                try {
-//                    log.info(">xxx> insert row " + row.hashCode());
-//                    dataTree.putx((CacheDataRow)row);
-//                } catch (IgniteCheckedException ex) {
-//                    ex.printStackTrace();
-//                }
-//            });
 
-//            log.info("Update BTree");
             for (DataRow row : dataRows)
                 dataTree.putx(row);
-
-//            rowStore.freeList().batchInsert();
-            //cctx.
-
         }
 
         // todo

@@ -313,7 +313,6 @@ public abstract class DataStructure implements PageLockListener {
      * @param h Handler.
      * @param init IO for new page initialization or {@code null} if it is an existing page.
      * @param arg Argument.
-     * @param intArg Argument of type {@code int}.
      * @param lockFailed Result in case of lock failure due to page recycling.
      * @param statHolder Statistics holder to track IO operations.
      * @return Handler result.
@@ -324,10 +323,9 @@ public abstract class DataStructure implements PageLockListener {
         PageHandler<X, R> h,
         PageIO init,
         Collection<X> arg,
-        int intArg,
         R lockFailed,
         IoStatisticsHolder statHolder) throws IgniteCheckedException {
-        return PageHandler.writePageBatch(pageMem, grpId, pageId, this, h, init, wal, null, arg, intArg, lockFailed, statHolder);
+        return PageHandler.writePageBatch(pageMem, grpId, pageId, this, h, init, wal, null, arg, lockFailed, statHolder);
     }
 
     /**

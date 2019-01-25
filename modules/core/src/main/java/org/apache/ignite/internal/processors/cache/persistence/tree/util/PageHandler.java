@@ -27,7 +27,6 @@ import org.apache.ignite.internal.pagemem.wal.record.delta.InitNewPageRecord;
 import org.apache.ignite.internal.processors.cache.persistence.tree.io.PageIO;
 import org.apache.ignite.internal.stat.IoStatisticsHolder;
 import org.apache.ignite.internal.util.GridUnsafe;
-import org.apache.ignite.internal.util.typedef.internal.U;
 
 import static java.lang.Boolean.FALSE;
 import static java.lang.Boolean.TRUE;
@@ -79,8 +78,7 @@ public abstract class PageHandler<X, R> {
      * @param pageAddr Page address.
      * @param io IO.
      * @param walPlc Full page WAL record policy.
-     * @param arg Argument.
-     * @param intArg Argument of type {@code int}.
+     * @param args Arguments.
      * @param statHolder Statistics holder to track IO operations.
      * @return Result.
      * @throws IgniteCheckedException If failed.
@@ -92,8 +90,7 @@ public abstract class PageHandler<X, R> {
         long pageAddr,
         PageIO io,
         Boolean walPlc,
-        Collection<X> arg,
-        int intArg,
+        Collection<X> args,
         IoStatisticsHolder statHolder
     ) throws IgniteCheckedException {
         // todo
@@ -364,7 +361,6 @@ public abstract class PageHandler<X, R> {
         IgniteWriteAheadLogManager wal,
         Boolean walPlc,
         Collection<X> args,
-        int intArg,
         R lockFailed,
         IoStatisticsHolder statHolder
     ) throws IgniteCheckedException {
@@ -392,7 +388,7 @@ public abstract class PageHandler<X, R> {
 //                    R res = h.run(grpId, pageId, page, pageAddr, init, walPlc, arg, intArg, statHolder);
 //                }
 
-                R res = h.runBatch(grpId, pageId, page, pageAddr, init, walPlc, args, intArg, statHolder);
+                R res = h.runBatch(grpId, pageId, page, pageAddr, init, walPlc, args, statHolder);
 
                 ok = true;
 
@@ -401,7 +397,7 @@ public abstract class PageHandler<X, R> {
             finally {
                 assert PageIO.getCrc(pageAddr) == 0; //TODO GG-11480
 
-                if (releaseAfterWrite = h.releaseAfterWrite(grpId, pageId, page, pageAddr, null, intArg))
+                if (releaseAfterWrite = h.releaseAfterWrite(grpId, pageId, page, pageAddr, null, 0))
                     writeUnlock(pageMem, grpId, pageId, page, pageAddr, lsnr, walPlc, ok);
             }
         }
