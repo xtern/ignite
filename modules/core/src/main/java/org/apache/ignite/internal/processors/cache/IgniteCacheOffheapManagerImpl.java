@@ -1726,8 +1726,13 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
 
             rowStore.freeList().insertBatch(dataRows, grp.statisticsHolderData());
 
-            for (DataRow row : dataRows)
+            for (DataRow row : dataRows) {
                 dataTree.putx(row);
+
+                finishUpdate(cctx, row, null);
+            }
+
+
         }
 
         // todo

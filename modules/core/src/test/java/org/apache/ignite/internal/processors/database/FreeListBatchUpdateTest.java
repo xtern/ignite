@@ -20,6 +20,7 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.ThreadLocalRandom;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
 import org.apache.ignite.Ignite;
 import org.apache.ignite.IgniteCache;
 import org.apache.ignite.IgniteDataStreamer;
@@ -28,8 +29,15 @@ import org.apache.ignite.cache.affinity.rendezvous.RendezvousAffinityFunction;
 import org.apache.ignite.configuration.CacheConfiguration;
 import org.apache.ignite.configuration.IgniteConfiguration;
 import org.apache.ignite.internal.IgniteEx;
+import org.apache.ignite.internal.IgniteInterruptedCheckedException;
 import org.apache.ignite.internal.processors.cache.IgniteInternalCache;
+import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtLocalPartition;
+import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtPartitionState;
+import org.apache.ignite.internal.util.StripedCompositeReadWriteLock;
+import org.apache.ignite.internal.util.typedef.PA;
 import org.apache.ignite.internal.util.typedef.internal.U;
+import org.apache.ignite.spi.discovery.tcp.TcpDiscoverySpi;
+import org.apache.ignite.testframework.GridTestUtils;
 import org.apache.ignite.testframework.junits.common.GridCommonAbstractTest;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -63,7 +71,7 @@ public class FreeListBatchUpdateTest extends GridCommonAbstractTest {
 
         int cnt = 200_000;
         int minSize = 0;
-        int maxSize = 8192;
+        int maxSize = 16384;
         int start = 0;
 
         log.info("Loading " + cnt + " random entries per " + minSize + " - " + maxSize + " bytes.");
@@ -86,14 +94,23 @@ public class FreeListBatchUpdateTest extends GridCommonAbstractTest {
 
         validateCacheEntries(cache, srcMap);
 
-        IgniteEx node2 = startGrid(1);
+        final IgniteEx node2 = startGrid(1);
 
         log.info("await rebalance");
 
-        for (IgniteInternalCache cache0 : node2.context().cache().caches())
-            cache0.context().preloader().rebalanceFuture().get();
+        assert GridTestUtils.waitForCondition(new PA() {
+            @Override public boolean apply() {
+                for ( GridDhtLocalPartition part : node2.context().cache().cache(DEFAULT_CACHE_NAME).context().group().topology().localPartitions()) {
+                    if (part.state() != GridDhtPartitionState.OWNING)
+                        return false;
+                }
 
-        // Just in case.
+                return true;
+            }
+        }, 10_000);
+
+        node.close();
+
         U.sleep(2_000);
 
         log.info("Verification on node2");

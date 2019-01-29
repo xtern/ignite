@@ -333,22 +333,60 @@ public abstract class AbstractFreeList<T extends Storable> extends PagesList imp
 
             int maxDataSize = pageSize() - AbstractDataPageIO.MIN_DATA_PAGE_OVERHEAD;
 
+            AbstractDataPageIO<T> iox = (AbstractDataPageIO<T>)io;
+
+//            assert  : pageId;
+
+            // todo !! DO NOT FORGET WAL DELTA !!
+            if (iox.getFreeSpace(pageAddr) == maxDataSize) {
+                // todo save links for WAL
+
+                iox.addRows(pageMem, pageId, pageAddr, args, pageSize());
+
+                // todo update wal
+            }
+            else
+
             for (T row : args) {
                 if (row.size() > maxDataSize)
                     written = row.size() - (row.size() % maxDataSize);
                 else
                     written = 0;
 
-                written = run0(pageId, page, pageAddr, io, row, written, statHolder);
+                //written = run0(pageId, page, pageAddr, io, row, written, statHolder);
+                //-----------------------
+                int rowSize = row.size();
+                int oldFreeSpace = iox.getFreeSpace(pageAddr);
 
-                assert written == COMPLETE : "The object is not fully written into page: " +
+                assert oldFreeSpace > 0 : oldFreeSpace;
+
+                // If the full row does not fit into this page write only a fragment.
+//            System.out.println(">xxx> free=" + oldFreeSpace + ", rowSize=" + rowSize + " hash=" + row.hashCode());
+
+                boolean fragment = written != 0;// || oldFreeSpace >= rowSize;
+
+
+
+                if (fragment)
+                    written = addRowFragment(pageId, page, pageAddr, iox, row, written, rowSize);
+                else
+                    written = addRow(pageId, page, pageAddr, iox, row, rowSize);
+
+                if (written == rowSize)
+                    evictionTracker.touchPage(pageId);
+
+                // Avoid boxing with garbage generation for usual case.
+//                return written == rowSize ? COMPLETE : written;
+                //-----------------------
+
+                assert written == rowSize : "The object is not fully written into page: " +
                     "pageId=" + pageId + ", written=" + written + ", size=" + row.size();
             }
 
             // return page to freelist if needed
             putPage((AbstractDataPageIO)io, pageId, page, pageAddr, statHolder);
 
-            return written;
+            return COMPLETE;
         }
     }
 
