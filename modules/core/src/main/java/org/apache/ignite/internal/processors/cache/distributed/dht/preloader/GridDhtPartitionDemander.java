@@ -799,9 +799,9 @@ public class GridDhtPartitionDemander {
 //                                        }
 //                                    }
 
-                                    List<GridCacheEntryInfo> infosBatch = new ArrayList<>(100);
+                                    List<GridCacheEntryInfo> infosBatch = new ArrayList<>(200);
 
-                                    for (int i = 0; i < 500; i++) {
+                                    for (int i = 0; i < 200; i++) {
                                         if (!infos.hasNext())
                                             break;
 
@@ -900,6 +900,46 @@ public class GridDhtPartitionDemander {
         }
     }
 
+    public void preloadEntries1(ClusterNode from,
+        int p,
+        Collection<GridCacheEntryInfo> entries,
+        AffinityTopologyVersion topVer
+    ) throws IgniteCheckedException {
+
+        Iterator<GridCacheEntryInfo> infos = entries.iterator();
+
+        // Loop through all received entries and try to preload them.
+        while (infos.hasNext()) {
+            ctx.database().checkpointReadLock();
+
+            try {
+                for (int i = 0; i < 100; i++) {
+                    if (!infos.hasNext())
+                        break;
+
+                    GridCacheEntryInfo entry = infos.next();
+
+                    if (!preloadEntry(from, p, entry, topVer)) {
+                        if (log.isTraceEnabled())
+                            log.trace("Got entries for invalid partition during " +
+                                "preloading (will skip) [p=" + p + ", entry=" + entry + ']');
+
+                        break;
+                    }
+
+//                    for (GridCacheContext cctx : grp.caches()) {
+//                        if (cctx.statisticsEnabled())
+//                            cctx.cache().metrics0().onRebalanceKeyReceived();
+//                    }
+                }
+            }
+            finally {
+                ctx.database().checkpointReadUnlock();
+            }
+
+        }
+    }
+
     /**
      * todo
      * @param from
@@ -908,7 +948,7 @@ public class GridDhtPartitionDemander {
      * @param topVer
      * @throws IgniteCheckedException
      */
-    private void preloadEntries(ClusterNode from,
+    public void preloadEntries(ClusterNode from,
         int p,
         Collection<GridCacheEntryInfo> entries,
         AffinityTopologyVersion topVer
