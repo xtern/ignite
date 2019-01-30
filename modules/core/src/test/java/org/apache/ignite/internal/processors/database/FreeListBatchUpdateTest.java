@@ -19,6 +19,7 @@ package org.apache.ignite.internal.processors.database;
 import java.text.DecimalFormat;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -31,6 +32,7 @@ import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.IgniteDataStreamer;
 import org.apache.ignite.cache.CacheMode;
 import org.apache.ignite.cache.affinity.rendezvous.RendezvousAffinityFunction;
+import org.apache.ignite.cluster.BaselineNode;
 import org.apache.ignite.configuration.CacheConfiguration;
 import org.apache.ignite.configuration.DataRegionConfiguration;
 import org.apache.ignite.configuration.DataStorageConfiguration;
@@ -68,13 +70,21 @@ public class FreeListBatchUpdateTest extends GridCommonAbstractTest {
     /** */
     private static final int HDR_SIZE = 8 + 32;
 
+    private static final long DEF_REG_SIZE = 6 * 1024 * 1024 * 1024L;
+
+    private boolean persistence = false;
+
     /** {@inheritDoc} */
     @Override protected IgniteConfiguration getConfiguration(String igniteInstanceName) throws Exception {
         IgniteConfiguration cfg = super.getConfiguration(igniteInstanceName);
 
-        cfg.setDataStorageConfiguration(new DataStorageConfiguration().setDefaultDataRegionConfiguration(new DataRegionConfiguration().setMaxSize(6*1024*1024*1024L)));
+        DataRegionConfiguration def = new DataRegionConfiguration();
+        def.setMaxSize(DEF_REG_SIZE);
+        def.setPersistenceEnabled(persistence);
 
-        //cfg.setCacheConfiguration();
+        DataStorageConfiguration storeCfg = new DataStorageConfiguration().setDefaultDataRegionConfiguration(def);
+
+        cfg.setDataStorageConfiguration(storeCfg);
 
         return cfg;
     }
@@ -102,12 +112,24 @@ public class FreeListBatchUpdateTest extends GridCommonAbstractTest {
      *
      */
     @Test
+    public void testBatchPutAllPds() throws Exception {
+        persistence = true;
+
+        testBatchPutAll();
+    }
+
+    /**
+     *
+     */
+    @Test
     public void testBatchPutAll() throws Exception {
         Ignite node = startGrid(0);
 
+        node.cluster().active(true);
+
         node.createCache(ccfg());
 
-        int cnt = 200_000;
+        int cnt = 10_000;
         int minSize = 0;
         int maxSize = 16384;
         int start = 0;
@@ -134,7 +156,20 @@ public class FreeListBatchUpdateTest extends GridCommonAbstractTest {
 
         validateCacheEntries(cache, srcMap);
 
+        if (persistence)
+            node.cluster().active(false);
+
         final IgniteEx node2 = startGrid(1);
+
+        if (persistence) {
+            List<BaselineNode> list = new ArrayList<>(node.cluster().currentBaselineTopology());
+
+            list.add(node2.localNode());
+
+            node.cluster().active(true);
+
+            node.cluster().setBaselineTopology(list);
+        }
 
         log.info("await rebalance");
 
@@ -147,7 +182,7 @@ public class FreeListBatchUpdateTest extends GridCommonAbstractTest {
 
                 return true;
             }
-        }, 10_000);
+        }, 30_000);
 
         assertTrue(ok);
 
@@ -158,6 +193,20 @@ public class FreeListBatchUpdateTest extends GridCommonAbstractTest {
         log.info("Verification on node2");
 
         validateCacheEntries(node2.cache(DEFAULT_CACHE_NAME), srcMap);
+
+        if (persistence) {
+            node2.close();
+
+            Ignite ignite = startGrid(1);
+
+            ignite.cluster().active(true);
+
+//            ignite.cluster().setBaselineTopology(Collections.singleton(((IgniteEx)ignite).localNode()));
+
+            log.info("Validate entries after restart");
+
+            validateCacheEntries(ignite.cache(DEFAULT_CACHE_NAME), srcMap);
+        }
     }
 
     /**
