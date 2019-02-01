@@ -1687,15 +1687,10 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
             Set<KeyCacheObject> insertKeys = new HashSet<>(keys);
 
             while (cur.next()) {
-//                log.info(">XXX> FOUND EXISTING VALUE!!!");
-
                 CacheDataRow row = cur.get();
 
-                if (insertKeys.remove(row.key()) && needUpdate(cctx, row, items.get(row.key()))) {
-                    log.info(">XXX> FOUND EXISTING VALUE!!!");
-
+                if (insertKeys.remove(row.key()) && needUpdate(cctx, row, items.get(row.key())))
                     updateKeys.put(row.key(), row);
-                }
             }
 
             // Updates.
@@ -1703,8 +1698,6 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
                 KeyCacheObject key = e.getKey();
 
                 GridCacheEntryInfo entry = items.get(key);
-
-                log.info("update: " + key.hashCode());
 
                 update(cctx, key, entry.value(), entry.version(), entry.expireTime(), e.getValue());
             }

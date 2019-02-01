@@ -798,7 +798,7 @@ public class GridDhtPartitionDemander {
                                         GridCacheContext cctx0 = grp.sharedGroup() ?
                                             ctx.cacheContext(entry.cacheId()) : grp.singleCacheContext();
 
-                                        if (cctx0.mvccEnabled() || !batchEnabled) {
+                                        if (cctx0.mvccEnabled() || !batchEnabled || entry.value() == null) {
                                             preloadEntry(node, p, entry, topVer);
 
                                             for (GridCacheContext cctx : grp.caches()) {

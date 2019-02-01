@@ -345,7 +345,6 @@ public abstract class PageHandler<X, R> {
      * @param wal Write ahead log.
      * @param walPlc Full page WAL record policy.
      * @param args Argument.
-     * @param intArg Argument of type {@code int}.
      * @param lockFailed Result in case of lock failure due to page recycling.
      * @param statHolder Statistics holder to track IO operations.
      * @return Handler result.
@@ -365,7 +364,9 @@ public abstract class PageHandler<X, R> {
         IoStatisticsHolder statHolder
     ) throws IgniteCheckedException {
         boolean releaseAfterWrite = true;
+
         long page = pageMem.acquirePage(grpId, pageId, statHolder);
+
         try {
             long pageAddr = writeLock(pageMem, grpId, pageId, page, lsnr, false);
 
@@ -382,11 +383,6 @@ public abstract class PageHandler<X, R> {
                 }
                 else
                     init = PageIO.getPageIO(pageAddr);
-
-
-//                for (X arg : args) {
-//                    R res = h.run(grpId, pageId, page, pageAddr, init, walPlc, arg, intArg, statHolder);
-//                }
 
                 R res = h.runBatch(grpId, pageId, page, pageAddr, init, walPlc, args, statHolder);
 

@@ -33,7 +33,9 @@ import org.apache.ignite.configuration.CacheConfiguration;
 import org.apache.ignite.configuration.DataRegionConfiguration;
 import org.apache.ignite.configuration.DataStorageConfiguration;
 import org.apache.ignite.configuration.IgniteConfiguration;
+import org.apache.ignite.configuration.WALMode;
 import org.apache.ignite.internal.IgniteEx;
+import org.apache.ignite.internal.IgniteInterruptedCheckedException;
 import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtLocalPartition;
 import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtPartitionState;
 import org.apache.ignite.internal.util.typedef.PA;
@@ -47,6 +49,7 @@ import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
 import static org.apache.ignite.IgniteSystemProperties.IGNITE_PDS_WAL_REBALANCE_THRESHOLD;
+import static org.junit.Assert.assertArrayEquals;
 
 /**
  *
@@ -64,12 +67,12 @@ public class FreeListBatchUpdateTest extends GridCommonAbstractTest {
     @Parameterized.Parameters(name = "with atomicity={0} and persistence={1}")
     public static Iterable<Object[]> setup() {
         return Arrays.asList(new Object[][]{
-//            {CacheAtomicityMode.ATOMIC, false},
+            {CacheAtomicityMode.ATOMIC, false},
             {CacheAtomicityMode.ATOMIC, true},
-//            {CacheAtomicityMode.TRANSACTIONAL, false},
-//            {CacheAtomicityMode.TRANSACTIONAL, true},
-//            {CacheAtomicityMode.TRANSACTIONAL_SNAPSHOT, false},
-//            {CacheAtomicityMode.TRANSACTIONAL_SNAPSHOT, true}
+            {CacheAtomicityMode.TRANSACTIONAL, false},
+            {CacheAtomicityMode.TRANSACTIONAL, true},
+            {CacheAtomicityMode.TRANSACTIONAL_SNAPSHOT, false},
+            {CacheAtomicityMode.TRANSACTIONAL_SNAPSHOT, true}
         });
     }
 
@@ -90,7 +93,14 @@ public class FreeListBatchUpdateTest extends GridCommonAbstractTest {
         def.setMaxSize(DEF_REG_SIZE);
         def.setPersistenceEnabled(persistence);
 
-        DataStorageConfiguration storeCfg = new DataStorageConfiguration().setDefaultDataRegionConfiguration(def);
+        DataStorageConfiguration storeCfg = new DataStorageConfiguration();
+
+        storeCfg.setDefaultDataRegionConfiguration(def);
+
+        if (persistence) {
+            storeCfg.setWalMode(WALMode.LOG_ONLY);
+            storeCfg.setMaxWalArchiveSize(Integer.MAX_VALUE);
+        }
 
         cfg.setDataStorageConfiguration(storeCfg);
 
@@ -126,13 +136,18 @@ public class FreeListBatchUpdateTest extends GridCommonAbstractTest {
         if (!persistence)
             return;
 
+        // TODO https://issues.apache.org/jira/browse/IGNITE-7384
+        // http://apache-ignite-developers.2346864.n4.nabble.com/Historical-rebalance-td38380.html
+        if (cacheAtomicityMode == CacheAtomicityMode.TRANSACTIONAL_SNAPSHOT)
+            return;
+
         System.setProperty(IGNITE_PDS_WAL_REBALANCE_THRESHOLD, "100");
 
         Ignite node = startGrids(2);
 
         node.cluster().active(true);
 
-        IgniteCache cache = node.createCache(ccfg());
+        IgniteCache<String, byte[]> cache = node.createCache(ccfg());
 
         int cnt = 10_000;
 
@@ -150,33 +165,47 @@ public class FreeListBatchUpdateTest extends GridCommonAbstractTest {
             streamer.addData(srcMap);
         }
 
-        log.info("Stopping one node");
+        forceCheckpoint();
+
+        log.info("Stopping node #2.");
 
         grid(1).close();
 
-        log.info("Updating values on alive node.");
+        log.info("Updating values on node #1.");
 
-        for (int i = 100; i < 1000; i++)
-            cache.put(String.valueOf(i), new byte[3]);
+        for (int i = 100; i < 1000; i++) {
+            String key = String.valueOf(i);
 
+            if (i % 33 == 0) {
+                cache.remove(key);
+
+                srcMap.remove(key);
+            }
+            else {
+                byte[] bytes = cache.get(key);
+
+                Arrays.fill(bytes, (byte)1);
+
+                srcMap.put(key, bytes);
+                cache.put(key, bytes);
+            }
+        }
+
+        forceCheckpoint();
+
+        log.info("Starting node #2.");
 
         IgniteEx node2 = startGrid(1);
 
-        log.info("await rebalance");
+        log.info("Await rebalance on node #2.");
 
-        boolean ok = GridTestUtils.waitForCondition(new PA() {
-            @Override public boolean apply() {
-                for ( GridDhtLocalPartition part : node2.context().cache().cache(DEFAULT_CACHE_NAME).context().group().topology().localPartitions()) {
-                    if (part.state() != GridDhtPartitionState.OWNING)
-                        return false;
-                }
+        awaitRebalance(node2, DEFAULT_CACHE_NAME);
 
-                return true;
-            }
-        }, 30_000);
+        log.info("Stop node #1.");
 
-        assertTrue(ok);
+        node.close();
 
+        validateCacheEntries(node2.cache(DEFAULT_CACHE_NAME), srcMap);
     }
 
     /**
@@ -197,17 +226,17 @@ public class FreeListBatchUpdateTest extends GridCommonAbstractTest {
 
         log.info("Loading " + cnt + " random entries per " + minSize + " - " + maxSize + " bytes.");
 
-        Map<Integer, byte[]> srcMap = new HashMap<>();
+        Map<String, byte[]> srcMap = new HashMap<>();
 
         for (int i = start; i < start + cnt; i++) {
             int size = minSize + ThreadLocalRandom.current().nextInt(maxSize - minSize);
 
             byte[] obj = new byte[size];
 
-            srcMap.put(i, obj);
+            srcMap.put(String.valueOf(i), obj);
         }
 
-        try (IgniteDataStreamer<Integer, byte[]> streamer = node.dataStreamer(DEFAULT_CACHE_NAME)) {
+        try (IgniteDataStreamer<String, byte[]> streamer = node.dataStreamer(DEFAULT_CACHE_NAME)) {
             streamer.addData(srcMap);
         }
 
@@ -234,18 +263,7 @@ public class FreeListBatchUpdateTest extends GridCommonAbstractTest {
 
         log.info("await rebalance");
 
-        boolean ok = GridTestUtils.waitForCondition(new PA() {
-            @Override public boolean apply() {
-                for ( GridDhtLocalPartition part : node2.context().cache().cache(DEFAULT_CACHE_NAME).context().group().topology().localPartitions()) {
-                    if (part.state() != GridDhtPartitionState.OWNING)
-                        return false;
-                }
-
-                return true;
-            }
-        }, 30_000);
-
-        assertTrue(ok);
+        awaitRebalance(node2, DEFAULT_CACHE_NAME);
 
         node.close();
 
@@ -262,8 +280,6 @@ public class FreeListBatchUpdateTest extends GridCommonAbstractTest {
 
             ignite.cluster().active(true);
 
-//            ignite.cluster().setBaselineTopology(Collections.singleton(((IgniteEx)ignite).localNode()));
-
             log.info("Validate entries after restart");
 
             validateCacheEntries(ignite.cache(DEFAULT_CACHE_NAME), srcMap);
@@ -271,14 +287,35 @@ public class FreeListBatchUpdateTest extends GridCommonAbstractTest {
     }
 
     /**
+     * @param node Ignite node.
+     * @param name Cache name.
+     */
+    private void awaitRebalance(IgniteEx node, String name) throws IgniteInterruptedCheckedException {
+        boolean ok = GridTestUtils.waitForCondition(new PA() {
+            @Override public boolean apply() {
+                for ( GridDhtLocalPartition part : node.context().cache().cache(name).context().group().topology().localPartitions()) {
+                    if (part.state() != GridDhtPartitionState.OWNING)
+                        return false;
+                }
+
+                return true;
+            }
+        }, 30_000);
+
+        U.sleep(1000);
+
+        assertTrue(ok);
+    }
+
+    /**
      * @param cache Cache.
      * @param map Map.
      */
     @SuppressWarnings("unchecked")
-    private void validateCacheEntries(IgniteCache cache, Map<Integer, byte[]> map) {
+    private void validateCacheEntries(IgniteCache cache, Map<String, byte[]> map) {
         assertEquals(map.size(), cache.size());
 
-        for (Map.Entry<Integer, byte[]> e : map.entrySet()) {
+        for (Map.Entry<String, byte[]> e : map.entrySet()) {
             String idx = "idx=" + e.getKey();
 
             byte[] bytes = (byte[])cache.get(e.getKey());
@@ -287,7 +324,7 @@ public class FreeListBatchUpdateTest extends GridCommonAbstractTest {
 
             assertEquals(idx + ": length not equal", e.getValue().length, bytes.length);
 
-            assertTrue(Arrays.equals(e.getValue(), bytes));
+            assertArrayEquals(idx, e.getValue(), bytes);
         }
     }
 
