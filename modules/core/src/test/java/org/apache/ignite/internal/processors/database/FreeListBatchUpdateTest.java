@@ -68,11 +68,11 @@ public class FreeListBatchUpdateTest extends GridCommonAbstractTest {
     public static Iterable<Object[]> setup() {
         return Arrays.asList(new Object[][]{
             {CacheAtomicityMode.ATOMIC, false},
-            {CacheAtomicityMode.ATOMIC, true},
-            {CacheAtomicityMode.TRANSACTIONAL, false},
-            {CacheAtomicityMode.TRANSACTIONAL, true},
-            {CacheAtomicityMode.TRANSACTIONAL_SNAPSHOT, false},
-            {CacheAtomicityMode.TRANSACTIONAL_SNAPSHOT, true}
+//            {CacheAtomicityMode.ATOMIC, true},
+//            {CacheAtomicityMode.TRANSACTIONAL, false},
+//            {CacheAtomicityMode.TRANSACTIONAL, true},
+//            {CacheAtomicityMode.TRANSACTIONAL_SNAPSHOT, false},
+//            {CacheAtomicityMode.TRANSACTIONAL_SNAPSHOT, true}
         });
     }
 
@@ -126,6 +126,34 @@ public class FreeListBatchUpdateTest extends GridCommonAbstractTest {
         cleanPersistenceDir();
 
         System.clearProperty(IGNITE_PDS_WAL_REBALANCE_THRESHOLD);
+    }
+
+    @Test
+    public void checkStreamer() throws Exception {
+        Ignite node = startGrids(4);
+
+        node.cluster().active(true);
+
+        IgniteCache<String, byte[]> cache = node.createCache(ccfg(16, CacheMode.REPLICATED));
+
+        awaitPartitionMapExchange();
+
+        int cnt = 100_000;
+
+        //IgniteCache<String, byte[]> cache = ;
+
+        try (IgniteDataStreamer<String, byte[]> streamer = node.dataStreamer(DEFAULT_CACHE_NAME)) {
+
+            for (int i = 0; i < cnt; i++)
+                streamer.addData(String.valueOf(i), new byte[128]);
+        }
+
+        assert GridTestUtils.waitForCondition(() -> {
+            return cache.size() == cnt;
+        }, 10_000);
+
+        for (int i = 0; i < cnt; i++)
+            assertTrue(cache.get(String.valueOf(i)).length == 128);
     }
 
     /**
@@ -333,9 +361,16 @@ public class FreeListBatchUpdateTest extends GridCommonAbstractTest {
      * @return Cache configuration.
      */
     private <K, V> CacheConfiguration<K, V> ccfg() {
+        return ccfg(1, CacheMode.REPLICATED);
+    }
+
+    /**
+     * @return Cache configuration.
+     */
+    private <K, V> CacheConfiguration<K, V> ccfg(int parts, CacheMode mode) {
         return new CacheConfiguration<K, V>(DEFAULT_CACHE_NAME)
-            .setAffinity(new RendezvousAffinityFunction(false, 1))
-            .setCacheMode(CacheMode.REPLICATED)
+            .setAffinity(new RendezvousAffinityFunction(false, parts))
+            .setCacheMode(mode)
             .setAtomicityMode(cacheAtomicityMode);
     }
 }

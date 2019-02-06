@@ -422,13 +422,12 @@ public interface IgniteCacheOffheapManager {
         @Nullable CacheDataRow oldRow
     ) throws IgniteCheckedException;
 
-    /**
-     * @param cctx Cache context.
-     * @param keys Sorted Keys.
-     * @param part Partition.
-     * @param items todo
-     * @throws IgniteCheckedException If failed.
+    /** todo
      */
+    public void updateBatch(
+        BatchCacheEntries batchEntries
+    ) throws IgniteCheckedException;
+
     public void updateBatch(
         GridCacheContext cctx,
         List<KeyCacheObject> keys,
@@ -804,6 +803,12 @@ public interface IgniteCacheOffheapManager {
             GridCacheContext cctx,
             List<KeyCacheObject> keys,
             Map<KeyCacheObject, GridCacheEntryInfo> items) throws IgniteCheckedException;
+
+        /** todo
+         */
+        public void updateBatch(
+            BatchCacheEntries batchEntries
+        ) throws IgniteCheckedException;
 
         /**
          * @param cctx Cache context.

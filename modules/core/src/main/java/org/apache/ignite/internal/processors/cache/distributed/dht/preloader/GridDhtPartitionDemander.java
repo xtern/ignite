@@ -982,8 +982,6 @@ public class GridDhtPartitionDemander {
                 if (log.isTraceEnabled())
                     log.trace("Rebalancing key [key=" + entry.key() + ", part=" + p + ", node=" + from.id() + ']');
 
-
-
                 List<T2<GridCacheMapEntry, GridCacheEntryInfo>> entriesList = cctxMap.get(cctx.cacheId());
 
                 if (entriesList == null) {

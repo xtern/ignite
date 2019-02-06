@@ -18,7 +18,9 @@
 package org.apache.ignite.internal.processors.cache;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
@@ -454,6 +456,13 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
         assert expireTime >= 0;
 
         dataStore(part).update(cctx, key, val, ver, expireTime, oldRow);
+    }
+
+    /** {@inheritDoc} */
+    @Override public void updateBatch(
+        BatchCacheEntries batchEntries
+    ) throws IgniteCheckedException {
+        dataStore(batchEntries.part()).updateBatch(batchEntries);
     }
 
     /** {@inheritDoc} */
@@ -1661,6 +1670,80 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
             invoke0(cctx, new SearchRow(cacheId, key), c);
         }
 
+
+        @Override public void updateBatch(
+            BatchCacheEntries items
+        ) throws IgniteCheckedException {
+            // todo ensure sorted
+            int size = items.size();
+
+            GridCacheContext cctx = items.context();
+
+            int cacheId = grp.sharedGroup() ? cctx.cacheId() : CU.UNDEFINED_CACHE_ID;
+
+            List<KeyCacheObject> sortedKeys = new ArrayList<>(items.keys());
+
+            sortedKeys.sort(Comparator.comparing(KeyCacheObject::hashCode));
+
+            KeyCacheObject minKey = sortedKeys.get(0);
+            KeyCacheObject maxKey = sortedKeys.get(size - 1);
+//
+//            assert last.hashCode() >= first.hashCode() : "Keys not sorted by hash: first=" + first.hashCode() + ", last=" + last.hashCode();
+
+            // todo check on which range we can loose performance (if there will be a lot of misses).
+
+            GridCursor<CacheDataRow> cur = dataTree.find(new SearchRow(cacheId, minKey), new SearchRow(cacheId, maxKey));
+
+            // todo bench perf linked vs not-linked
+            Map<KeyCacheObject, CacheDataRow> updateKeys = new LinkedHashMap<>();
+            // todo can rid from it - measure performance with iterator.
+            Set<KeyCacheObject> insertKeys = new HashSet<>(items.keys());
+
+            while (cur.next()) {
+                CacheDataRow row = cur.get();
+
+                if (insertKeys.remove(row.key()) && needUpdate(cctx, row, items.get(row.key()).version()))
+                    updateKeys.put(row.key(), row);
+            }
+
+            // Updates.
+            for (Map.Entry<KeyCacheObject, CacheDataRow> e : updateKeys.entrySet()) {
+                KeyCacheObject key = e.getKey();
+
+                BatchCacheEntries.BatchedCacheMapEntry entry = items.get(key);
+
+                update(cctx, key, entry.value(), entry.version(), entry.expireTime(), e.getValue());
+            }
+
+            // New.
+            List<DataRow> dataRows = new ArrayList<>(insertKeys.size());
+
+            for (KeyCacheObject key : insertKeys) {
+                BatchCacheEntries.BatchedCacheMapEntry entry = items.get(key);
+
+
+                CacheObject val = entry.value();
+                val.valueBytes(cctx.cacheObjectContext());
+                key.valueBytes(cctx.cacheObjectContext());
+
+//                long expTime = entry.ttl() < 0 ? CU.toExpireTime(entry.ttl()) : entry.ttl();
+
+                DataRow row = makeDataRow(key, val, entry.version(), entry.expireTime(), cacheId);
+
+                assert row.value() != null : key.hashCode();
+
+                dataRows.add(row);
+            }
+
+            rowStore.freeList().insertBatch(dataRows, grp.statisticsHolderData());
+
+            for (DataRow row : dataRows) {
+                dataTree.putx(row);
+
+                finishUpdate(cctx, row, null);
+            }
+        }
+
         @Override public void updateBatch(
             GridCacheContext cctx,
             List<KeyCacheObject> keys,
@@ -1689,7 +1772,7 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
             while (cur.next()) {
                 CacheDataRow row = cur.get();
 
-                if (insertKeys.remove(row.key()) && needUpdate(cctx, row, items.get(row.key())))
+                if (insertKeys.remove(row.key()) && needUpdate(cctx, row, items.get(row.key()).version()))
                     updateKeys.put(row.key(), row);
             }
 
@@ -1734,19 +1817,19 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
         }
 
         // todo
-        private boolean needUpdate(GridCacheContext cctx, CacheDataRow row, GridCacheEntryInfo entry) {
+        private boolean needUpdate(GridCacheContext cctx, CacheDataRow row, GridCacheVersion ver) {
             boolean update0;
 
-            GridCacheVersion currVer = row != null ? row.version() : entry.version();
+            GridCacheVersion currVer = row != null ? row.version() : ver;
 
             boolean isStartVer = cctx.shared().versions().isStartVersion(currVer);
 
             if (cctx.group().persistenceEnabled()) {
                 if (!isStartVer) {
                     if (cctx.atomic())
-                        update0 = GridCacheMapEntry.ATOMIC_VER_COMPARATOR.compare(currVer, entry.version()) < 0;
+                        update0 = GridCacheMapEntry.ATOMIC_VER_COMPARATOR.compare(currVer, ver) < 0;
                     else
-                        update0 = currVer.compareTo(entry.version()) < 0;
+                        update0 = currVer.compareTo(ver) < 0;
                 }
                 else
                     update0 = true;
