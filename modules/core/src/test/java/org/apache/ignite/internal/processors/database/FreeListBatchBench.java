@@ -169,7 +169,7 @@ public class FreeListBatchBench extends GridCommonAbstractTest {
             if (batch)
                 demander.preloadEntries(null, 0, infos, cctx.topology().readyTopologyVersion());
             else
-                demander.preloadEntries1(null, 0, infos, cctx.topology().readyTopologyVersion());
+                demander.preloadEntries2(null, 0, infos, cctx.topology().readyTopologyVersion());
 
             nanos += (System.nanoTime() - start);
         }
@@ -204,7 +204,7 @@ public class FreeListBatchBench extends GridCommonAbstractTest {
     private List<GridCacheEntryInfo> prepareBatch(GridCacheContext cctx, int off, int cnt, int[] sizes) {
         List<GridCacheEntryInfo> infos = new ArrayList<>();
 
-        GridCacheVersion ver = new GridCacheVersion((int)cctx.topology().readyTopologyVersion().topologyVersion(), 0, 0, 0);
+        //GridCacheVersion ver = new GridCacheVersion((int)cctx.topology().readyTopologyVersion().topologyVersion(), 0, 0, 0);
 
         for (int i = off; i < off + cnt; i++) {
             int size = sizes[i - off];
@@ -216,7 +216,7 @@ public class FreeListBatchBench extends GridCommonAbstractTest {
             info.key(key);
             info.value(val);
             info.cacheId(cctx.cacheId());
-            info.version(ver);
+            info.version(cctx.shared().versions().startVersion());
 
             infos.add(info);
         }
