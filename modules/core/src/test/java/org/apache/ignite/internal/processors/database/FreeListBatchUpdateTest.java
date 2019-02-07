@@ -67,12 +67,12 @@ public class FreeListBatchUpdateTest extends GridCommonAbstractTest {
     @Parameterized.Parameters(name = "with atomicity={0} and persistence={1}")
     public static Iterable<Object[]> setup() {
         return Arrays.asList(new Object[][]{
-            {CacheAtomicityMode.ATOMIC, false},
-//            {CacheAtomicityMode.ATOMIC, true},
+//            {CacheAtomicityMode.ATOMIC, false},
+            {CacheAtomicityMode.ATOMIC, true},
 //            {CacheAtomicityMode.TRANSACTIONAL, false},
-//            {CacheAtomicityMode.TRANSACTIONAL, true},
-//            {CacheAtomicityMode.TRANSACTIONAL_SNAPSHOT, false},
-//            {CacheAtomicityMode.TRANSACTIONAL_SNAPSHOT, true}
+            {CacheAtomicityMode.TRANSACTIONAL, true},
+            {CacheAtomicityMode.TRANSACTIONAL_SNAPSHOT, false},
+            {CacheAtomicityMode.TRANSACTIONAL_SNAPSHOT, true}
         });
     }
 
@@ -134,11 +134,11 @@ public class FreeListBatchUpdateTest extends GridCommonAbstractTest {
 
         node.cluster().active(true);
 
-        IgniteCache<String, byte[]> cache = node.createCache(ccfg(16, CacheMode.REPLICATED));
+        IgniteCache<String, byte[]> cache = node.createCache(ccfg(8, CacheMode.REPLICATED));
 
         awaitPartitionMapExchange();
 
-        int cnt = 100_000;
+        int cnt = 1024;
 
         //IgniteCache<String, byte[]> cache = ;
 
@@ -147,6 +147,10 @@ public class FreeListBatchUpdateTest extends GridCommonAbstractTest {
             for (int i = 0; i < cnt; i++)
                 streamer.addData(String.valueOf(i), new byte[128]);
         }
+
+        log.info("Sleep");
+
+        U.sleep(5_000);
 
         assert GridTestUtils.waitForCondition(() -> {
             return cache.size() == cnt;
@@ -267,6 +271,10 @@ public class FreeListBatchUpdateTest extends GridCommonAbstractTest {
         try (IgniteDataStreamer<String, byte[]> streamer = node.dataStreamer(DEFAULT_CACHE_NAME)) {
             streamer.addData(srcMap);
         }
+
+        srcMap.put(String.valueOf(1), new byte[65536]);
+
+        node.cache(DEFAULT_CACHE_NAME).put(String.valueOf(1), new byte[65536]);
 
         log.info("Done");
 

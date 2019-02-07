@@ -40,6 +40,7 @@ import org.apache.ignite.internal.IgniteInterruptedCheckedException;
 import org.apache.ignite.internal.cluster.ClusterTopologyCheckedException;
 import org.apache.ignite.internal.processors.affinity.AffinityAssignment;
 import org.apache.ignite.internal.processors.affinity.AffinityTopologyVersion;
+import org.apache.ignite.internal.processors.cache.BatchedCacheEntries;
 import org.apache.ignite.internal.processors.cache.CacheEntryInfoCollection;
 import org.apache.ignite.internal.processors.cache.CacheGroupContext;
 import org.apache.ignite.internal.processors.cache.CacheMetricsImpl;
@@ -953,6 +954,81 @@ public class GridDhtPartitionDemander {
         if (entries.isEmpty())
             return;
 
+        Map<Integer, BatchedCacheEntries> cctxMap = new HashMap<>();
+
+        // Map by context.
+        for (GridCacheEntryInfo info : entries) {
+            try {
+                GridCacheContext cctx0 = grp.sharedGroup() ? ctx.cacheContext(info.cacheId()) : grp.singleCacheContext();
+
+                if (cctx0 == null)
+                    return;
+
+                if (cctx0.isNear())
+                    cctx0 = cctx0.dhtCache().context();
+
+                final GridCacheContext cctx = cctx0;
+
+                if (log.isTraceEnabled())
+                    log.trace("Rebalancing key [key=" + info.key() + ", part=" + p + ", node=" + from.id() + ']');
+
+                BatchedCacheEntries batch = cctxMap.get(cctx.cacheId());
+
+                if (batch == null) {
+                    cctx.continuousQueries().getListenerReadLock().lock();
+
+                    cctxMap.put(cctx.cacheId(), batch = new BatchedCacheEntries(topVer, p, cctx, true));
+                }
+
+                batch.addEntry(info.key(), info.value(), info.expireTime(), info.ttl(), info.version(), DR_PRELOAD);
+            }
+            catch (GridDhtInvalidPartitionException ignored) {
+                if (log.isDebugEnabled())
+                    log.debug("Partition became invalid during rebalancing (will ignore): " + p);
+
+                return;
+            }
+        }
+
+        for (BatchedCacheEntries  batch : cctxMap.values()) {
+            GridCacheContext cctx = batch.context();
+
+            batch.lock();
+            try {
+                // todo ticket
+                assert !cctx.mvccEnabled() : "MVCC caches not supported";
+
+                // todo looks ugly (batch already have context)
+                cctx.offheap().updateBatch(batch);
+            } finally {
+                batch.unlock();
+
+                cctx.continuousQueries().getListenerReadLock().unlock();
+
+                for (GridCacheContext cctx0 : grp.caches()) {
+                    if (cctx0.statisticsEnabled())
+                        cctx0.cache().metrics0().onRebalanceKeysReceived(batch.size()); // todo size can be wrong
+                }
+            }
+        }
+    }
+
+    /**
+     * todo
+     * @param from
+     * @param p
+     * @param entries
+     * @param topVer
+     * @throws IgniteCheckedException
+     */
+    public void preloadEntries2(ClusterNode from,
+        int p,
+        Collection<GridCacheEntryInfo> entries,
+        AffinityTopologyVersion topVer
+    ) throws IgniteCheckedException {
+        if (entries.isEmpty())
+            return;
+
         GridDhtLocalPartition part = null;
 
         Map<Integer, List<T2<GridCacheMapEntry, GridCacheEntryInfo>>> cctxMap = new HashMap<>();
@@ -1043,10 +1119,8 @@ public class GridDhtPartitionDemander {
 
 //                        log.info("finish preload: " + info.key().hashCode());
 
-                        e.get1().finishPreload(info.value(), expTime, info.ttl(), info.version(), true,
-                            topVer,
-                            cctx.isDrEnabled() ? DR_PRELOAD : DR_NONE,
-                            cctx.mvccEnabled() ? ((MvccVersionAware)e).mvccVersion() : null);
+                        e.get1().finishPreload(info.value(), expTime, info.ttl(), info.version(), topVer,
+                            cctx.isDrEnabled() ? DR_PRELOAD : DR_NONE, null, true);
 
                     } finally {
                         e.get1().unlockEntry();
@@ -1195,10 +1269,10 @@ public class GridDhtPartitionDemander {
                         }
 
                         if (update) {
-                            cached.finishPreload(entry.value(), expTime, entry.ttl(), entry.version(), true,
+                            cached.finishPreload(entry.value(), expTime, entry.ttl(), entry.version(),
                                 topVer,
                                 cctx.isDrEnabled() ? DR_PRELOAD : DR_NONE,
-                                cctx.mvccEnabled() ? ((MvccVersionAware)entry).mvccVersion() : null);
+                                cctx.mvccEnabled() ? ((MvccVersionAware)entry).mvccVersion() : null, true);
                         }
                     }
                 } finally {

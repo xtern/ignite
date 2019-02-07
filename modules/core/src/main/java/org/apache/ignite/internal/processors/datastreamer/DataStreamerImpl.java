@@ -73,7 +73,7 @@ import org.apache.ignite.internal.managers.deployment.GridDeployment;
 import org.apache.ignite.internal.managers.eventstorage.GridLocalEventListener;
 import org.apache.ignite.internal.processors.affinity.AffinityTopologyVersion;
 import org.apache.ignite.internal.processors.affinity.GridAffinityProcessor;
-import org.apache.ignite.internal.processors.cache.BatchCacheEntries;
+import org.apache.ignite.internal.processors.cache.BatchedCacheEntries;
 import org.apache.ignite.internal.processors.cache.CacheObject;
 import org.apache.ignite.internal.processors.cache.CacheObjectContext;
 import org.apache.ignite.internal.processors.cache.DynamicCacheDescriptor;
@@ -137,7 +137,7 @@ public class DataStreamerImpl<K, V> implements IgniteDataStreamer<K, V>, Delayed
     private final Map<Long, ThreadBuffer> threadBufMap = new ConcurrentHashMap<>();
 
     /** Isolated receiver. */
-    private static final StreamReceiver ISOLATED_UPDATER = new OptimizedIsolatedUpdater();
+    private static final StreamReceiver ISOLATED_UPDATER = new OptimizedIsolatedUpdater(); // IsolatedUpdater(); //
 
     /** Amount of permissions should be available to continue new data processing. */
     private static final int REMAP_SEMAPHORE_PERMISSIONS_COUNT = Integer.MAX_VALUE;
@@ -2351,7 +2351,7 @@ public class DataStreamerImpl<K, V> implements IgniteDataStreamer<K, V>, Delayed
 
             GridCacheAdapter<KeyCacheObject, CacheObject> internalCache = proxy.context().cache();
 
-            if (internalCache.isNear() || internalCache.context().isLocal() || entries.size() < 10) { // todo threshold
+            if (internalCache.context().mvccEnabled() || internalCache.isNear() || internalCache.context().isLocal() || entries.size() < 10) { // todo threshold
                 super.receive(cache, entries);
 
                 return;
@@ -2376,7 +2376,7 @@ public class DataStreamerImpl<K, V> implements IgniteDataStreamer<K, V>, Delayed
             Collection<Integer> reservedParts = new HashSet<>();
             Collection<Integer> ignoredParts = new HashSet<>();
 
-            Map<Integer, BatchCacheEntries> batchMap = new HashMap<>();
+            Map<Integer, BatchedCacheEntries> batchMap = new HashMap<>();
 
             try {
 //                log.info("Received " + entries.size());
@@ -2387,7 +2387,7 @@ public class DataStreamerImpl<K, V> implements IgniteDataStreamer<K, V>, Delayed
                     try {
                         e.getKey().finishUnmarshal(cctx.cacheObjectContext(), cctx.deploy().globalLoader());
 
-                        BatchCacheEntries batch = null;
+                        BatchedCacheEntries batch = null;
 
                         if (plc != null) {
                             ttl = CU.toTtl(plc.getExpiryForCreation());
@@ -2428,10 +2428,12 @@ public class DataStreamerImpl<K, V> implements IgniteDataStreamer<K, V>, Delayed
                             }
                         }
 
-                            ///
-                            batch = batchMap.computeIfAbsent(p, v -> new BatchCacheEntries(topVer, p, cctx));
+                        ///
+                        batch = batchMap.computeIfAbsent(p, v -> new BatchedCacheEntries(topVer, p, cctx, false));
 
-                            batch.addEntry(e.getKey(), e.getValue(), expiryTime, ver);
+                        boolean primary = cctx.affinity().primaryByKey(cctx.localNode(), e.getKey(), topVer);
+
+                        batch.addEntry(e.getKey(), e.getValue(), expiryTime, ttl, ver, primary ? GridDrType.DR_LOAD : GridDrType.DR_PRELOAD);
 
 
 //                            if (topFut != null) {
@@ -2480,7 +2482,7 @@ public class DataStreamerImpl<K, V> implements IgniteDataStreamer<K, V>, Delayed
                 cctx.shared().database().checkpointReadLock();
 
                 try {
-                    for (BatchCacheEntries e : batchMap.values()) {
+                    for (BatchedCacheEntries e : batchMap.values()) {
                         e.lock();
                         try {
                             // todo topFut.validateCache
@@ -2504,8 +2506,6 @@ public class DataStreamerImpl<K, V> implements IgniteDataStreamer<K, V>, Delayed
 
             }
             finally {
-                log.info("Reserved: " + reservedParts);
-
                 for (Integer part : reservedParts) {
                     GridDhtLocalPartition locPart = cctx.topology().localPartition(part, topVer, false);
 

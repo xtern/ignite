@@ -18,7 +18,6 @@
 package org.apache.ignite.internal.processors.cache;
 
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -460,7 +459,7 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
 
     /** {@inheritDoc} */
     @Override public void updateBatch(
-        BatchCacheEntries batchEntries
+        BatchedCacheEntries batchEntries
     ) throws IgniteCheckedException {
         dataStore(batchEntries.part()).updateBatch(batchEntries);
     }
@@ -1670,11 +1669,8 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
             invoke0(cctx, new SearchRow(cacheId, key), c);
         }
 
-
-        @Override public void updateBatch(
-            BatchCacheEntries items
-        ) throws IgniteCheckedException {
-            // todo ensure sorted
+        /** {@inheritDoc} */
+        @Override public void updateBatch(BatchedCacheEntries items) throws IgniteCheckedException {
             int size = items.size();
 
             GridCacheContext cctx = items.context();
@@ -1687,10 +1683,11 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
 
             KeyCacheObject minKey = sortedKeys.get(0);
             KeyCacheObject maxKey = sortedKeys.get(size - 1);
-//
-//            assert last.hashCode() >= first.hashCode() : "Keys not sorted by hash: first=" + first.hashCode() + ", last=" + last.hashCode();
+
+//            assert maxKey.hashCode() >= minKey.hashCode() : "Keys not sorted by hash: first=" + minKey.hashCode() + ", last=" + maxKey.hashCode();
 
             // todo check on which range we can loose performance (if there will be a lot of misses).
+            // items.preload() && !cctx.group().persistenceEnabled() - in mem preloading is this case
 
             GridCursor<CacheDataRow> cur = dataTree.find(new SearchRow(cacheId, minKey), new SearchRow(cacheId, maxKey));
 
@@ -1702,15 +1699,20 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
             while (cur.next()) {
                 CacheDataRow row = cur.get();
 
-                if (insertKeys.remove(row.key()) && needUpdate(cctx, row, items.get(row.key()).version()))
-                    updateKeys.put(row.key(), row);
+                try {
+                    if (insertKeys.remove(row.key()) && items.needUpdate(row.key(), row)) //, items.get(row.key()).version()))
+                        updateKeys.put(row.key(), row);
+                }
+                catch (GridCacheEntryRemovedException e) {
+                    items.onRemove(row.key());
+                }
             }
 
             // Updates.
             for (Map.Entry<KeyCacheObject, CacheDataRow> e : updateKeys.entrySet()) {
                 KeyCacheObject key = e.getKey();
 
-                BatchCacheEntries.BatchedCacheMapEntry entry = items.get(key);
+                BatchedCacheEntries.BatchedCacheMapEntryInfo entry = items.get(key);
 
                 update(cctx, key, entry.value(), entry.version(), entry.expireTime(), e.getValue());
             }
@@ -1719,8 +1721,15 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
             List<DataRow> dataRows = new ArrayList<>(insertKeys.size());
 
             for (KeyCacheObject key : insertKeys) {
-                BatchCacheEntries.BatchedCacheMapEntry entry = items.get(key);
+                try {
+                    if (!items.needUpdate(key, null))
+                        continue;
+                }
+                catch (GridCacheEntryRemovedException e) {
+                    items.onRemove(key);
+                }
 
+                BatchedCacheEntries.BatchedCacheMapEntryInfo entry = items.get(key);
 
                 CacheObject val = entry.value();
                 val.valueBytes(cctx.cacheObjectContext());
@@ -1836,6 +1845,8 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
             }
             else
                 update0 = isStartVer;
+
+            // todo update0 |= (!preload && deletedUnlocked());
 
             return update0;
         }
