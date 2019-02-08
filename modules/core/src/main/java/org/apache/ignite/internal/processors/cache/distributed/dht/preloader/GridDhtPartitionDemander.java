@@ -921,10 +921,10 @@ public class GridDhtPartitionDemander {
                         break;
                     }
 
-//                    for (GridCacheContext cctx : grp.caches()) {
-//                        if (cctx.statisticsEnabled())
-//                            cctx.cache().metrics0().onRebalanceKeyReceived();
-//                    }
+                    for (GridCacheContext cctx : grp.caches()) {
+                        if (cctx.statisticsEnabled())
+                            cctx.cache().metrics0().onRebalanceKeyReceived();
+                    }
                 }
             }
             finally {

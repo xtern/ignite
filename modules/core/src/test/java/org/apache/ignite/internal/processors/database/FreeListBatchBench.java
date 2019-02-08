@@ -24,6 +24,9 @@ import org.apache.ignite.cache.CacheAtomicityMode;
 import org.apache.ignite.cache.CacheMode;
 import org.apache.ignite.cache.affinity.rendezvous.RendezvousAffinityFunction;
 import org.apache.ignite.configuration.CacheConfiguration;
+import org.apache.ignite.configuration.DataRegionConfiguration;
+import org.apache.ignite.configuration.DataStorageConfiguration;
+import org.apache.ignite.configuration.IgniteConfiguration;
 import org.apache.ignite.internal.IgniteEx;
 import org.apache.ignite.internal.processors.cache.CacheObject;
 import org.apache.ignite.internal.processors.cache.GridCacheContext;
@@ -31,7 +34,6 @@ import org.apache.ignite.internal.processors.cache.GridCacheEntryInfo;
 import org.apache.ignite.internal.processors.cache.KeyCacheObject;
 import org.apache.ignite.internal.processors.cache.distributed.dht.preloader.GridDhtPartitionDemander;
 import org.apache.ignite.internal.processors.cache.distributed.dht.preloader.GridDhtPreloader;
-import org.apache.ignite.internal.processors.cache.version.GridCacheVersion;
 import org.apache.ignite.testframework.GridTestUtils;
 import org.apache.ignite.testframework.junits.common.GridCommonAbstractTest;
 import org.junit.Test;
@@ -46,6 +48,31 @@ public class FreeListBatchBench extends GridCommonAbstractTest {
     /** */
     private static final DecimalFormat DECIMAL_FORMAT = new DecimalFormat("#0.0");
 
+    /** */
+    private static final long DEF_REG_SIZE = 8 * 1024 * 1024 * 1024L;
+
+    /** {@inheritDoc} */
+    @Override protected IgniteConfiguration getConfiguration(String igniteInstanceName) throws Exception {
+        IgniteConfiguration cfg = super.getConfiguration(igniteInstanceName);
+
+        DataRegionConfiguration def = new DataRegionConfiguration();
+        def.setInitialSize(DEF_REG_SIZE);
+        def.setMaxSize(DEF_REG_SIZE);
+//        def.setPersistenceEnabled(persistence);
+
+        DataStorageConfiguration storeCfg = new DataStorageConfiguration();
+
+        storeCfg.setDefaultDataRegionConfiguration(def);
+
+//        if (persistence) {
+//            storeCfg.setWalMode(WALMode.LOG_ONLY);
+//            storeCfg.setMaxWalArchiveSize(Integer.MAX_VALUE);
+//        }
+
+        cfg.setDataStorageConfiguration(storeCfg);
+
+        return cfg;
+    }
     /**
      *
      */
@@ -93,8 +120,8 @@ public class FreeListBatchBench extends GridCommonAbstractTest {
 
         long batchTotalTime = 0;
         long singleTotalTime = 0;
-        long[] batchTimes = new long[subIters];
-        long[] singleTimes = new long[subIters];
+        long[] batchTimes = new long[subIters / 2];
+        long[] singleTimes = new long[subIters / 2];
 
         IgniteEx node = grid(0);
 
@@ -105,25 +132,34 @@ public class FreeListBatchBench extends GridCommonAbstractTest {
 
             log.info(">>> Warm up " + subIters / 10 + " iterations.");
 
-            for (int i = 0; i < subIters / 10; i++)
-                doBatchUpdate(cctx, i % 2 == 0, batchSize, iterations, sizes);
+            int subOff  = subIters / 10;
+
+            for (int i = 0; i < subOff ; i++)
+                doBatchUpdate(cctx, i % 2 == 0, batchSize, iterations, sizes, i * iterations);
 
             log.info(">>> Starting " + subIters + " iterations, batch=" + batchSize);
 
             for (int i = 0; i < subIters; i++) {
-                long batch = doBatchUpdate(cctx,true, batchSize, iterations, sizes);
-                long single = doBatchUpdate(cctx,false, batchSize, iterations, sizes);
+                long batch, single;
+                if (i % 2 == 0) {
+                    batch = doBatchUpdate(cctx, true, batchSize, iterations, sizes, i * iterations + (subOff * iterations));
 
-                batchTimes[i] = batch;
-                singleTimes[i] = single;
+                    batchTimes[i / 2] = batch;
 
-                batchTotalTime += batch;
-                singleTotalTime += single;
+                    batchTotalTime += batch;
+                }
+                 else {
+                    single = doBatchUpdate(cctx, false, batchSize, iterations, sizes, i * iterations + (subOff * iterations));
+
+                    singleTimes[i / 2] = single;
+
+                    singleTotalTime += single;
+                }
             }
 
             // Check mean err.
-            long batchAvg = batchTotalTime / subIters;
-            long singleAvg = singleTotalTime / subIters;
+            long batchAvg = batchTotalTime / (subIters / 2);
+            long singleAvg = singleTotalTime / (subIters / 2);
 
             double batchMean = meanError(batchTimes, batchAvg);
             double singleMean = meanError(singleTimes, singleAvg);
@@ -153,7 +189,8 @@ public class FreeListBatchBench extends GridCommonAbstractTest {
         boolean batch,
         int batchSize,
         int iterations,
-        int[] objSizes
+        int[] objSizes,
+        int off
     ) throws Exception {
         GridDhtPreloader preloader = (GridDhtPreloader)cctx.group().preloader();
 
@@ -161,7 +198,7 @@ public class FreeListBatchBench extends GridCommonAbstractTest {
 
         long nanos = 0;
 
-        for (int iter = 0; iter < iterations; iter++) {
+        for (int iter = off; iter < off + iterations; iter++) {
             List<GridCacheEntryInfo> infos = prepareBatch(cctx, iter * batchSize, batchSize, objSizes);
 
             long start = System.nanoTime();
@@ -169,7 +206,7 @@ public class FreeListBatchBench extends GridCommonAbstractTest {
             if (batch)
                 demander.preloadEntries(null, 0, infos, cctx.topology().readyTopologyVersion());
             else
-                demander.preloadEntries2(null, 0, infos, cctx.topology().readyTopologyVersion());
+                demander.preloadEntries1(null, 0, infos, cctx.topology().readyTopologyVersion());
 
             nanos += (System.nanoTime() - start);
         }

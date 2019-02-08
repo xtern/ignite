@@ -116,7 +116,7 @@ public class BatchedCacheEntries {
                 update = true;
         }
         else
-            update = isStartVer;
+            update = (isStartVer && row == null);
 
         // todo update0 |= (!preload && deletedUnlocked());
 

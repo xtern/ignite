@@ -1679,17 +1679,18 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
 
             List<KeyCacheObject> sortedKeys = new ArrayList<>(items.keys());
 
-            sortedKeys.sort(Comparator.comparing(KeyCacheObject::hashCode));
-
-            KeyCacheObject minKey = sortedKeys.get(0);
-            KeyCacheObject maxKey = sortedKeys.get(size - 1);
-
-//            assert maxKey.hashCode() >= minKey.hashCode() : "Keys not sorted by hash: first=" + minKey.hashCode() + ", last=" + maxKey.hashCode();
-
             // todo check on which range we can loose performance (if there will be a lot of misses).
-            // items.preload() && !cctx.group().persistenceEnabled() - in mem preloading is this case
+            // todo items.preload() && !cctx.group().persistenceEnabled() - in mem preloading is this case
+            // todo logic for sorted keys should be enabled only for preloading without persistence
+            if (!items.preload())
+                sortedKeys.sort(Comparator.comparing(KeyCacheObject::hashCode));
 
-            GridCursor<CacheDataRow> cur = dataTree.find(new SearchRow(cacheId, minKey), new SearchRow(cacheId, maxKey));
+            KeyCacheObject firstKey = sortedKeys.get(0);
+            KeyCacheObject lastKey = sortedKeys.get(size - 1);
+
+            assert !items.preload() || lastKey.hashCode() >= firstKey.hashCode() : "Keys not sorted by hash: first=" + firstKey.hashCode() + ", last=" + lastKey.hashCode();
+
+            GridCursor<CacheDataRow> cur = dataTree.find(new SearchRow(cacheId, firstKey), new SearchRow(cacheId, lastKey));
 
             // todo bench perf linked vs not-linked
             Map<KeyCacheObject, CacheDataRow> updateKeys = new LinkedHashMap<>();
@@ -1718,7 +1719,7 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
             }
 
             // New.
-            List<DataRow> dataRows = new ArrayList<>(insertKeys.size());
+            List<DataRow> newRows = new ArrayList<>(insertKeys.size());
 
             for (KeyCacheObject key : insertKeys) {
                 try {
@@ -1741,12 +1742,12 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
 
                 assert row.value() != null : key.hashCode();
 
-                dataRows.add(row);
+                newRows.add(row);
             }
 
-            rowStore.freeList().insertBatch(dataRows, grp.statisticsHolderData());
+            rowStore.freeList().insertBatch(newRows, grp.statisticsHolderData());
 
-            for (DataRow row : dataRows) {
+            for (DataRow row : newRows) {
                 dataTree.putx(row);
 
                 finishUpdate(cctx, row, null);
