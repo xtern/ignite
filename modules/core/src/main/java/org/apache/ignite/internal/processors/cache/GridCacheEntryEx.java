@@ -803,6 +803,18 @@ public interface GridCacheEntryEx {
         GridDrType drType,
         boolean fromStore) throws IgniteCheckedException, GridCacheEntryRemovedException;
 
+
+    public void finishPreload(
+        @Nullable CacheObject val,
+        long expTime,
+        long ttl,
+        GridCacheVersion ver,
+        AffinityTopologyVersion topVer,
+        GridDrType drType,
+        MvccVersion mvccVer,
+        boolean preload
+    ) throws IgniteCheckedException;
+
     /**
      * Create versioned entry for this cache entry.
      *
@@ -1065,6 +1077,9 @@ public interface GridCacheEntryEx {
      * @throws GridCacheEntryRemovedException If entry was removed.
      */
     @Nullable public CacheObject unswap(CacheDataRow row)
+        throws IgniteCheckedException, GridCacheEntryRemovedException;
+
+    @Nullable public CacheDataRow unswap(@Nullable CacheDataRow row, boolean checkExpire)
         throws IgniteCheckedException, GridCacheEntryRemovedException;
 
     /**

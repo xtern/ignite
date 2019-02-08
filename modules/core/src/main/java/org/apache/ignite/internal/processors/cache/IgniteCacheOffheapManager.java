@@ -373,6 +373,19 @@ public interface IgniteCacheOffheapManager {
         @Nullable CacheDataRow oldRow
     ) throws IgniteCheckedException;
 
+    /** todo
+     */
+    public void updateBatch(
+        BatchedCacheEntries batchEntries
+    ) throws IgniteCheckedException;
+
+    public void updateBatch(
+        GridCacheContext cctx,
+        List<KeyCacheObject> keys,
+        GridDhtLocalPartition part,
+        Map<KeyCacheObject, GridCacheEntryInfo> items
+    ) throws IgniteCheckedException;
+
     /**
      * @param cctx Cache context.
      * @param key Key.
@@ -725,6 +738,23 @@ public interface IgniteCacheOffheapManager {
             GridCacheVersion ver,
             long expireTime,
             @Nullable CacheDataRow oldRow) throws IgniteCheckedException;
+
+        /**
+         * @param cctx Cache context.
+         * @param keys Sorted keys.
+         * @param items todo
+         * @throws IgniteCheckedException If failed.
+         */
+        public void updateBatch(
+            GridCacheContext cctx,
+            List<KeyCacheObject> keys,
+            Map<KeyCacheObject, GridCacheEntryInfo> items) throws IgniteCheckedException;
+
+        /** todo
+         */
+        public void updateBatch(
+            BatchedCacheEntries batchEntries
+        ) throws IgniteCheckedException;
 
         /**
          * @param cctx Cache context.
