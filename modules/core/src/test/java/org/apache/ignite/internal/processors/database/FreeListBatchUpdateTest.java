@@ -67,9 +67,9 @@ public class FreeListBatchUpdateTest extends GridCommonAbstractTest {
     @Parameterized.Parameters(name = "with atomicity={0} and persistence={1}")
     public static Iterable<Object[]> setup() {
         return Arrays.asList(new Object[][]{
-//            {CacheAtomicityMode.ATOMIC, false},
+            {CacheAtomicityMode.ATOMIC, false},
             {CacheAtomicityMode.ATOMIC, true},
-//            {CacheAtomicityMode.TRANSACTIONAL, false},
+            {CacheAtomicityMode.TRANSACTIONAL, false},
             {CacheAtomicityMode.TRANSACTIONAL, true},
             {CacheAtomicityMode.TRANSACTIONAL_SNAPSHOT, false},
             {CacheAtomicityMode.TRANSACTIONAL_SNAPSHOT, true}

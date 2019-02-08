@@ -1677,35 +1677,54 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
 
             int cacheId = grp.sharedGroup() ? cctx.cacheId() : CU.UNDEFINED_CACHE_ID;
 
-            List<KeyCacheObject> sortedKeys = new ArrayList<>(items.keys());
-
-            // todo check on which range we can loose performance (if there will be a lot of misses).
-            // todo items.preload() && !cctx.group().persistenceEnabled() - in mem preloading is this case
-            // todo logic for sorted keys should be enabled only for preloading without persistence
-            if (!items.preload())
-                sortedKeys.sort(Comparator.comparing(KeyCacheObject::hashCode));
-
-            KeyCacheObject firstKey = sortedKeys.get(0);
-            KeyCacheObject lastKey = sortedKeys.get(size - 1);
-
-            assert !items.preload() || lastKey.hashCode() >= firstKey.hashCode() : "Keys not sorted by hash: first=" + firstKey.hashCode() + ", last=" + lastKey.hashCode();
-
-            GridCursor<CacheDataRow> cur = dataTree.find(new SearchRow(cacheId, firstKey), new SearchRow(cacheId, lastKey));
-
             // todo bench perf linked vs not-linked
             Map<KeyCacheObject, CacheDataRow> updateKeys = new LinkedHashMap<>();
+
             // todo can rid from it - measure performance with iterator.
-            Set<KeyCacheObject> insertKeys = new HashSet<>(items.keys());
+            Set<KeyCacheObject> insertKeys;
 
-            while (cur.next()) {
-                CacheDataRow row = cur.get();
+            //
+            if (items.preload() && !cctx.group().persistenceEnabled()) {
+                insertKeys = new HashSet<>(items.keys());
 
-                try {
-                    if (insertKeys.remove(row.key()) && items.needUpdate(row.key(), row)) //, items.get(row.key()).version()))
-                        updateKeys.put(row.key(), row);
+                List<KeyCacheObject> sortedKeys = new ArrayList<>(items.keys());
+
+                KeyCacheObject firstKey = sortedKeys.get(0);
+                KeyCacheObject lastKey = sortedKeys.get(size - 1);
+
+                assert !items.preload() || lastKey.hashCode() >= firstKey.hashCode() : "Keys not sorted by hash: first=" + firstKey.hashCode() + ", last=" + lastKey.hashCode();
+
+                GridCursor<CacheDataRow> cur = dataTree.find(new SearchRow(cacheId, firstKey), new SearchRow(cacheId, lastKey));
+
+                while (cur.next()) {
+                    CacheDataRow row = cur.get();
+
+                    try {
+                        if (insertKeys.remove(row.key()) && items.needUpdate(row.key(), row)) //, items.get(row.key()).version()))
+                            updateKeys.put(row.key(), row);
+                    }
+                    catch (GridCacheEntryRemovedException e) {
+                        items.onRemove(row.key());
+                    }
                 }
-                catch (GridCacheEntryRemovedException e) {
-                    items.onRemove(row.key());
+            }
+            else {
+                insertKeys = new HashSet<>();
+
+                for (BatchedCacheEntries.BatchedCacheMapEntryInfo info : items.values()) {
+                    try {
+                        CacheDataRow row = find(cctx, info.key());
+
+                        if (info.needUpdate(row)) {
+                            if (row != null)
+                                updateKeys.put(info.key(), row);
+                            else
+                                insertKeys.add(info.key());
+                        }
+                    }
+                    catch (GridCacheEntryRemovedException e) {
+                        items.onRemove(info.key());
+                    }
                 }
             }
 

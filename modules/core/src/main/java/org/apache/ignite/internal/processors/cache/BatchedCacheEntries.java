@@ -76,6 +76,11 @@ public class BatchedCacheEntries {
     }
 
     /** */
+    public Collection<BatchedCacheMapEntryInfo> values() {
+        return infos.values();
+    }
+
+    /** */
     public int part() {
         return partId;
     }
@@ -99,30 +104,7 @@ public class BatchedCacheEntries {
     public boolean needUpdate(KeyCacheObject key, CacheDataRow row) throws GridCacheEntryRemovedException {
         BatchedCacheMapEntryInfo info = infos.get(key);
 
-        GridCacheVersion currVer = row != null ? row.version() : info.entry.version();
-
-        boolean isStartVer = cctx.shared().versions().isStartVersion(currVer);
-
-        boolean update;
-
-        if (cctx.group().persistenceEnabled()) {
-            if (!isStartVer) {
-                if (cctx.atomic())
-                    update = ATOMIC_VER_COMPARATOR.compare(currVer, info.version()) < 0;
-                else
-                    update = currVer.compareTo(info.version()) < 0;
-            }
-            else
-                update = true;
-        }
-        else
-            update = (isStartVer && row == null);
-
-        // todo update0 |= (!preload && deletedUnlocked());
-
-        info.update(update);
-
-        return update;
+        return info.needUpdate(row);
     }
 
     public void onRemove(KeyCacheObject key) {
@@ -201,8 +183,37 @@ public class BatchedCacheEntries {
             entry.finishPreload(val, expTime, ttl, ver, batch.topVer, drType, null, batch.preload);
         }
 
-        public void update(boolean update) {
-            this.update = update;
+//        public void update(boolean update) {
+//            this.update = update;
+//        }
+
+        public boolean needUpdate(CacheDataRow row) throws GridCacheEntryRemovedException {
+            GridCacheVersion currVer = row != null ? row.version() : entry.version();
+
+            GridCacheContext cctx = batch.context();
+
+            boolean isStartVer = cctx.versions().isStartVersion(currVer);
+
+            boolean update0;
+
+            if (cctx.group().persistenceEnabled()) {
+                if (!isStartVer) {
+                    if (cctx.atomic())
+                        update0 = ATOMIC_VER_COMPARATOR.compare(currVer, version()) < 0;
+                    else
+                        update0 = currVer.compareTo(version()) < 0;
+                }
+                else
+                    update0 = true;
+            }
+            else
+                update0 = (isStartVer && row == null);
+
+            // todo update0 |= (!preload && deletedUnlocked());
+
+            update = update0;
+
+            return update0;
         }
     }
 
