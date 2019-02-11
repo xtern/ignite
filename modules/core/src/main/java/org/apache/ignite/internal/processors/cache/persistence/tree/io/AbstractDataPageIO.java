@@ -979,138 +979,73 @@ public abstract class AbstractDataPageIO<T extends Storable> extends PageIO impl
         addRowFragment(null, pageId, pageAddr, 0, 0, lastLink, null, payload, pageSize);
     }
 
-    // todo
+    /**
+     * @param pageMem Page memory.
+     * @param pageId Page ID to use to construct a link.
+     * @param pageAddr Page address.
+     * @param rows Data rows.
+     * @param pageSize Page size.
+     * @throws IgniteCheckedException If failed.
+     */
     public void addRows(
         final PageMemory pageMem,
         final long pageId,
         final long pageAddr,
         final Collection<T> rows,
-//        final int rowSize,
         final int pageSize
     ) throws IgniteCheckedException {
-        int maxDataSIze = pageSize - MIN_DATA_PAGE_OVERHEAD;
-
-//        assert getDirectCount(pageAddr) == 0 : getDirectCount(pageAddr);
-//        assert getIndirectCount(pageAddr) == 0 : getIndirectCount(pageAddr);
-
-        int directCnt = 0;
-        int indirectCnt = 0;
-
-        int off = pageSize;
-
-        // todo
-        int total = 0;
+        // todo code duplication (3 times!)
+        int maxPayloadSIze = pageSize - MIN_DATA_PAGE_OVERHEAD;
+        int dataOff = pageSize;
+        int cnt = 0;
+        int written = 0;
 
         for (T row : rows) {
-            boolean fragment = row.size() > maxDataSIze;
+            boolean fragment = row.size() > maxPayloadSIze;
 
-            int payloadSize = fragment ? row.size() % maxDataSIze : row.size();
+            int payloadSize = row.size() % maxPayloadSIze;
 
             assert payloadSize <= getFreeSpace(pageAddr) : "can't call addRow if not enough space for the whole row";
 
-            int itemId, fullEntrySize, dataOff;
+            int sizeSetup = fragment ? SHOW_PAYLOAD_LEN | SHOW_LINK | SHOW_ITEM : SHOW_PAYLOAD_LEN | SHOW_ITEM;
 
-//            assert getDirectCount(pageAddr) == directCnt;
+            int fullEntrySize = getPageEntrySize(payloadSize, sizeSetup);
+
+            written += fullEntrySize;
+
+            dataOff -= (fullEntrySize - ITEM_SIZE);
 
             if (fragment) {
-                int written = row.size() - payloadSize;
-                int remain = payloadSize;
-                int hdrSize = row.headerSize();
-                long lastLink = row.link();
-
-//                System.out.println("[fragment] remain=" + remain + ", hdrSize=" + row.headerSize() + ", lastlink=" + row.link());
-
-                // We need page header (i.e. MVCC info) is located entirely on the very first page in chain.
-                // So we force moving it to the next page if it could not fit entirely on this page.
-                if (remain > 0 && remain < hdrSize)
-                    payloadSize -= hdrSize - remain;
-
-                fullEntrySize = getPageEntrySize(payloadSize, SHOW_PAYLOAD_LEN | SHOW_LINK | SHOW_ITEM);
-
-                off = off - fullEntrySize + 2;
-//                dataOff = getDataOffsetForWrite(pageAddr, fullEntrySize, directCnt, indirectCnt, pageSize);
-
-//                System.out.println("cntr=" + directCnt + ", dataOff=" + dataOff + ", fullEntrySize="+fullEntrySize + ", qq="+(pageSize - fullEntrySize));
-
-//                assert dataOff == off : "off="+off+", dataOff="+dataOff;
-
-
-//                if (payload == null) {
                 ByteBuffer buf = pageMem.pageBuffer(pageAddr);
 
-                buf.position(off);
+                buf.position(dataOff);
 
-                short p = (short)(payloadSize | FRAGMENTED_FLAG);
+                buf.putShort((short)(payloadSize | FRAGMENTED_FLAG));
+                buf.putLong(row.link());
 
-                buf.putShort(p);
-                buf.putLong(lastLink);
-
-                //int rowOff = rowSize - written - payloadSize;
-
-                // todo is ti 0?
+                // todo is it 0?
                 writeFragmentData(row, buf, 0, payloadSize);
-//                }
-//                else {
-//                    PageUtils.putShort(pageAddr, dataOff, (short)(payloadSize | FRAGMENTED_FLAG));
-//
-//                    PageUtils.putLong(pageAddr, dataOff + 2, lastLink);
-//
-//                    PageUtils.putBytes(pageAddr, dataOff + 10, payload);
-//                }
-
-//                if (row != null)
-//                    setLinkByPageId(row, pageId, itemId);
-            } else {
-                fullEntrySize = getPageEntrySize(payloadSize, SHOW_PAYLOAD_LEN | SHOW_ITEM);
-//                System.out.println("[full] fullEntrySize=" + fullEntrySize + ", rowSize=" + payloadSize + ", ind="+getIndirectCount(pageAddr) + ", ");
-
-                // todo
-//                dataOff = getDataOffsetForWrite(pageAddr, fullEntrySize, directCnt, indirectCnt, pageSize);
-
-                off = off - fullEntrySize + 2;
-
-//                int directCnt = getDirectCount(pageAddr);
-                //        System.out.println(">xxx> pageAddr="+pageAddr+", but dirCnt="+directCnt);
-//                int indirectCnt = getIndirectCount(pageAddr);
-
-                writeRowData(pageAddr, off, payloadSize, row, true);
-
-//                itemId = addItem(pageAddr, fullEntrySize, directCnt, indirectCnt, dataOff, pageSize);
-                //        System.out.println(">xxx> link pageId="+pageId + ", itemId="+itemId);
             }
+            else
+                writeRowData(pageAddr, dataOff, payloadSize, row, true);
 
-            //itemId = addItem(pageAddr, fullEntrySize, directCnt, indirectCnt, off, pageSize);
+            setItem(pageAddr, cnt, directItemFromOffset(dataOff));
 
-            total += fullEntrySize;
-
-//            itemId = insertItem(pageAddr, off, directCnt, indirectCnt, pageSize);
-
-            setItem(pageAddr, directCnt, directItemFromOffset(off));
-
-            itemId = directCnt;
-
-
-
-//        System.out.println(">xxx> pageAddr=" + pageAddr + "itemId=" + itemId + ", off=" + dataOff + ", cnt=" + directCnt + ", indcnt=" + indirectCnt);
-
-            assert checkIndex(itemId) : itemId;
+            assert checkIndex(cnt) : cnt;
             assert getIndirectCount(pageAddr) <= getDirectCount(pageAddr);
 
+            setLinkByPageId(row, pageId, cnt);
 
-            //
-
-            setLinkByPageId(row, pageId, itemId);
-
-            directCnt = directCnt + 1;
+            ++cnt;
         }
 
-        setDirectCount(pageAddr, directCnt);
+        setDirectCount(pageAddr, cnt);
 
-        setFirstEntryOffset(pageAddr, off, pageSize);
+        setFirstEntryOffset(pageAddr, dataOff, pageSize);
 
         // Update free space. If number of indirect items changed, then we were able to reuse an item slot.
         // + (getIndirectCount(pageAddr) != indirectCnt ? ITEM_SIZE : 0)
-        setRealFreeSpace(pageAddr, getRealFreeSpace(pageAddr) - total, pageSize);
+        setRealFreeSpace(pageAddr, getRealFreeSpace(pageAddr) - written, pageSize);
     }
 
     /**

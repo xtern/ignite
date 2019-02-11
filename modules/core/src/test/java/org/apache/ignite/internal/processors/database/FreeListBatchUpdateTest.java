@@ -82,9 +82,6 @@ public class FreeListBatchUpdateTest extends GridCommonAbstractTest {
     @Parameterized.Parameter(1)
     public boolean persistence;
 
-//    @Parameterized.Parameter(2)
-//    public boolean WalRebalance;
-
     /** {@inheritDoc} */
     @Override protected IgniteConfiguration getConfiguration(String igniteInstanceName) throws Exception {
         IgniteConfiguration cfg = super.getConfiguration(igniteInstanceName);

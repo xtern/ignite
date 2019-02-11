@@ -329,16 +329,12 @@ public abstract class AbstractFreeList<T extends Storable> extends PagesList imp
             Collection<T> args,
             IoStatisticsHolder statHolder
         ) throws IgniteCheckedException {
-            int written = 0;
-
-            int maxDataSize = pageSize() - AbstractDataPageIO.MIN_DATA_PAGE_OVERHEAD;
+            int maxPayloadSize = pageSize() - AbstractDataPageIO.MIN_DATA_PAGE_OVERHEAD;
 
             AbstractDataPageIO<T> iox = (AbstractDataPageIO<T>)io;
 
-//            assert  : pageId;
-
             // todo !! DO NOT FORGET WAL DELTA !!
-            if (iox.getFreeSpace(pageAddr) == maxDataSize) {
+            if (iox.getFreeSpace(pageAddr) == maxPayloadSize) {
                 // todo save links for WAL
 
                 iox.addRows(pageMem, pageId, pageAddr, args, pageSize());
@@ -347,37 +343,18 @@ public abstract class AbstractFreeList<T extends Storable> extends PagesList imp
             }
             else {
                 for (T row : args) {
-                    if (row.size() > maxDataSize)
-                        written = row.size() - (row.size() % maxDataSize);
-                    else
-                        written = 0;
+                    assert iox.getFreeSpace(pageAddr) > 0 : iox.getFreeSpace(pageAddr);
 
-                    //written = run0(pageId, page, pageAddr, io, row, written, statHolder);
-                    //-----------------------
-                    int rowSize = row.size();
-                    int oldFreeSpace = iox.getFreeSpace(pageAddr);
+                    int size = row.size();
 
-                    assert oldFreeSpace > 0 : oldFreeSpace;
+                    int written = size > maxPayloadSize ?
+                        addRowFragment(pageId, page, pageAddr, iox, row, size - (size % maxPayloadSize), size) :
+                        addRow(pageId, page, pageAddr, iox, row, size);
 
-                    // If the full row does not fit into this page write only a fragment.
-                    //            System.out.println(">xxx> free=" + oldFreeSpace + ", rowSize=" + rowSize + " hash=" + row.hashCode());
-
-                    boolean fragment = written != 0;// || oldFreeSpace >= rowSize;
-
-                    if (fragment)
-                        written = addRowFragment(pageId, page, pageAddr, iox, row, written, rowSize);
-                    else
-                        written = addRow(pageId, page, pageAddr, iox, row, rowSize);
-
-                    if (written == rowSize)
-                        evictionTracker.touchPage(pageId);
-
-                    // Avoid boxing with garbage generation for usual case.
-                    //                return written == rowSize ? COMPLETE : written;
-                    //-----------------------
-
-                    assert written == rowSize : "The object is not fully written into page: " +
+                    assert written == size : "The object is not fully written into page: " +
                         "pageId=" + pageId + ", written=" + written + ", size=" + row.size();
+
+                    evictionTracker.touchPage(pageId);
                 }
             }
 

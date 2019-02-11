@@ -1731,6 +1731,7 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
             // Updates.
             for (Map.Entry<KeyCacheObject, CacheDataRow> e : updateKeys.entrySet()) {
                 KeyCacheObject key = e.getKey();
+                // todo why we don't need here to marshal cache object (call valueBytes)
 
                 BatchedCacheEntries.BatchedCacheMapEntryInfo entry = items.get(key);
 
