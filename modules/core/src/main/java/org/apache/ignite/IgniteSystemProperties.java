@@ -1081,6 +1081,9 @@ public final class IgniteSystemProperties {
      */
     public static final String IGNITE_DISCOVERY_DISABLE_CACHE_METRICS_UPDATE = "IGNITE_DISCOVERY_DISABLE_CACHE_METRICS_UPDATE";
 
+    /** */
+    public static final String IGNITE_DATA_STORAGE_BATCH_PAGE_WRITE = "IGNITE_DATA_STORAGE_BATCH_PAGE_WRITE";
+
     /**
      * Enforces singleton.
      */

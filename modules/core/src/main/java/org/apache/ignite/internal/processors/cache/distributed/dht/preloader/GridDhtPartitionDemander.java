@@ -30,6 +30,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.IgniteLogger;
+import org.apache.ignite.IgniteSystemProperties;
 import org.apache.ignite.cache.CacheRebalanceMode;
 import org.apache.ignite.cluster.ClusterNode;
 import org.apache.ignite.configuration.CacheConfiguration;
@@ -91,6 +92,10 @@ import static org.apache.ignite.internal.processors.dr.GridDrType.DR_PRELOAD;
 public class GridDhtPartitionDemander {
     /** */
     private static final int BATCH_PRELOAD_THRESHOLD = 5;
+
+    /** */
+    private final boolean batchPageWriteEnabled =
+        IgniteSystemProperties.getBoolean(IgniteSystemProperties.IGNITE_DATA_STORAGE_BATCH_PAGE_WRITE, false);
 
     /** */
     private final GridCacheSharedContext<?, ?> ctx;
@@ -772,7 +777,12 @@ public class GridDhtPartitionDemander {
                         part.lock();
 
                         try {
-                            boolean batchEnabled = e.getValue().infos().size() > BATCH_PRELOAD_THRESHOLD;
+                            boolean batchEnabled =
+                                batchPageWriteEnabled && e.getValue().infos().size() > BATCH_PRELOAD_THRESHOLD;
+
+                            // todo investigate supply messages with 0 infos.
+                            if (!e.getValue().infos().isEmpty())
+                                log.info("Preloading " + e.getValue().infos().size() + " (batch=" + batchEnabled + ", part=" + p + ")");
 
                             Iterator<GridCacheEntryInfo> infos = e.getValue().infos().iterator();
 

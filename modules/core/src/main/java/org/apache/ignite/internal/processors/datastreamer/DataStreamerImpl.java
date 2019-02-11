@@ -53,6 +53,7 @@ import org.apache.ignite.IgniteDataStreamerTimeoutException;
 import org.apache.ignite.IgniteException;
 import org.apache.ignite.IgniteInterruptedException;
 import org.apache.ignite.IgniteLogger;
+import org.apache.ignite.IgniteSystemProperties;
 import org.apache.ignite.cache.CacheMode;
 import org.apache.ignite.cluster.ClusterNode;
 import org.apache.ignite.cluster.ClusterTopologyException;
@@ -130,6 +131,10 @@ public class DataStreamerImpl<K, V> implements IgniteDataStreamer<K, V>, Delayed
     /** Per thread buffer size. */
     private int bufLdrSzPerThread = DFLT_PER_THREAD_BUFFER_SIZE;
 
+    /** */
+    private static final boolean batchPageWriteEnabled =
+        IgniteSystemProperties.getBoolean(IgniteSystemProperties.IGNITE_DATA_STORAGE_BATCH_PAGE_WRITE, false);
+
     /**
      * Thread buffer map: on each thread there are future and list of entries which will be streamed after filling
      * thread batch.
@@ -137,7 +142,7 @@ public class DataStreamerImpl<K, V> implements IgniteDataStreamer<K, V>, Delayed
     private final Map<Long, ThreadBuffer> threadBufMap = new ConcurrentHashMap<>();
 
     /** Isolated receiver. */
-    private static final StreamReceiver ISOLATED_UPDATER = new OptimizedIsolatedUpdater(); // IsolatedUpdater(); //
+    private static final StreamReceiver ISOLATED_UPDATER = batchPageWriteEnabled ? new OptimizedIsolatedUpdater() : new IsolatedUpdater();
 
     /** Amount of permissions should be available to continue new data processing. */
     private static final int REMAP_SEMAPHORE_PERMISSIONS_COUNT = Integer.MAX_VALUE;

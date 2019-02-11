@@ -248,9 +248,9 @@ public class FreeListBatchUpdateTest extends GridCommonAbstractTest {
 
         node.createCache(ccfg());
 
-        int cnt = 10_000;
+        int cnt = 100_000;
         int minSize = 0;
-        int maxSize = 16384;
+        int maxSize = 2048;
         int start = 0;
 
         log.info("Loading " + cnt + " random entries per " + minSize + " - " + maxSize + " bytes.");
