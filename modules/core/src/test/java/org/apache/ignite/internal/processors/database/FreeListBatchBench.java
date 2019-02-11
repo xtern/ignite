@@ -20,6 +20,8 @@ import java.text.DecimalFormat;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ThreadLocalRandom;
+import org.apache.ignite.DataRegionMetrics;
+import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.cache.CacheAtomicityMode;
 import org.apache.ignite.cache.CacheMode;
 import org.apache.ignite.cache.affinity.rendezvous.RendezvousAffinityFunction;
@@ -34,6 +36,8 @@ import org.apache.ignite.internal.processors.cache.GridCacheEntryInfo;
 import org.apache.ignite.internal.processors.cache.KeyCacheObject;
 import org.apache.ignite.internal.processors.cache.distributed.dht.preloader.GridDhtPartitionDemander;
 import org.apache.ignite.internal.processors.cache.distributed.dht.preloader.GridDhtPreloader;
+import org.apache.ignite.internal.processors.cache.persistence.DataRegion;
+import org.apache.ignite.internal.processors.cache.persistence.IgniteCacheDatabaseSharedManager;
 import org.apache.ignite.testframework.GridTestUtils;
 import org.apache.ignite.testframework.junits.common.GridCommonAbstractTest;
 import org.junit.Test;
@@ -49,25 +53,42 @@ public class FreeListBatchBench extends GridCommonAbstractTest {
     private static final DecimalFormat DECIMAL_FORMAT = new DecimalFormat("#0.0");
 
     /** */
-    private static final long DEF_REG_SIZE = 8 * 1024 * 1024 * 1024L;
+    private static final long DEF_REG_SIZE = 4 * 1024 * 1024 * 1024L;
+
+    /** */
+    private static final String REG_BATCH = "batch-region";
+
+    /** */
+    private static final String REG_SINGLE = "single-region";
+
+    /** */
+    private static final String CACHE_BATCH = "batch";
+
+    /** */
+    private static final String CACHE_SINGLE = "single";
+
+    /** */
+    private static final boolean MEM_STAT = true;
 
     /** {@inheritDoc} */
     @Override protected IgniteConfiguration getConfiguration(String igniteInstanceName) throws Exception {
         IgniteConfiguration cfg = super.getConfiguration(igniteInstanceName);
 
-        DataRegionConfiguration def = new DataRegionConfiguration();
-        def.setInitialSize(DEF_REG_SIZE);
-        def.setMaxSize(DEF_REG_SIZE);
-//        def.setPersistenceEnabled(persistence);
+        DataRegionConfiguration reg1 = new DataRegionConfiguration();
+        reg1.setInitialSize(DEF_REG_SIZE);
+        reg1.setMaxSize(DEF_REG_SIZE);
+        reg1.setMetricsEnabled(MEM_STAT);
+        reg1.setName(REG_BATCH);
+
+        DataRegionConfiguration reg2 = new DataRegionConfiguration();
+        reg2.setInitialSize(DEF_REG_SIZE);
+        reg2.setMaxSize(DEF_REG_SIZE);
+        reg2.setMetricsEnabled(MEM_STAT);
+        reg2.setName(REG_SINGLE);
 
         DataStorageConfiguration storeCfg = new DataStorageConfiguration();
 
-        storeCfg.setDefaultDataRegionConfiguration(def);
-
-//        if (persistence) {
-//            storeCfg.setWalMode(WALMode.LOG_ONLY);
-//            storeCfg.setMaxWalArchiveSize(Integer.MAX_VALUE);
-//        }
+        storeCfg.setDataRegionConfigurations(reg1, reg2);
 
         cfg.setDataStorageConfiguration(storeCfg);
 
@@ -92,7 +113,8 @@ public class FreeListBatchBench extends GridCommonAbstractTest {
         bench(batchSize / 10, 100, 4096, 16384);
         bench(batchSize / 50, 500, 4096, 16384);
         bench(batchSize / 100, 1000, 4096, 16384);
-//        doBatch(2, 1000, 4096, 16384);
+
+        //bench(batchSize / 10, 50, 4096, 16384);
     }
 
     /** */
@@ -125,31 +147,36 @@ public class FreeListBatchBench extends GridCommonAbstractTest {
 
         IgniteEx node = grid(0);
 
-        node.createCache(ccfg());
+        node.createCache(ccfg(true));
+        node.createCache(ccfg(false));
 
         try {
-            GridCacheContext cctx = node.cachex(DEFAULT_CACHE_NAME).context();
-
             log.info(">>> Warm up " + subIters / 10 + " iterations.");
 
             int subOff  = subIters / 10;
 
-            for (int i = 0; i < subOff ; i++)
-                doBatchUpdate(cctx, i % 2 == 0, batchSize, iterations, sizes, i * iterations);
+            GridCacheContext cctxBatch = node.cachex(CACHE_BATCH).context();
+            GridCacheContext cctxSingle = node.cachex(CACHE_SINGLE).context();
+
+            for (int i = 0; i < subOff ; i++) {
+                boolean batch = i % 2 == 0;
+
+                doBatchUpdate(batch ? cctxBatch : cctxSingle, batch, batchSize, iterations, sizes, i * iterations);
+            }
 
             log.info(">>> Starting " + subIters + " iterations, batch=" + batchSize);
 
             for (int i = 0; i < subIters; i++) {
                 long batch, single;
                 if (i % 2 == 0) {
-                    batch = doBatchUpdate(cctx, true, batchSize, iterations, sizes, i * iterations + (subOff * iterations));
+                    batch = doBatchUpdate(cctxBatch, true, batchSize, iterations, sizes, i * iterations + (subOff * iterations));
 
                     batchTimes[i / 2] = batch;
 
                     batchTotalTime += batch;
                 }
                  else {
-                    single = doBatchUpdate(cctx, false, batchSize, iterations, sizes, i * iterations + (subOff * iterations));
+                    single = doBatchUpdate(cctxSingle, false, batchSize, iterations, sizes, i * iterations + (subOff * iterations));
 
                     singleTimes[i / 2] = single;
 
@@ -177,9 +204,19 @@ public class FreeListBatchBench extends GridCommonAbstractTest {
                 singleMean, singleAvg, DECIMAL_FORMAT.format((singleMean / (double)singleAvg) * 100));
 
             log.info(str);
+
+            if (MEM_STAT) {
+                IgniteCacheDatabaseSharedManager dbMgr = grid(0).context().cache().context().database();
+
+                dbMgr.dumpStatistics(log());
+
+                printMemMetrics(dbMgr, REG_BATCH);
+                printMemMetrics(dbMgr, REG_SINGLE);
+            }
         }
         finally {
-            grid(0).destroyCache(DEFAULT_CACHE_NAME);
+            grid(0).destroyCache(CACHE_BATCH);
+            grid(0).destroyCache(CACHE_SINGLE);
         }
     }
 
@@ -241,8 +278,6 @@ public class FreeListBatchBench extends GridCommonAbstractTest {
     private List<GridCacheEntryInfo> prepareBatch(GridCacheContext cctx, int off, int cnt, int[] sizes) {
         List<GridCacheEntryInfo> infos = new ArrayList<>();
 
-        //GridCacheVersion ver = new GridCacheVersion((int)cctx.topology().readyTopologyVersion().topologyVersion(), 0, 0, 0);
-
         for (int i = off; i < off + cnt; i++) {
             int size = sizes[i - off];
 
@@ -268,13 +303,25 @@ public class FreeListBatchBench extends GridCommonAbstractTest {
         return DECIMAL_FORMAT.format((100 - ((double)time) / ((double)time1) * 100) * -1);
     }
 
+
+    /** */
+    private void printMemMetrics(IgniteCacheDatabaseSharedManager dbMgr, String regName) throws IgniteCheckedException {
+        DataRegion reg = dbMgr.dataRegion(regName);
+
+        DataRegionMetrics metrics = reg.memoryMetrics();
+
+        log.info(regName + ": pages=" + metrics.getTotalAllocatedPages() +
+            ", fill=" + new DecimalFormat("#0.0000").format(metrics.getPagesFillFactor()));
+    }
+
     /**
      * @return Cache configuration.
      */
-    private <K, V> CacheConfiguration<K, V> ccfg() {
-        return new CacheConfiguration<K, V>(DEFAULT_CACHE_NAME)
+    private <K, V> CacheConfiguration<K, V> ccfg(boolean batch) {
+        return new CacheConfiguration<K, V>(batch ? CACHE_BATCH : CACHE_SINGLE)
             .setAffinity(new RendezvousAffinityFunction(false, 1))
             .setCacheMode(CacheMode.REPLICATED)
-            .setAtomicityMode(CacheAtomicityMode.ATOMIC);
+            .setAtomicityMode(CacheAtomicityMode.ATOMIC)
+            .setDataRegionName(batch ? REG_BATCH : REG_SINGLE);
     }
 }
