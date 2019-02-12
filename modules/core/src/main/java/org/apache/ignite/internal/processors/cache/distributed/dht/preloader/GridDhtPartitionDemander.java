@@ -94,7 +94,7 @@ public class GridDhtPartitionDemander {
     private static final int BATCH_PRELOAD_THRESHOLD = 5;
 
     /** */
-    private final boolean batchPageWriteEnabled =
+    private static final boolean batchPageWriteEnabled =
         IgniteSystemProperties.getBoolean(IgniteSystemProperties.IGNITE_DATA_STORAGE_BATCH_PAGE_WRITE, false);
 
     /** */
@@ -781,8 +781,8 @@ public class GridDhtPartitionDemander {
                                 batchPageWriteEnabled && e.getValue().infos().size() > BATCH_PRELOAD_THRESHOLD;
 
                             // todo investigate supply messages with 0 infos.
-                            if (!e.getValue().infos().isEmpty())
-                                log.info("Preloading " + e.getValue().infos().size() + " (batch=" + batchEnabled + ", part=" + p + ")");
+//                            if (!e.getValue().infos().isEmpty())
+//                                log.info("Preloading " + e.getValue().infos().size() + " (batch=" + batchEnabled + ", part=" + p + ")");
 
                             Iterator<GridCacheEntryInfo> infos = e.getValue().infos().iterator();
 
@@ -1477,7 +1477,8 @@ public class GridDhtPartitionDemander {
                         "rebalancing [grp=" + grp.cacheOrGroupName() +
                         ", supplier=" + nodeId +
                         ", topVer=" + topologyVersion() +
-                        ", progress=" + (routines - remainingRoutines) + "/" + routines + "]"));
+                        ", progress=" + (routines - remainingRoutines) + "/" + routines + "," +
+                        ", batch=" + batchPageWriteEnabled + "]"));
 
                     remaining.remove(nodeId);
                 }
