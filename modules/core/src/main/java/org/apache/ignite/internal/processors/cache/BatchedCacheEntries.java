@@ -57,6 +57,9 @@ public class BatchedCacheEntries {
     private List<GridDhtCacheEntry> entries;
 
     /** */
+    private int skipped;
+
+    /** */
     public BatchedCacheEntries(AffinityTopologyVersion topVer, int partId, GridCacheContext cctx, boolean preload) {
         this.topVer = topVer;
         this.cctx = cctx;
@@ -109,112 +112,17 @@ public class BatchedCacheEntries {
 
     public void onRemove(KeyCacheObject key) {
         // todo  - remove from original collection
+        ++skipped;
     }
 
     public void onError(KeyCacheObject key, IgniteCheckedException e) {
         // todo  - remove from original collection
+        ++skipped;
     }
 
     public boolean skip(KeyCacheObject key) {
         // todo
         return false;
-    }
-
-    public static class BatchedCacheMapEntryInfo {
-        // todo think about remove
-        private final BatchedCacheEntries batch;
-        private final KeyCacheObject key;
-        private final CacheObject val;
-        private final long expTime;
-        private final long ttl;
-        private final GridCacheVersion ver;
-        private final GridDrType drType;
-
-        private GridDhtCacheEntry entry;
-
-        private boolean update;
-
-        public BatchedCacheMapEntryInfo(
-            BatchedCacheEntries batch,
-            KeyCacheObject key,
-            CacheObject val,
-            long expTime,
-            long ttl,
-            GridCacheVersion ver,
-            GridDrType drType
-        ) {
-            this.batch = batch;
-            this.key = key;
-            this.val = val;
-            this.expTime = expTime;
-            this.ver = ver;
-            this.drType = drType;
-            this.ttl = ttl;
-        }
-
-        public KeyCacheObject key() {
-            return key;
-        }
-
-        public GridCacheVersion version() {
-            return ver;
-        }
-
-        public CacheObject value() {
-            return val;
-        }
-
-        public long expireTime() {
-            return expTime;
-        }
-
-        public GridDhtCacheEntry cacheEntry() {
-            return entry;
-        }
-
-        public void cacheEntry(GridDhtCacheEntry entry) {
-            this.entry = entry;
-        }
-
-        public void updateCacheEntry() throws IgniteCheckedException {
-            if (!update)
-                return;
-
-            entry.finishPreload(val, expTime, ttl, ver, batch.topVer, drType, null, batch.preload);
-        }
-
-//        public void update(boolean update) {
-//            this.update = update;
-//        }
-
-        public boolean needUpdate(CacheDataRow row) throws GridCacheEntryRemovedException {
-            GridCacheVersion currVer = row != null ? row.version() : entry.version();
-
-            GridCacheContext cctx = batch.context();
-
-            boolean isStartVer = cctx.versions().isStartVersion(currVer);
-
-            boolean update0;
-
-            if (cctx.group().persistenceEnabled()) {
-                if (!isStartVer) {
-                    if (cctx.atomic())
-                        update0 = ATOMIC_VER_COMPARATOR.compare(currVer, version()) < 0;
-                    else
-                        update0 = currVer.compareTo(version()) < 0;
-                }
-                else
-                    update0 = true;
-            }
-            else
-                update0 = (isStartVer && row == null);
-
-            // todo update0 |= (!preload && deletedUnlocked());
-
-            update = update0;
-
-            return update0;
-        }
     }
 
     public List<GridDhtCacheEntry> lock() {
@@ -228,7 +136,7 @@ public class BatchedCacheEntries {
     }
 
     public int size() {
-        return infos.size();
+        return infos.size() - skipped;
     }
 
     private List<GridDhtCacheEntry> lockEntries(Collection<BatchedCacheMapEntryInfo> list, AffinityTopologyVersion topVer)
@@ -359,6 +267,103 @@ public class BatchedCacheEntries {
             GridCacheMapEntry entry = info.cacheEntry();
             if (entry != null && (skip == null || !skip.contains(entry.key())))
                 entry.touch(topVer);
+        }
+    }
+
+    public static class BatchedCacheMapEntryInfo {
+        // todo think about remove
+        private final BatchedCacheEntries batch;
+        private final KeyCacheObject key;
+        private final CacheObject val;
+        private final long expTime;
+        private final long ttl;
+        private final GridCacheVersion ver;
+        private final GridDrType drType;
+
+        private GridDhtCacheEntry entry;
+
+        private boolean update;
+
+        public BatchedCacheMapEntryInfo(
+            BatchedCacheEntries batch,
+            KeyCacheObject key,
+            CacheObject val,
+            long expTime,
+            long ttl,
+            GridCacheVersion ver,
+            GridDrType drType
+        ) {
+            this.batch = batch;
+            this.key = key;
+            this.val = val;
+            this.expTime = expTime;
+            this.ver = ver;
+            this.drType = drType;
+            this.ttl = ttl;
+        }
+
+        public KeyCacheObject key() {
+            return key;
+        }
+
+        public GridCacheVersion version() {
+            return ver;
+        }
+
+        public CacheObject value() {
+            return val;
+        }
+
+        public long expireTime() {
+            return expTime;
+        }
+
+        public GridDhtCacheEntry cacheEntry() {
+            return entry;
+        }
+
+        public void cacheEntry(GridDhtCacheEntry entry) {
+            this.entry = entry;
+        }
+
+        public void updateCacheEntry() throws IgniteCheckedException {
+            if (!update)
+                return;
+
+            entry.finishPreload(val, expTime, ttl, ver, batch.topVer, drType, null, batch.preload);
+        }
+
+//        public void update(boolean update) {
+//            this.update = update;
+//        }
+
+        public boolean needUpdate(CacheDataRow row) throws GridCacheEntryRemovedException {
+            GridCacheVersion currVer = row != null ? row.version() : entry.version();
+
+            GridCacheContext cctx = batch.context();
+
+            boolean isStartVer = cctx.versions().isStartVersion(currVer);
+
+            boolean update0;
+
+            if (cctx.group().persistenceEnabled()) {
+                if (!isStartVer) {
+                    if (cctx.atomic())
+                        update0 = ATOMIC_VER_COMPARATOR.compare(currVer, version()) < 0;
+                    else
+                        update0 = currVer.compareTo(version()) < 0;
+                }
+                else
+                    update0 = true;
+            }
+            else
+                update0 = (isStartVer && row == null);
+
+            // todo update0 |= (!preload && deletedUnlocked());
+
+            update = update0;
+
+            return update0;
         }
     }
 }

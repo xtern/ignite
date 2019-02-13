@@ -94,6 +94,9 @@ public class GridDhtPartitionDemander {
     private static final int BATCH_PRELOAD_THRESHOLD = 5;
 
     /** */
+    private static final int CHECKPOINT_THRESHOLD = 100;
+
+    /** */
     private static final boolean batchPageWriteEnabled =
         IgniteSystemProperties.getBoolean(IgniteSystemProperties.IGNITE_DATA_STORAGE_BATCH_PAGE_WRITE, false);
 
@@ -780,14 +783,13 @@ public class GridDhtPartitionDemander {
                             boolean batchEnabled =
                                 batchPageWriteEnabled && e.getValue().infos().size() > BATCH_PRELOAD_THRESHOLD;
 
-                            // todo investigate supply messages with 0 infos.
-//                            if (!e.getValue().infos().isEmpty())
-//                                log.info("Preloading " + e.getValue().infos().size() + " (batch=" + batchEnabled + ", part=" + p + ")");
-
                             Iterator<GridCacheEntryInfo> infos = e.getValue().infos().iterator();
 
                             //  todo improve code (iterations)
-                            int limit = ctx.cache().persistentCaches().isEmpty() ? supplyMsg.infos().size() : 100;
+                            int limit = ctx.cache().persistentCaches().isEmpty() ?
+                                Math.max(e.getValue().infos().size(), CHECKPOINT_THRESHOLD) : CHECKPOINT_THRESHOLD;
+
+                            assert limit >= CHECKPOINT_THRESHOLD : limit;
 
                             // Loop through all received entries and try to preload them.
                             while (infos.hasNext()) {
@@ -904,43 +906,29 @@ public class GridDhtPartitionDemander {
         }
     }
 
-    public void preloadEntries1(ClusterNode from,
+    /**
+     * todo should be removed (kept for benchamrking)
+     */
+    public void preloadEntriesSingle(ClusterNode from,
         int p,
         Collection<GridCacheEntryInfo> entries,
         AffinityTopologyVersion topVer
     ) throws IgniteCheckedException {
 
-        Iterator<GridCacheEntryInfo> infos = entries.iterator();
-
         // Loop through all received entries and try to preload them.
-        while (infos.hasNext()) {
-            ctx.database().checkpointReadLock();
+        for (GridCacheEntryInfo entry : entries) {
+            if (!preloadEntry(from, p, entry, topVer)) {
+                if (log.isTraceEnabled())
+                    log.trace("Got entries for invalid partition during " +
+                        "preloading (will skip) [p=" + p + ", entry=" + entry + ']');
 
-            try {
-                for (int i = 0; i < 100; i++) {
-                    if (!infos.hasNext())
-                        break;
-
-                    GridCacheEntryInfo entry = infos.next();
-
-                    if (!preloadEntry(from, p, entry, topVer)) {
-                        if (log.isTraceEnabled())
-                            log.trace("Got entries for invalid partition during " +
-                                "preloading (will skip) [p=" + p + ", entry=" + entry + ']');
-
-                        break;
-                    }
-
-                    for (GridCacheContext cctx : grp.caches()) {
-                        if (cctx.statisticsEnabled())
-                            cctx.cache().metrics0().onRebalanceKeyReceived();
-                    }
-                }
-            }
-            finally {
-                ctx.database().checkpointReadUnlock();
+                break;
             }
 
+            for (GridCacheContext cctx : grp.caches()) {
+                if (cctx.statisticsEnabled())
+                    cctx.cache().metrics0().onRebalanceKeyReceived();
+            }
         }
     }
 
@@ -1020,12 +1008,7 @@ public class GridDhtPartitionDemander {
     }
 
     /**
-     * todo
-     * @param from
-     * @param p
-     * @param entries
-     * @param topVer
-     * @throws IgniteCheckedException
+     * todo should be removed (kept for benchmarks).
      */
     public void preloadEntries2(ClusterNode from,
         int p,
