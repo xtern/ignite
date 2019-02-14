@@ -34,6 +34,7 @@ import org.apache.ignite.internal.managers.failover.GridFailoverManager;
 import org.apache.ignite.internal.managers.indexing.GridIndexingManager;
 import org.apache.ignite.internal.managers.loadbalancer.GridLoadBalancerManager;
 import org.apache.ignite.internal.processors.cache.mvcc.MvccProcessor;
+import org.apache.ignite.internal.processors.diag.DiagnosticProcessor;
 import org.apache.ignite.internal.stat.IoStatisticsManager;
 import org.apache.ignite.internal.processors.compress.CompressionProcessor;
 import org.apache.ignite.internal.processors.service.ServiceProcessorAdapter;
@@ -466,6 +467,9 @@ public interface GridKernalContext extends Iterable<GridComponent> {
      * Gets failure processor.
      */
     public FailureProcessor failure();
+
+    /** */
+    public DiagnosticProcessor diagnostic();
 
     /**
      * Print grid kernal memory stats (sizes of internal structures, etc.).

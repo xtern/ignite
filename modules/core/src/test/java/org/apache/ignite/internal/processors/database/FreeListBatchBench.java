@@ -243,7 +243,7 @@ public class FreeListBatchBench extends GridCommonAbstractTest {
             if (batch)
                 demander.preloadEntries(null, 0, infos, cctx.topology().readyTopologyVersion());
             else
-                demander.preloadEntries1(null, 0, infos, cctx.topology().readyTopologyVersion());
+                demander.preloadEntriesSingle(null, 0, infos, cctx.topology().readyTopologyVersion());
 
             nanos += (System.nanoTime() - start);
         }

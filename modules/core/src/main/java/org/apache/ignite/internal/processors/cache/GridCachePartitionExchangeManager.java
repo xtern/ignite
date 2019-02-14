@@ -138,6 +138,7 @@ import static org.apache.ignite.internal.processors.affinity.AffinityTopologyVer
 import static org.apache.ignite.internal.processors.cache.distributed.dht.preloader.CachePartitionPartialCountersMap.PARTIAL_COUNTERS_MAP_SINCE;
 import static org.apache.ignite.internal.processors.cache.distributed.dht.preloader.GridDhtPartitionsExchangeFuture.nextDumpTimeout;
 import static org.apache.ignite.internal.processors.cache.distributed.dht.preloader.GridDhtPreloader.DFLT_PRELOAD_RESEND_TIMEOUT;
+import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.TOTAL;
 
 /**
  * Partition exchange manager.
@@ -3040,6 +3041,8 @@ public class GridCachePartitionExchangeManager<K, V> extends GridCacheSharedMana
 
                         if (task instanceof ForceRebalanceExchangeTask)
                             forcedRebFut = ((ForceRebalanceExchangeTask)task).forcedRebalanceFuture();
+
+//                        cctx.kernalContext().diagnostic().beginTrack(TOTAL);
 
                         for (Integer order : orderMap.descendingKeySet()) {
                             for (Integer grpId : orderMap.get(order)) {

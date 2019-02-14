@@ -544,7 +544,14 @@ public abstract class AbstractFreeList<T extends Storable> extends PagesList imp
                 log.info("FreeList [name=" + name +
                     ", buckets=" + BUCKETS +
                     ", dataPages=" + dataPages +
-                    ", reusePages=" + bucketsSize[REUSE_BUCKET].longValue() + "]");
+                    ", reusePages=" + bucketsSize[REUSE_BUCKET].longValue() + "" +
+                    ", bucket[0]=" + bucketsSize[0] +
+                    ", bucket[1]=" + bucketsSize[1] +
+                    ", bucket[2]=" + bucketsSize[2] +
+                    ", bucket[3]=" + bucketsSize[3] +
+                    ", bucket[4]=" + bucketsSize[4] +
+                    ", bucket[5]=" + bucketsSize[5] +
+                    "]");
         }
     }
 
