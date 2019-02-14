@@ -53,7 +53,7 @@ public class FreeListBatchBench extends GridCommonAbstractTest {
     private static final DecimalFormat DECIMAL_FORMAT = new DecimalFormat("#0.0");
 
     /** */
-    private static final long DEF_REG_SIZE = 4 * 1024 * 1024 * 1024L;
+    private static final long DEF_REG_SIZE = 6 * 1024 * 1024 * 1024L;
 
     /** */
     private static final String REG_BATCH = "batch-region";
@@ -105,14 +105,15 @@ public class FreeListBatchBench extends GridCommonAbstractTest {
 
         bench(batchSize, 50, 0, 4);
         bench(batchSize, 50, 0, 16);
+
         bench(batchSize, 50, 0, 256);
         bench(batchSize, 50, 0, 512);
         bench(batchSize, 50, 0, 1024);
         bench(batchSize, 20, 0, 8192);
-        bench(batchSize, 10, 4096, 16384);
-        bench(batchSize / 10, 100, 4096, 16384);
-        bench(batchSize / 50, 500, 4096, 16384);
-        bench(batchSize / 100, 1000, 4096, 16384);
+//        bench(batchSize, 10, 4096, 16384);
+//        bench(batchSize / 10, 100, 4096, 16384);
+//        bench(batchSize / 50, 500, 4096, 16384);
+//        bench(batchSize / 100, 1000, 4096, 16384);
 
         //bench(batchSize / 10, 50, 4096, 16384);
     }

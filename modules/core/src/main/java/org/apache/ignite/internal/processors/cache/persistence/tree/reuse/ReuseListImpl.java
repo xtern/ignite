@@ -71,7 +71,7 @@ public class ReuseListImpl extends PagesList implements ReuseList {
 
     /** {@inheritDoc} */
     @Override public long takeRecycledPage() throws IgniteCheckedException {
-        return takeEmptyPage(0, null, IoStatisticsHolderNoOp.INSTANCE);
+        return takeEmptyPage(0, null, IoStatisticsHolderNoOp.INSTANCE, 1);
     }
 
     /** {@inheritDoc} */

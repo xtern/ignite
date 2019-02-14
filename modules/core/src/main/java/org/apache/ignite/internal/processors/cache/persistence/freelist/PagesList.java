@@ -1054,7 +1054,7 @@ public abstract class PagesList extends DataStructure {
      * @throws IgniteCheckedException If failed.
      */
     protected final long takeEmptyPage(int bucket, @Nullable IOVersions initIoVers,
-        IoStatisticsHolder statHolder) throws IgniteCheckedException {
+        IoStatisticsHolder statHolder, int cnt) throws IgniteCheckedException {
         for (int lockAttempt = 0; ;) {
             Stripe stripe = getPageForTake(bucket);
 
@@ -1107,7 +1107,15 @@ public abstract class PagesList extends DataStructure {
 
                     long pageId = io.takeAnyPage(tailAddr);
 
+
+
                     if (pageId != 0L) {
+                        if (PageIdUtils.itemId(pageId) + cnt > (MAX_ITEMID_NUM + 1)) {
+                            System.out.println(">xxx> skip - not enough space left for batch: " + (PageIdUtils.itemId(pageId) + cnt));
+
+//                        continue;
+                        }
+
                         decrementBucketSize(bucket);
 
                         if (needWalDeltaRecord(tailId, tailPage, null))
@@ -1140,6 +1148,9 @@ public abstract class PagesList extends DataStructure {
                             else
                                 stripe.empty = prevId == 0L;
                         }
+
+//                        if (cnt > 1 && (255 - io.getCount(tailAddr)) < cnt)
+//                            return 0L;
                     }
                     else {
                         // The tail page is empty, but stripe is not. It might

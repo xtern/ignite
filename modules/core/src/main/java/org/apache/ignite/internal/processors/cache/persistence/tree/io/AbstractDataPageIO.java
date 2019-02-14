@@ -69,13 +69,13 @@ public abstract class AbstractDataPageIO<T extends Storable> extends PageIO impl
     public static final int ITEMS_OFF = FIRST_ENTRY_OFF + 2;
 
     /** */
-    private static final int ITEM_SIZE = 2;
+    public static final int ITEM_SIZE = 2;
 
     /** */
-    private static final int PAYLOAD_LEN_SIZE = 2;
+    public static final int PAYLOAD_LEN_SIZE = 2;
 
     /** */
-    private static final int LINK_SIZE = 8;
+    public static final int LINK_SIZE = 8;
 
     /** */
     private static final int FRAGMENTED_FLAG = 0b10000000_00000000;
@@ -225,6 +225,10 @@ public abstract class AbstractDataPageIO<T extends Storable> extends PageIO impl
         return getDirectCount(pageAddr) == 0;
     }
 
+    public boolean isEnough(long pageAddr, int cnt) {
+        return (255 - getDirectCount(pageAddr)) >= cnt;
+    }
+
     /**
      * Equivalent for {@link #actualFreeSpace(long, int)} but reads saved value.
      *
@@ -249,7 +253,7 @@ public abstract class AbstractDataPageIO<T extends Storable> extends PageIO impl
      * @param pageAddr Page address.
      * @return Direct count.
      */
-    private int getDirectCount(long pageAddr) {
+    public int getDirectCount(long pageAddr) {
         return PageUtils.getByte(pageAddr, DIRECT_CNT_OFF) & 0xFF;
     }
 

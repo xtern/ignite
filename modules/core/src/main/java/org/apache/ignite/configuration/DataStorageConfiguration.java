@@ -87,7 +87,7 @@ public class DataStorageConfiguration implements Serializable {
     private static final long DFLT_SYS_REG_MAX_SIZE = 100L * 1024 * 1024;
 
     /** Default memory page size. */
-    public static final int DFLT_PAGE_SIZE = 4 * 1024;
+    public static final int DFLT_PAGE_SIZE = 16 * 1024;
 
     /** Max memory page size. */
     public static final int MAX_PAGE_SIZE = 16 * 1024;

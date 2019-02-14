@@ -342,6 +342,8 @@ public abstract class AbstractFreeList<T extends Storable> extends PagesList imp
                 // todo update wal
             }
             else {
+                assert iox.isEnough(pageAddr, args.size()) : "item=" + PageIdUtils.itemId(pageId) + ", cnt=" + args.size() + " direct=" + iox.getDirectCount(pageAddr);
+
                 for (T row : args) {
                     assert iox.getFreeSpace(pageAddr) > 0 : iox.getFreeSpace(pageAddr);
 
@@ -593,7 +595,7 @@ public abstract class AbstractFreeList<T extends Storable> extends PagesList imp
             long pageId = 0L;
 
             for (int b = remaining < MIN_SIZE_FOR_DATA_PAGE ? bucket(remaining, false) + 1 : REUSE_BUCKET; b < BUCKETS; b++) {
-                pageId = takeEmptyPage(b, ioVersions(), statHolder);
+                pageId = takeEmptyPage(b, ioVersions(), statHolder, 1);
 
                 if (pageId != 0L)
                     break;
@@ -670,7 +672,7 @@ public abstract class AbstractFreeList<T extends Storable> extends PagesList imp
                 long pageId;
 
                 if (remaining >= MIN_SIZE_FOR_DATA_PAGE)
-                    pageId = takeEmptyPage(REUSE_BUCKET, ioVersions(), statHolder);
+                    pageId = takeEmptyPage(REUSE_BUCKET, ioVersions(), statHolder, 1);
                 else
                     break;
 
@@ -701,7 +703,7 @@ public abstract class AbstractFreeList<T extends Storable> extends PagesList imp
             int buck = bucket(remaining, false) + 1;
 
             for (int b = remaining < MIN_SIZE_FOR_DATA_PAGE ? buck : REUSE_BUCKET; b < BUCKETS; b++) {
-                pageId = takeEmptyPage(b, ioVersions(), statHolder);
+                pageId = takeEmptyPage(b, ioVersions(), statHolder, bin.get1().size());
 
                 if (pageId != 0L)
                     break;
@@ -751,10 +753,10 @@ public abstract class AbstractFreeList<T extends Storable> extends PagesList imp
 
             T3<Integer, T, Boolean> t3 = rows.get(i);
 
-            int size = t3.get1() + (t3.get3() ? 12 : 4); // + inner pointer + pageId (for head of large row)
+            int size = t3.get1() + AbstractDataPageIO.ITEM_SIZE + AbstractDataPageIO.PAYLOAD_LEN_SIZE + (t3.get3() ? AbstractDataPageIO.LINK_SIZE : 0); // + inner pointer + pageId (for head of large row)
 
             for (j = 0; j < cnt; j++) {
-                if (remains[j] >= size) {
+                if (remains[j] >= size && bins.get(j).get1().size() < 255) {
                     remains[j] -= size;
 
                     T row = rows.get(i).get2();
@@ -908,7 +910,7 @@ public abstract class AbstractFreeList<T extends Storable> extends PagesList imp
     @Override public long takeRecycledPage() throws IgniteCheckedException {
         assert reuseList == this : "not allowed to be a reuse list";
 
-        return takeEmptyPage(REUSE_BUCKET, null, IoStatisticsHolderNoOp.INSTANCE);
+        return takeEmptyPage(REUSE_BUCKET, null, IoStatisticsHolderNoOp.INSTANCE, 1);
     }
 
     /** {@inheritDoc} */
