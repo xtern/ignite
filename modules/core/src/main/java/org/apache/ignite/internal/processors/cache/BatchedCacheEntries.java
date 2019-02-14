@@ -33,7 +33,7 @@ import org.apache.ignite.internal.processors.dr.GridDrType;
 import org.apache.ignite.internal.util.typedef.internal.U;
 
 import static org.apache.ignite.internal.processors.cache.GridCacheMapEntry.ATOMIC_VER_COMPARATOR;
-import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.PRELOAD_TREE_FINISH_UPDATE1;
+//import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.PRELOAD_TREE_FINISH_UPDATE1;
 
 /**
  * Batch of cache entries to optimize page memory processing.
@@ -331,11 +331,11 @@ public class BatchedCacheEntries {
             if (!update)
                 return;
 
-            batch.context().kernalContext().diagnostic().beginTrack(PRELOAD_TREE_FINISH_UPDATE1);
+//            batch.context().kernalContext().diagnostic().beginTrack(PRELOAD_TREE_FINISH_UPDATE1);
 
             entry.finishPreload(val, expTime, ttl, ver, batch.topVer, drType, null, batch.preload);
 
-            batch.context().kernalContext().diagnostic().endTrack(PRELOAD_TREE_FINISH_UPDATE1);
+//            batch.context().kernalContext().diagnostic().endTrack(PRELOAD_TREE_FINISH_UPDATE1);
         }
 
 //        public void update(boolean update) {

@@ -137,8 +137,8 @@ import static org.apache.ignite.internal.processors.cache.query.GridCacheQueryTy
 import static org.apache.ignite.internal.processors.cache.query.GridCacheQueryType.SQL;
 import static org.apache.ignite.internal.processors.cache.query.GridCacheQueryType.SQL_FIELDS;
 import static org.apache.ignite.internal.processors.cache.query.GridCacheQueryType.TEXT;
-import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.PRELOAD_INDEXING_REMOVE;
-import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.PRELOAD_INDEXING_STORE;
+//import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.PRELOAD_INDEXING_REMOVE;
+//import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.PRELOAD_INDEXING_STORE;
 
 /**
  * Query and index manager.
@@ -390,7 +390,7 @@ public abstract class GridCacheQueryManager<K, V> extends GridCacheManagerAdapte
         if (!enterBusy())
             throw new NodeStoppingException("Operation has been cancelled (node is stopping).");
 
-        cctx.kernalContext().diagnostic().beginTrack(PRELOAD_INDEXING_STORE);
+//        cctx.kernalContext().diagnostic().beginTrack(PRELOAD_INDEXING_STORE);
 
         try {
             if (isIndexingSpiEnabled()) {
@@ -407,7 +407,7 @@ public abstract class GridCacheQueryManager<K, V> extends GridCacheManagerAdapte
                 qryProc.store(cctx, newRow, prevRow, prevRowAvailable);
         }
         finally {
-            cctx.kernalContext().diagnostic().endTrack(PRELOAD_INDEXING_STORE);
+//            cctx.kernalContext().diagnostic().endTrack(PRELOAD_INDEXING_STORE);
 
             invalidateResultCache();
 
@@ -428,7 +428,7 @@ public abstract class GridCacheQueryManager<K, V> extends GridCacheManagerAdapte
         if (!enterBusy())
             return; // Ignore index update when node is stopping.
 
-        cctx.kernalContext().diagnostic().beginTrack(PRELOAD_INDEXING_REMOVE);
+//        cctx.kernalContext().diagnostic().beginTrack(PRELOAD_INDEXING_REMOVE);
 
         try {
             if (isIndexingSpiEnabled()) {
@@ -442,7 +442,7 @@ public abstract class GridCacheQueryManager<K, V> extends GridCacheManagerAdapte
                 qryProc.remove(cctx, prevRow);
         }
         finally {
-            cctx.kernalContext().diagnostic().endTrack(PRELOAD_INDEXING_REMOVE);
+//            cctx.kernalContext().diagnostic().endTrack(PRELOAD_INDEXING_REMOVE);
 
             invalidateResultCache();
 

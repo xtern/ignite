@@ -130,14 +130,14 @@ import static org.apache.ignite.internal.processors.cache.mvcc.MvccUtils.state;
 import static org.apache.ignite.internal.processors.cache.mvcc.MvccUtils.unexpectedStateException;
 import static org.apache.ignite.internal.processors.cache.persistence.GridCacheOffheapManager.EMPTY_CURSOR;
 import static org.apache.ignite.internal.processors.cache.persistence.tree.io.DataPageIO.MVCC_INFO_SIZE;
-import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.PRELOAD_OFFHEAP_BATCH_FIND;
-import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.PRELOAD_OFFHEAP_BATCH_INSERT;
-import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.PRELOAD_OFFHEAP_BATCH_TREE_INSERT;
-import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.PRELOAD_PENDING_TREE_PUT;
-import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.PRELOAD_PENDING_TREE_REMOVE;
-import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.PRELOAD_TREE_ADD_ROW;
-import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.PRELOAD_TREE_FINISH_UPDATE;
-import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.PRELOAD_TREE_INVOKE;
+//import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.PRELOAD_OFFHEAP_BATCH_FIND;
+//import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.PRELOAD_OFFHEAP_BATCH_INSERT;
+//import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.PRELOAD_OFFHEAP_BATCH_TREE_INSERT;
+//import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.PRELOAD_PENDING_TREE_PUT;
+//import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.PRELOAD_PENDING_TREE_REMOVE;
+//import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.PRELOAD_TREE_ADD_ROW;
+//import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.PRELOAD_TREE_FINISH_UPDATE;
+//import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.PRELOAD_TREE_INVOKE;
 import static org.apache.ignite.internal.util.IgniteTree.OperationType.NOOP;
 import static org.apache.ignite.internal.util.IgniteTree.OperationType.PUT;
 
@@ -1695,7 +1695,7 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
             if (items.preload() && !cctx.group().persistenceEnabled()) {
                 insertKeys = new HashSet<>(items.keys());
 
-                cctx.kernalContext().diagnostic().beginTrack(PRELOAD_OFFHEAP_BATCH_FIND);
+//                cctx.kernalContext().diagnostic().beginTrack(PRELOAD_OFFHEAP_BATCH_FIND);
 
                 List<KeyCacheObject> sortedKeys = new ArrayList<>(items.keys());
 
@@ -1722,7 +1722,7 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
                     }
                 }
 
-                cctx.kernalContext().diagnostic().endTrack(PRELOAD_OFFHEAP_BATCH_FIND);
+//                cctx.kernalContext().diagnostic().endTrack(PRELOAD_OFFHEAP_BATCH_FIND);
             }
             else {
                 insertKeys = new HashSet<>();
@@ -1781,13 +1781,13 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
                 newRows.add(row);
             }
 
-            cctx.kernalContext().diagnostic().beginTrack(PRELOAD_OFFHEAP_BATCH_INSERT);
+//            cctx.kernalContext().diagnostic().beginTrack(PRELOAD_OFFHEAP_BATCH_INSERT);
 
             rowStore.freeList().insertBatch(newRows, grp.statisticsHolderData());
 
-            cctx.kernalContext().diagnostic().endTrack(PRELOAD_OFFHEAP_BATCH_INSERT);
+//            cctx.kernalContext().diagnostic().endTrack(PRELOAD_OFFHEAP_BATCH_INSERT);
 
-            cctx.kernalContext().diagnostic().beginTrack(PRELOAD_OFFHEAP_BATCH_TREE_INSERT);
+//            cctx.kernalContext().diagnostic().beginTrack(PRELOAD_OFFHEAP_BATCH_TREE_INSERT);
 
             for (DataRow row : newRows) {
                 dataTree.putx(row);
@@ -1795,7 +1795,7 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
                 finishUpdate(cctx, row, null);
             }
 
-            cctx.kernalContext().diagnostic().endTrack(PRELOAD_OFFHEAP_BATCH_TREE_INSERT);
+//            cctx.kernalContext().diagnostic().endTrack(PRELOAD_OFFHEAP_BATCH_TREE_INSERT);
         }
 
         @Override public void updateBatch(
@@ -1910,11 +1910,11 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
             try {
                 assert cctx.shared().database().checkpointLockIsHeldByThread();
 
-                ctx.kernalContext().diagnostic().beginTrack(PRELOAD_TREE_INVOKE);
+//                ctx.kernalContext().diagnostic().beginTrack(PRELOAD_TREE_INVOKE);
 
                 dataTree.invoke(row, CacheDataRowAdapter.RowData.NO_KEY, c);
 
-                ctx.kernalContext().diagnostic().endTrack(PRELOAD_TREE_INVOKE);
+//                ctx.kernalContext().diagnostic().endTrack(PRELOAD_TREE_INVOKE);
 
                 switch (c.operationType()) {
                     case PUT: {
@@ -1922,11 +1922,11 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
 
                         CacheDataRow oldRow = c.oldRow();
 
-                        ctx.kernalContext().diagnostic().beginTrack(PRELOAD_TREE_FINISH_UPDATE);
+//                        ctx.kernalContext().diagnostic().beginTrack(PRELOAD_TREE_FINISH_UPDATE);
 
                         finishUpdate(cctx, c.newRow(), oldRow);
 
-                        ctx.kernalContext().diagnostic().endTrack(PRELOAD_TREE_FINISH_UPDATE);
+//                        ctx.kernalContext().diagnostic().endTrack(PRELOAD_TREE_FINISH_UPDATE);
 
                         break;
                     }
@@ -1961,7 +1961,7 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
             @Nullable CacheDataRow oldRow) throws IgniteCheckedException {
             int cacheId = grp.storeCacheIdInDataPage() ? cctx.cacheId() : CU.UNDEFINED_CACHE_ID;
 
-            ctx.kernalContext().diagnostic().beginTrack(PRELOAD_TREE_ADD_ROW);
+//            ctx.kernalContext().diagnostic().beginTrack(PRELOAD_TREE_ADD_ROW);
 
             DataRow dataRow = makeDataRow(key, val, ver, expireTime, cacheId);
 
@@ -1976,7 +1976,7 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
                 rowStore.addRow(dataRow, grp.statisticsHolderData());
             }
 
-            ctx.kernalContext().diagnostic().endTrack(PRELOAD_TREE_ADD_ROW);
+//            ctx.kernalContext().diagnostic().endTrack(PRELOAD_TREE_ADD_ROW);
 
             assert dataRow.link() != 0 : dataRow;
 
@@ -2950,16 +2950,16 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
                 assert oldRow.link() != 0 : oldRow;
 
                 if (pendingTree() != null && oldRow.expireTime() != 0) {
-                    cctx.kernalContext().diagnostic().beginTrack(PRELOAD_PENDING_TREE_REMOVE);
+//                    cctx.kernalContext().diagnostic().beginTrack(PRELOAD_PENDING_TREE_REMOVE);
                     pendingTree().removex(new PendingRow(cacheId, oldRow.expireTime(), oldRow.link()));
-                    cctx.kernalContext().diagnostic().endTrack(PRELOAD_PENDING_TREE_REMOVE);
+//                    cctx.kernalContext().diagnostic().endTrack(PRELOAD_PENDING_TREE_REMOVE);
                 }
             }
 
             if (pendingTree() != null && expireTime != 0) {
-                cctx.kernalContext().diagnostic().beginTrack(PRELOAD_PENDING_TREE_PUT);
+//                cctx.kernalContext().diagnostic().beginTrack(PRELOAD_PENDING_TREE_PUT);
                 pendingTree().putx(new PendingRow(cacheId, expireTime, newRow.link()));
-                cctx.kernalContext().diagnostic().endTrack(PRELOAD_PENDING_TREE_PUT);
+//                cctx.kernalContext().diagnostic().endTrack(PRELOAD_PENDING_TREE_PUT);
                 hasPendingEntries = true;
             }
         }

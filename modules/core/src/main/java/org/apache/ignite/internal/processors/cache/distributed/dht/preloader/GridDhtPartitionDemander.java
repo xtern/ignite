@@ -84,12 +84,12 @@ import static org.apache.ignite.events.EventType.EVT_CACHE_REBALANCE_STARTED;
 import static org.apache.ignite.events.EventType.EVT_CACHE_REBALANCE_STOPPED;
 import static org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtPartitionState.MOVING;
 import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.DEMANDER_PROCESS_MSG;
-import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.DEMANDER_PROCESS_MSG_BATCH;
-import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.DEMANDER_PROCESS_MSG_BATCH_LOCK;
-import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.DEMANDER_PROCESS_MSG_BATCH_PREPARE;
-import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.DEMANDER_PROCESS_MSG_BATCH_UNLOCK;
-import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.DEMANDER_PROCESS_MSG_BATCH_UPDATE;
-import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.PRELOAD_ENTRY;
+//import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.DEMANDER_PROCESS_MSG_BATCH;
+//import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.DEMANDER_PROCESS_MSG_BATCH_LOCK;
+//import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.DEMANDER_PROCESS_MSG_BATCH_PREPARE;
+//import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.DEMANDER_PROCESS_MSG_BATCH_UNLOCK;
+//import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.DEMANDER_PROCESS_MSG_BATCH_UPDATE;
+//import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.PRELOAD_ENTRY;
 //import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.SEND_DEMAND;
 //import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.SEND_RECEIVE;
 import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.TOTAL;
@@ -989,14 +989,14 @@ public class GridDhtPartitionDemander {
         Collection<GridCacheEntryInfo> entries,
         AffinityTopologyVersion topVer
     ) throws IgniteCheckedException {
-        ctx.kernalContext().diagnostic().beginTrack(DEMANDER_PROCESS_MSG_BATCH);
+//        ctx.kernalContext().diagnostic().beginTrack(DEMANDER_PROCESS_MSG_BATCH);
 
         if (entries.isEmpty())
             return;
 
         Map<Integer, BatchedCacheEntries> cctxMap = new HashMap<>();
 
-        ctx.kernalContext().diagnostic().beginTrack(DEMANDER_PROCESS_MSG_BATCH_PREPARE);
+//        ctx.kernalContext().diagnostic().beginTrack(DEMANDER_PROCESS_MSG_BATCH_PREPARE);
 
         // Map by context.
         for (GridCacheEntryInfo info : entries) {
@@ -1030,28 +1030,28 @@ public class GridDhtPartitionDemander {
             }
         }
 
-        ctx.kernalContext().diagnostic().endTrack(DEMANDER_PROCESS_MSG_BATCH_PREPARE);
+//        ctx.kernalContext().diagnostic().endTrack(DEMANDER_PROCESS_MSG_BATCH_PREPARE);
 
         for (BatchedCacheEntries  batch : cctxMap.values()) {
             assert batch.size() > BATCH_PRELOAD_THRESHOLD : batch.size();
 
             GridCacheContext cctx = batch.context();
 
-            ctx.kernalContext().diagnostic().beginTrack(DEMANDER_PROCESS_MSG_BATCH_LOCK);
+//            ctx.kernalContext().diagnostic().beginTrack(DEMANDER_PROCESS_MSG_BATCH_LOCK);
             batch.lock();
-            ctx.kernalContext().diagnostic().endTrack(DEMANDER_PROCESS_MSG_BATCH_LOCK);
+//            ctx.kernalContext().diagnostic().endTrack(DEMANDER_PROCESS_MSG_BATCH_LOCK);
             try {
                 // todo ticket
                 assert !cctx.mvccEnabled() : "MVCC caches not supported";
 
                 // todo looks ugly (batch already have context)
-                ctx.kernalContext().diagnostic().beginTrack(DEMANDER_PROCESS_MSG_BATCH_UPDATE);
+//                ctx.kernalContext().diagnostic().beginTrack(DEMANDER_PROCESS_MSG_BATCH_UPDATE);
                 cctx.offheap().updateBatch(batch);
-                ctx.kernalContext().diagnostic().endTrack(DEMANDER_PROCESS_MSG_BATCH_UPDATE);
+//                ctx.kernalContext().diagnostic().endTrack(DEMANDER_PROCESS_MSG_BATCH_UPDATE);
             } finally {
-                ctx.kernalContext().diagnostic().beginTrack(DEMANDER_PROCESS_MSG_BATCH_UNLOCK);
+//                ctx.kernalContext().diagnostic().beginTrack(DEMANDER_PROCESS_MSG_BATCH_UNLOCK);
                 batch.unlock();
-                ctx.kernalContext().diagnostic().endTrack(DEMANDER_PROCESS_MSG_BATCH_UNLOCK);
+//                ctx.kernalContext().diagnostic().endTrack(DEMANDER_PROCESS_MSG_BATCH_UNLOCK);
 
                 cctx.continuousQueries().getListenerReadLock().unlock();
 
@@ -1062,7 +1062,7 @@ public class GridDhtPartitionDemander {
             }
         }
 
-        ctx.kernalContext().diagnostic().endTrack(DEMANDER_PROCESS_MSG_BATCH);
+//        ctx.kernalContext().diagnostic().endTrack(DEMANDER_PROCESS_MSG_BATCH);
     }
 
     /**
@@ -1204,7 +1204,7 @@ public class GridDhtPartitionDemander {
     ) throws IgniteCheckedException {
         assert ctx.database().checkpointLockIsHeldByThread();
 
-        ctx.kernalContext().diagnostic().beginTrack(PRELOAD_ENTRY);
+//        ctx.kernalContext().diagnostic().beginTrack(PRELOAD_ENTRY);
 
         try {
             GridCacheEntryEx cached = null;
@@ -1275,9 +1275,9 @@ public class GridDhtPartitionDemander {
             throw new IgniteCheckedException("Failed to cache rebalanced entry (will stop rebalancing) [local=" +
                 ctx.localNode() + ", node=" + from.id() + ", key=" + entry.key() + ", part=" + p + ']', e);
         }
-        finally {
-            ctx.kernalContext().diagnostic().endTrack(PRELOAD_ENTRY);
-        }
+//        finally {
+//            ctx.kernalContext().diagnostic().endTrack(PRELOAD_ENTRY);
+//        }
 
         return true;
     }
