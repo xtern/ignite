@@ -21,7 +21,6 @@ import java.util.Comparator;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.LongAdder;
 import java.util.stream.Collectors;
 import org.apache.ignite.IgniteCheckedException;
@@ -85,7 +84,7 @@ public class DiagnosticProcessor extends GridProcessorAdapter {
 
     /** */
     private void beginTrack(String topic) {
-        tracks.putIfAbsent(topic, System.nanoTime());
+        tracks.putIfAbsent(topic, U.currentTimeMillis());
     }
 
     /** */
@@ -106,7 +105,7 @@ public class DiagnosticProcessor extends GridProcessorAdapter {
         if (value == null)
             return;
 
-        timings.get(topic).add(System.nanoTime() - value);
+        timings.get(topic).add(U.currentTimeMillis() - value);
         counts.get(topic).increment();
     }
 
@@ -122,7 +121,7 @@ public class DiagnosticProcessor extends GridProcessorAdapter {
             .sorted(Comparator.comparingInt(o -> DiagnosticTopics.valueOf(o.getKey()).ordinal()))
             .map(e -> String.format("# %s : %s ms : %.2f : %s",
                 DiagnosticTopics.valueOf(e.getKey()).desc(),
-                TimeUnit.NANOSECONDS.toMillis(e.getValue().longValue()),
+                e.getValue().longValue(),
                 ( ((double)e.getValue().longValue()) / total * 100),
                 counts.get(e.getKey()).longValue()))
             .collect(Collectors.joining("\n"));
@@ -134,7 +133,7 @@ public class DiagnosticProcessor extends GridProcessorAdapter {
         if (!tracks.isEmpty()) {
             String str = tracks.entrySet()
                 .stream()
-                .map(e -> "# " + DiagnosticTopics.valueOf(e.getKey()).desc() + " : " + TimeUnit.NANOSECONDS.toMillis(e.getValue() - System.nanoTime()))
+                .map(e -> "# " + DiagnosticTopics.valueOf(e.getKey()).desc() + " : " + (e.getValue() - U.currentTimeMillis()))
                 .collect(Collectors.joining("\n"));
 
             buf.append("\n# Unfinished tracks: \n" + str);

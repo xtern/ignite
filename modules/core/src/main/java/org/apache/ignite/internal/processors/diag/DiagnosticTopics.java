@@ -39,6 +39,8 @@ public enum DiagnosticTopics {
 //    SEND_DEMAND("# message serialization"),
 //    SEND_RECEIVE("# network delay between nodes"),
 //    SUPPLIER_PROCESS_MSG("# make batch on supplier handleDemandMessage(..)"),
+    DEMANDER_PROCESS_MSG_SINGLE("# # demander process single"),
+    DEMANDER_PROCESS_MSG_BATCH("# # demander process batch"),
     DEMANDER_PROCESS_MSG("# demander handleSupplyMessage(..)"),
     TOTAL("# cache rebalance total");
 

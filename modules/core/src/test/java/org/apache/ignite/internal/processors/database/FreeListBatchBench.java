@@ -101,7 +101,7 @@ public class FreeListBatchBench extends GridCommonAbstractTest {
     public void testBatch() throws Exception {
         startGrid(0);
 
-        int batchSize = 500;
+        int batchSize = 505;
 
         bench(batchSize, 50, 0, 4);
         bench(batchSize, 50, 0, 16);
@@ -110,9 +110,10 @@ public class FreeListBatchBench extends GridCommonAbstractTest {
         bench(batchSize, 50, 0, 1024);
         bench(batchSize, 20, 0, 8192);
         bench(batchSize, 10, 4096, 16384);
-        bench(batchSize / 10, 100, 4096, 16384);
-        bench(batchSize / 50, 500, 4096, 16384);
-        bench(batchSize / 100, 1000, 4096, 16384);
+//        bench(batchSize, 40, 700, 999);
+//        bench(batchSize / 10, 100, 4096, 16384);
+//        bench(batchSize / 50, 500, 4096, 16384);
+//        bench(batchSize / 100, 1000, 4096, 16384);
 
         //bench(batchSize / 10, 50, 4096, 16384);
     }
@@ -124,8 +125,10 @@ public class FreeListBatchBench extends GridCommonAbstractTest {
         int maxSize = minObjSIze;
         long sum = 0;
 
+        int delta = maxObjSize - minObjSIze;
+
         for (int i = 0; i < batchSize; i++) {
-            int size = sizes[i] = minObjSIze + ThreadLocalRandom.current().nextInt(maxObjSize - minObjSIze);
+            int size = sizes[i] = minObjSIze + (delta > 0 ? ThreadLocalRandom.current().nextInt(delta) : 0);
 
             if (size < minSize)
                 minSize = size;
@@ -281,7 +284,7 @@ public class FreeListBatchBench extends GridCommonAbstractTest {
         for (int i = off; i < off + cnt; i++) {
             int size = sizes[i - off];
 
-            KeyCacheObject key = cctx.toCacheKeyObject(String.valueOf(i));
+            KeyCacheObject key = cctx.toCacheKeyObject(i);
             CacheObject val = cctx.toCacheObject(new byte[size]);
 
             GridCacheEntryInfo info = new GridCacheEntryInfo();
