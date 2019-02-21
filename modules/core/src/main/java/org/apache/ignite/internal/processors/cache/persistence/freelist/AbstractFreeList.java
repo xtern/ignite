@@ -668,7 +668,7 @@ public abstract class AbstractFreeList<T extends Storable> extends PagesList imp
         }
 
 //        ctx.diagnostic().beginTrack(DEMANDER_PROCESS_MSG_BATCH_BIN_PACK);
-        List<T2<List<T>, Integer>> bins = binPack(regular, maxDataSize);
+//        List<T2<List<T>, Integer>> bins = binPack(regular, maxDataSize);
 //        try {
             // Sort objects by size;
 //            regular.sort(Comparator.comparing(GridTuple3::get1));
@@ -720,50 +720,145 @@ public abstract class AbstractFreeList<T extends Storable> extends PagesList imp
             while (written != COMPLETE);
         }
 
-        for (T2<List<T>, Integer> bin : bins) {
-            long pageId = 0;
+        List<T> dataRows = new ArrayList<>(255);
 
-            int remaining = bin.get2();
+        int remainPageSpace = 0;
 
-//            ctx.diagnostic().beginTrack(DEMANDER_PROCESS_MSG_BATCH_BIN_SEARCH);
+        long pageId = 0;
 
-            int buck = bucket(remaining, false) + 1;
+        AbstractDataPageIO<T> initIo = null;
 
-            for (int b = remaining < MIN_SIZE_FOR_DATA_PAGE ? buck : REUSE_BUCKET; b < BUCKETS; b++) {
-                pageId = takeEmptyPage(b, ioVersions(), statHolder);
+//        System.out.println("total: " + regular.size());
 
-                if (pageId != 0L)
-                    break;
+        int maxPayloadSize = pageSize() - AbstractDataPageIO.MIN_DATA_PAGE_OVERHEAD;
+
+        for (int i = 0; i < regular.size(); i++) {
+            T3<Integer, T, Boolean> rowInfo = regular.get(i);
+
+            boolean tail = i == (regular.size() - 1);
+
+            boolean fragment = rowInfo.get3();
+
+            int overhead = fragment ? 12 : 4;
+
+            int payloadSize = rowInfo.get1() + overhead;
+
+            if ((remainPageSpace - payloadSize) < 0) { // there is no space left on this page
+                if (pageId != 0) {
+//                    System.out.println(">xxx> write " + dataRows.size()  + " pageId =" + pageId);
+
+                    int written = write(pageId, writeRows, initIo, dataRows, FAIL_I, statHolder);
+
+                    assert written == COMPLETE : written;
+
+                    initIo = null;
+                    remainPageSpace = 0;
+                    pageId = 0;
+                    dataRows.clear();
+                }
             }
 
-//            ctx.diagnostic().endTrack(DEMANDER_PROCESS_MSG_BATCH_BIN_SEARCH);
+            T row = rowInfo.get2();
 
-//            ctx.diagnostic().beginTrack(DEMANDER_PROCESS_MSG_BATCH_ALLOC_PAGE);
-
-            T row = bin.get1().get(0);
-
-            AbstractDataPageIO<T> initIo = null;
+            dataRows.add(row);
 
             if (pageId == 0) {
-                pageId = allocateDataPage(row.partition());
+                int buck = bucket(payloadSize, false) + 1;
 
-                initIo = ioVersions().latest();
+                if (payloadSize >= MIN_SIZE_FOR_DATA_PAGE)
+                    pageId = takeEmptyPage(REUSE_BUCKET, ioVersions(), statHolder);
+                else
+                for (int b = (BUCKETS - 2); b >= buck; b--) {
+                    pageId = takeEmptyPage(b, ioVersions(), statHolder);
+
+                    if (pageId != 0L) {
+                        remainPageSpace = (b << shift);
+
+                        break;
+                    }
+                }
+
+                if (pageId == 0) {
+                    pageId = allocateDataPage(row.partition());
+
+                    initIo = ioVersions().latest();
+                }
+                else if (PageIdUtils.tag(pageId) != PageIdAllocator.FLAG_DATA)
+                    pageId = initReusedPage(pageId, row.partition(), statHolder);
+                else
+                    pageId = PageIdUtils.changePartitionId(pageId, row.partition());
+
+                if (remainPageSpace == 0)
+                    remainPageSpace = maxPayloadSize;
+
+//                System.out.println(">xxx> pageId=" + pageId + " remain space=" + remainPageSpace);
             }
-            else if (PageIdUtils.tag(pageId) != PageIdAllocator.FLAG_DATA)
-                pageId = initReusedPage(pageId, row.partition(), statHolder);
-            else
-                pageId = PageIdUtils.changePartitionId(pageId, row.partition());
 
-//            ctx.diagnostic().endTrack(DEMANDER_PROCESS_MSG_BATCH_ALLOC_PAGE);
-//
-//            ctx.diagnostic().beginTrack(DEMANDER_PROCESS_MSG_BATCH_BIN_INSERT);
+            remainPageSpace -= payloadSize;
 
-            int written = write(pageId, writeRows, initIo, bin.get1(), FAIL_I, statHolder);
+            if (tail) {
+//                System.out.println(">xxx> write (tail) " + dataRows.size() + " pageId =" + pageId);
 
-//            ctx.diagnostic().endTrack(DEMANDER_PROCESS_MSG_BATCH_BIN_INSERT);
+                int written;
 
-            assert written == COMPLETE : written;
+                if (dataRows.size() == 1) {
+                    written = fragment ? row.size() - (rows.size() % maxPayloadSize) : 0;
+
+                    written = write(pageId, writeRows, initIo, row, written, FAIL_I, statHolder);
+                } else
+                    written = write(pageId, writeRows, initIo, dataRows, FAIL_I, statHolder);
+
+//                System.out.println(">xxx> written (tail) " + dataRows.size());
+
+                assert written == COMPLETE : written;
+            }
+
         }
+
+//        for (T2<List<T>, Integer> bin : bins) {
+//            long pageId = 0;
+//
+//            int remaining = bin.get2();
+//
+////            ctx.diagnostic().beginTrack(DEMANDER_PROCESS_MSG_BATCH_BIN_SEARCH);
+//
+//            int buck = bucket(remaining, false) + 1;
+//
+//            for (int b = remaining < MIN_SIZE_FOR_DATA_PAGE ? buck : REUSE_BUCKET; b < BUCKETS; b++) {
+//                pageId = takeEmptyPage(b, ioVersions(), statHolder);
+//
+//                if (pageId != 0L)
+//                    break;
+//            }
+//
+////            ctx.diagnostic().endTrack(DEMANDER_PROCESS_MSG_BATCH_BIN_SEARCH);
+//
+////            ctx.diagnostic().beginTrack(DEMANDER_PROCESS_MSG_BATCH_ALLOC_PAGE);
+//
+//            T row = bin.get1().get(0);
+//
+//            AbstractDataPageIO<T> initIo = null;
+//
+//            if (pageId == 0) {
+//                pageId = allocateDataPage(row.partition());
+//
+//                initIo = ioVersions().latest();
+//            }
+//            else if (PageIdUtils.tag(pageId) != PageIdAllocator.FLAG_DATA)
+//                pageId = initReusedPage(pageId, row.partition(), statHolder);
+//            else
+//                pageId = PageIdUtils.changePartitionId(pageId, row.partition());
+//
+////            ctx.diagnostic().endTrack(DEMANDER_PROCESS_MSG_BATCH_ALLOC_PAGE);
+////
+////            ctx.diagnostic().beginTrack(DEMANDER_PROCESS_MSG_BATCH_BIN_INSERT);
+//
+//            int written = write(pageId, writeRows, initIo, bin.get1(), FAIL_I, statHolder);
+//
+////            ctx.diagnostic().endTrack(DEMANDER_PROCESS_MSG_BATCH_BIN_INSERT);
+//
+//            assert written == COMPLETE : written;
+//        }
     }
 
     // todo move out
