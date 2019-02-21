@@ -13,6 +13,10 @@ public enum DiagnosticTopics {
 //    PRELOAD_ENTRY("# # preload on demander"),
 //    /** GridCacheMapEntry#storeValue(..) */
 //    PRELOAD_OFFHEAP_INVOKE("# # # offheap().invoke(..)"),
+//
+//    PRELOAD_OFFHEAP_INVOKE_INSERT_FREELIST("# # # freeList.insertDataRow"),
+
+
 //    /** CacheDataStoreImpl#invoke0(..) */
 //    PRELOAD_TREE_INVOKE("# # # # dataTree.invoke(..)"),
 //    /** rowStore.addRow(..) */
@@ -39,8 +43,20 @@ public enum DiagnosticTopics {
 //    SEND_DEMAND("# message serialization"),
 //    SEND_RECEIVE("# network delay between nodes"),
 //    SUPPLIER_PROCESS_MSG("# make batch on supplier handleDemandMessage(..)"),
+
     DEMANDER_PROCESS_MSG_SINGLE("# # demander process single"),
+//    DEMANDER_PROCESS_MSG_BATCH_BIN_SEARCH("# # # # # demander search freelist"),
+//    DEMANDER_PROCESS_MSG_BATCH_BIN_PACK("# # # # # demander process binPack"),
+//    DEMANDER_PROCESS_MSG_BATCH_BIN_INSERT("# # # # # demander process insert"),
+//    DEMANDER_PROCESS_MSG_BATCH_ALLOC_PAGE("# # # # # demander alloc page"),
+//    PRELOAD_OFFHEAP_BATCH_FIND("# # # # # demander find"),
+//    PRELOAD_OFFHEAP_BATCH_INSERT("# # # # demander rowStore.freeList().insertBatch"),
+//    PRELOAD_OFFHEAP_BATCH_TREE_INSERT("# # # # demander dataTree.putx"),
+//    DEMANDER_PROCESS_MSG_BATCH_LOCK("# # # batch lock"),
+//    DEMANDER_PROCESS_MSG_BATCH_UNLOCK("# # # batch unlock"),
+//    DEMANDER_PROCESS_MSG_BATCH_UPDATE("# # # demander batch update"),
     DEMANDER_PROCESS_MSG_BATCH("# # demander process batch"),
+
     DEMANDER_PROCESS_MSG("# demander handleSupplyMessage(..)"),
     TOTAL("# cache rebalance total");
 

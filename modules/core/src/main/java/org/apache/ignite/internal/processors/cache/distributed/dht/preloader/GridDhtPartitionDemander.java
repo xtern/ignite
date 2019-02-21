@@ -93,6 +93,9 @@ import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.DEMAND
 //import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.SEND_DEMAND;
 //import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.SEND_RECEIVE;
 import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.DEMANDER_PROCESS_MSG_BATCH;
+//import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.DEMANDER_PROCESS_MSG_BATCH_LOCK;
+//import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.DEMANDER_PROCESS_MSG_BATCH_UNLOCK;
+//import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.DEMANDER_PROCESS_MSG_BATCH_UPDATE;
 import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.DEMANDER_PROCESS_MSG_SINGLE;
 import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.TOTAL;
 import static org.apache.ignite.internal.processors.dr.GridDrType.DR_NONE;
@@ -106,7 +109,7 @@ public class GridDhtPartitionDemander {
     private static final int BATCH_PRELOAD_THRESHOLD = 5;
 
     /** */
-    private static final int CHECKPOINT_THRESHOLD = 300;
+    private static final int CHECKPOINT_THRESHOLD = 200;
 
     /** */
     private static final boolean batchPageWriteEnabled =

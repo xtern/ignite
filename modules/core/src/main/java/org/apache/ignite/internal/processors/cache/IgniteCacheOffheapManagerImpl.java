@@ -138,6 +138,9 @@ import static org.apache.ignite.internal.processors.cache.persistence.tree.io.Da
 //import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.PRELOAD_TREE_ADD_ROW;
 //import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.PRELOAD_TREE_FINISH_UPDATE;
 //import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.PRELOAD_TREE_INVOKE;
+//import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.PRELOAD_OFFHEAP_BATCH_FIND;
+//import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.PRELOAD_OFFHEAP_BATCH_INSERT;
+//import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.PRELOAD_OFFHEAP_BATCH_TREE_INSERT;
 import static org.apache.ignite.internal.util.IgniteTree.OperationType.NOOP;
 import static org.apache.ignite.internal.util.IgniteTree.OperationType.PUT;
 
@@ -1689,11 +1692,11 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
             Map<KeyCacheObject, CacheDataRow> updateKeys = new LinkedHashMap<>();
 
             // todo can rid from it - measure performance with iterator.
-            Set<KeyCacheObject> insertKeys;
+            Set<KeyCacheObject> insertKeys = null;
 
             //
             if (items.preload() && !cctx.group().persistenceEnabled()) {
-                insertKeys = new HashSet<>(items.keys());
+
 
 //                cctx.kernalContext().diagnostic().beginTrack(PRELOAD_OFFHEAP_BATCH_FIND);
 
@@ -1709,6 +1712,10 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
                 GridCursor<CacheDataRow> cur = dataTree.find(new SearchRow(cacheId, firstKey), new SearchRow(cacheId, lastKey));
 
                 while (cur.next()) {
+                    assert false;
+                    //todo optimize insertKeys creation
+                    if (insertKeys == null)
+                        insertKeys = new HashSet<>(items.keys());
 //                    assert false : "firstKey=" + firstKey.value(cctx.cacheObjectContext(), false) + ", lastKey=" + lastKey.value(cctx.cacheObjectContext(), false) + ", cur=" + cur.get().key().value(cctx.cacheObjectContext(), false);
 
                     CacheDataRow row = cur.get();
@@ -1755,9 +1762,9 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
             }
 
             // New.
-            List<DataRow> newRows = new ArrayList<>(insertKeys.size());
+            List<DataRow> newRows = new ArrayList<>(insertKeys == null ? items.size() : insertKeys.size());
 
-            for (KeyCacheObject key : insertKeys) {
+            for (KeyCacheObject key : (insertKeys == null ? items.keys() : insertKeys)) {
                 try {
                     if (!items.needUpdate(key, null))
                         continue;

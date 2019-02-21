@@ -26,6 +26,8 @@ import java.util.Map;
 import java.util.concurrent.atomic.AtomicReferenceArray;
 import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.IgniteLogger;
+import org.apache.ignite.internal.GridKernalContext;
+import org.apache.ignite.internal.IgniteKernal;
 import org.apache.ignite.internal.pagemem.PageIdAllocator;
 import org.apache.ignite.internal.pagemem.PageIdUtils;
 import org.apache.ignite.internal.pagemem.PageUtils;
@@ -52,6 +54,11 @@ import org.apache.ignite.internal.util.lang.GridTuple3;
 import org.apache.ignite.internal.util.typedef.T2;
 import org.apache.ignite.internal.util.typedef.T3;
 import org.apache.ignite.internal.util.typedef.internal.U;
+
+//import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.DEMANDER_PROCESS_MSG_BATCH_ALLOC_PAGE;
+//import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.DEMANDER_PROCESS_MSG_BATCH_BIN_INSERT;
+//import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.DEMANDER_PROCESS_MSG_BATCH_BIN_PACK;
+//import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.DEMANDER_PROCESS_MSG_BATCH_BIN_SEARCH;
 
 /**
  */
@@ -94,6 +101,9 @@ public abstract class AbstractFreeList<T extends Storable> extends PagesList imp
 
     /** */
     private final PageEvictionTracker evictionTracker;
+
+    /** */
+    private final GridKernalContext ctx;
 
     /**
      *
@@ -454,7 +464,8 @@ public abstract class AbstractFreeList<T extends Storable> extends PagesList imp
         ReuseList reuseList,
         IgniteWriteAheadLogManager wal,
         long metaPageId,
-        boolean initNew) throws IgniteCheckedException {
+        boolean initNew,
+        GridKernalContext ctx) throws IgniteCheckedException {
         super(cacheId, name, memPlc.pageMemory(), BUCKETS, wal, metaPageId);
 
         rmvRow = new RemoveRowHandler(cacheId == 0);
@@ -483,6 +494,8 @@ public abstract class AbstractFreeList<T extends Storable> extends PagesList imp
         this.memMetrics = memMetrics;
 
         init(metaPageId, initNew);
+
+        this.ctx = ctx;
     }
 
     /**
@@ -654,13 +667,20 @@ public abstract class AbstractFreeList<T extends Storable> extends PagesList imp
             }
         }
 
-        // Sort objects by size;
-        regular.sort(Comparator.comparing(GridTuple3::get1));
+//        ctx.diagnostic().beginTrack(DEMANDER_PROCESS_MSG_BATCH_BIN_PACK);
+        List<T2<List<T>, Integer>> bins = binPack(regular, maxDataSize);
+//        try {
+            // Sort objects by size;
+//            regular.sort(Comparator.comparing(GridTuple3::get1));
 
-        // Mapping from row to bin index.
-        Map<T, Integer> binMap = new HashMap<>();
+            // Mapping from row to bin index.
+//            Map<T, Integer> binMap = new HashMap<>();
 
-        List<T2<List<T>, Integer>> bins = binPack(regular, maxDataSize, binMap);
+
+//        } finally {
+//            ctx.diagnostic().endTrack(DEMANDER_PROCESS_MSG_BATCH_BIN_PACK);
+//        }
+
 
         // Writing large objects.
         for (T row : largeRows) {
@@ -705,6 +725,8 @@ public abstract class AbstractFreeList<T extends Storable> extends PagesList imp
 
             int remaining = bin.get2();
 
+//            ctx.diagnostic().beginTrack(DEMANDER_PROCESS_MSG_BATCH_BIN_SEARCH);
+
             int buck = bucket(remaining, false) + 1;
 
             for (int b = remaining < MIN_SIZE_FOR_DATA_PAGE ? buck : REUSE_BUCKET; b < BUCKETS; b++) {
@@ -714,7 +736,9 @@ public abstract class AbstractFreeList<T extends Storable> extends PagesList imp
                     break;
             }
 
-            assert !bin.get1().isEmpty() : bin.get1().size();
+//            ctx.diagnostic().endTrack(DEMANDER_PROCESS_MSG_BATCH_BIN_SEARCH);
+
+//            ctx.diagnostic().beginTrack(DEMANDER_PROCESS_MSG_BATCH_ALLOC_PAGE);
 
             T row = bin.get1().get(0);
 
@@ -730,9 +754,13 @@ public abstract class AbstractFreeList<T extends Storable> extends PagesList imp
             else
                 pageId = PageIdUtils.changePartitionId(pageId, row.partition());
 
-            assert pageId != 0;
+//            ctx.diagnostic().endTrack(DEMANDER_PROCESS_MSG_BATCH_ALLOC_PAGE);
+//
+//            ctx.diagnostic().beginTrack(DEMANDER_PROCESS_MSG_BATCH_BIN_INSERT);
 
             int written = write(pageId, writeRows, initIo, bin.get1(), FAIL_I, statHolder);
+
+//            ctx.diagnostic().endTrack(DEMANDER_PROCESS_MSG_BATCH_BIN_INSERT);
 
             assert written == COMPLETE : written;
         }
@@ -740,12 +768,12 @@ public abstract class AbstractFreeList<T extends Storable> extends PagesList imp
 
     // todo move out
     // todo experiment with "bestfit" approach
-    private List<T2<List<T>, Integer>> binPack(List<T3<Integer, T, Boolean>> rows, int cap, Map<T, Integer> binMap) {
+    private List<T2<List<T>, Integer>> binPack(List<T3<Integer, T, Boolean>> rows, int cap) {
         // Initialize result (Count of bins)
         int cnt = 0;
 
         // Result.
-        List<T2<List<T>, Integer>> bins = new ArrayList<>();
+        List<T2<List<T>, Integer>> bins = new ArrayList<>(rows.size());
 
         // Create an array to store remaining space in bins
         // there can be at most n bins
@@ -769,7 +797,7 @@ public abstract class AbstractFreeList<T extends Storable> extends PagesList imp
                     bins.get(j).get1().add(row);
                     bins.get(j).set2(bins.get(j).get2() + size);
 
-                    binMap.put(row, j);
+//                    binMap.put(row, j);
 
                     break;
                 }
@@ -779,7 +807,8 @@ public abstract class AbstractFreeList<T extends Storable> extends PagesList imp
             if (j == cnt) {
                 remains[cnt] = cap - size;
 
-                List<T> list = new ArrayList<>();
+                // todo remove magic number
+                List<T> list = new ArrayList<>(16);
 
                 bins.add(new T2<>(list, size));
 
@@ -787,7 +816,7 @@ public abstract class AbstractFreeList<T extends Storable> extends PagesList imp
 
                 list.add(row);
 
-                binMap.put(row, j);
+//                binMap.put(row, j);
 
                 cnt++;
             }

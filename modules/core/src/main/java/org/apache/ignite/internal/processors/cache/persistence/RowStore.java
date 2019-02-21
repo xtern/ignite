@@ -27,6 +27,8 @@ import org.apache.ignite.internal.processors.cache.persistence.tree.util.PageHan
 import org.apache.ignite.internal.processors.query.GridQueryRowCacheCleaner;
 import org.apache.ignite.internal.stat.IoStatisticsHolder;
 
+//import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.PRELOAD_OFFHEAP_INVOKE_INSERT_FREELIST;
+
 //import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.PRELOAD_FREELIST_REMOVE;
 
 /**
@@ -98,8 +100,13 @@ public class RowStore {
      * @throws IgniteCheckedException If failed.
      */
     public void addRow(CacheDataRow row, IoStatisticsHolder statHolder) throws IgniteCheckedException {
-        if (!persistenceEnabled)
+        if (!persistenceEnabled) {
+//            ctx.kernalContext().diagnostic().beginTrack(PRELOAD_OFFHEAP_INVOKE_INSERT_FREELIST);
+
             freeList.insertDataRow(row, statHolder);
+
+//            ctx.kernalContext().diagnostic().endTrack(PRELOAD_OFFHEAP_INVOKE_INSERT_FREELIST);
+        }
         else {
             ctx.database().checkpointReadLock();
 

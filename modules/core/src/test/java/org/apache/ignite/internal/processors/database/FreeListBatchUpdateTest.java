@@ -98,7 +98,7 @@ public class FreeListBatchUpdateTest extends GridCommonAbstractTest {
         IgniteConfiguration cfg = super.getConfiguration(igniteInstanceName);
 
         DataRegionConfiguration def = new DataRegionConfiguration();
-        def.setInitialSize(DEF_REG_SIZE);
+        def.setInitialSize(3400 * 1024 * 1024L);
         def.setMaxSize(DEF_REG_SIZE);
         def.setPersistenceEnabled(persistence);
 
@@ -260,11 +260,11 @@ public class FreeListBatchUpdateTest extends GridCommonAbstractTest {
 
         node.createCache(ccfg());
 
-        System.setProperty("MAX_LINES", "1191000");
+//        System.setProperty("MAX_LINES", "1191000");
 
-        ExecutorService execService = Executors.newFixedThreadPool(2);
+        ExecutorService execService = Executors.newFixedThreadPool(4);
 
-        ProcessTableFile load = new LoadTable("EIP_DBAOSB_DEPOHISTPARAM", "/home/xtern/src/ignite/cod_data_mini.zip", execService, node, 1);
+        ProcessTableFile load = new LoadTable("EIP_DBAOSB_DEPOHISTPARAM", "/home/xtern/src/data/cod_data_mini.zip", execService, node, 1);
 
         load.process();
 
