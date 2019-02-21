@@ -19,9 +19,11 @@ package org.apache.ignite.internal.processors.cache;
 
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.NavigableMap;
 import java.util.Set;
 import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.internal.processors.affinity.AffinityTopologyVersion;
@@ -46,7 +48,7 @@ public class BatchedCacheEntries {
     private final GridCacheContext cctx;
 
     /** */
-    private final Map<KeyCacheObject, BatchedCacheMapEntryInfo> infos = new LinkedHashMap<>();
+    private final LinkedHashMap<KeyCacheObject, BatchedCacheMapEntryInfo> infos = new LinkedHashMap<>();
 
     /** */
     private final AffinityTopologyVersion topVer;
@@ -270,6 +272,10 @@ public class BatchedCacheEntries {
                 entry.touch(topVer);
         }
     }
+
+//    public KeyCacheObject lastKey() {
+//        return lastKey;
+//    }
 
     public static class BatchedCacheMapEntryInfo {
         // todo think about remove

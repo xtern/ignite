@@ -26,6 +26,7 @@ import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.NavigableMap;
 import java.util.NoSuchElementException;
 import java.util.Set;
 import java.util.TreeMap;
@@ -104,6 +105,7 @@ import org.apache.ignite.internal.util.lang.GridCursor;
 import org.apache.ignite.internal.util.lang.GridIterator;
 import org.apache.ignite.internal.util.lang.IgniteInClosure2X;
 import org.apache.ignite.internal.util.typedef.F;
+import org.apache.ignite.internal.util.typedef.T2;
 import org.apache.ignite.internal.util.typedef.internal.CU;
 import org.apache.ignite.internal.util.typedef.internal.U;
 import org.apache.ignite.lang.IgniteBiTuple;
@@ -1682,37 +1684,42 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
 
         /** {@inheritDoc} */
         @Override public void updateBatch(BatchedCacheEntries items) throws IgniteCheckedException {
-            int size = items.size();
+//            int size = items.size();
 
             GridCacheContext cctx = items.context();
 
             int cacheId = grp.sharedGroup() ? cctx.cacheId() : CU.UNDEFINED_CACHE_ID;
 
             // todo bench perf linked vs not-linked
-            Map<KeyCacheObject, CacheDataRow> updateKeys = new LinkedHashMap<>();
+            List<CacheDataRow> updateRows = null;
 
             // todo can rid from it - measure performance with iterator.
             Set<KeyCacheObject> insertKeys = null;
 
             //
             if (items.preload() && !cctx.group().persistenceEnabled()) {
-
-
 //                cctx.kernalContext().diagnostic().beginTrack(PRELOAD_OFFHEAP_BATCH_FIND);
+//                List<KeyCacheObject> sortedKeys = new ArrayList<>(items.keys());
+//                for (KeyCacheObject k : items.keys()) {
+//                }
+//                assert sortedKeys.size() > 1 : sortedKeys.size() + " cache="+cctx.name();
+//                NavigableMap map  = items.keys();
+                Iterator<KeyCacheObject> itr = items.keys().iterator();
+                KeyCacheObject firstKey = null;
+                KeyCacheObject lastKey = null;
 
-                List<KeyCacheObject> sortedKeys = new ArrayList<>(items.keys());
+                while (itr.hasNext()) {
+                    lastKey = itr.next();
 
-                assert sortedKeys.size() > 1 : sortedKeys.size() + " cache="+cctx.name();
-
-                KeyCacheObject firstKey = sortedKeys.get(0);
-                KeyCacheObject lastKey = sortedKeys.get(size - 1);
+                    if (firstKey == null)
+                        firstKey = lastKey;
+                }
 
                 assert !items.preload() || lastKey.hashCode() >= firstKey.hashCode() : "Keys not sorted by hash: first=" + firstKey.hashCode() + ", last=" + lastKey.hashCode();
 
                 GridCursor<CacheDataRow> cur = dataTree.find(new SearchRow(cacheId, firstKey), new SearchRow(cacheId, lastKey));
 
                 while (cur.next()) {
-                    assert false;
                     //todo optimize insertKeys creation
                     if (insertKeys == null)
                         insertKeys = new HashSet<>(items.keys());
@@ -1721,8 +1728,12 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
                     CacheDataRow row = cur.get();
 
                     try {
-                        if (insertKeys.remove(row.key()) && items.needUpdate(row.key(), row)) //, items.get(row.key()).version()))
-                            updateKeys.put(row.key(), row);
+                        if (insertKeys.remove(row.key()) && items.needUpdate(row.key(), row)) { //, items.get(row.key()).version()))
+                            if (updateRows == null)
+                                updateRows = new ArrayList<>(8);
+
+                            updateRows.add(row);
+                        }
                     }
                     catch (GridCacheEntryRemovedException e) {
                         items.onRemove(row.key());
@@ -1740,7 +1751,7 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
 
                         if (info.needUpdate(row)) {
                             if (row != null)
-                                updateKeys.put(info.key(), row);
+                                updateRows.add(row);
                             else
                                 insertKeys.add(info.key());
                         }
@@ -1752,19 +1763,23 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
             }
 
             // Updates.
-            for (Map.Entry<KeyCacheObject, CacheDataRow> e : updateKeys.entrySet()) {
-                KeyCacheObject key = e.getKey();
+            if (updateRows != null)
+            for (CacheDataRow row : updateRows) {
+                KeyCacheObject key = row.key();
                 // todo why we don't need here to marshal cache object (call valueBytes)
 
                 BatchedCacheEntries.BatchedCacheMapEntryInfo entry = items.get(key);
 
-                update(cctx, key, entry.value(), entry.version(), entry.expireTime(), e.getValue());
+                update(cctx, key, entry.value(), entry.version(), entry.expireTime(), row);
             }
 
             // New.
-            List<DataRow> newRows = new ArrayList<>(insertKeys == null ? items.size() : insertKeys.size());
+            if (insertKeys == null)
+                insertKeys = items.keys();
 
-            for (KeyCacheObject key : (insertKeys == null ? items.keys() : insertKeys)) {
+            List<DataRow> newRows = new ArrayList<>(insertKeys.size());
+
+            for (KeyCacheObject key : insertKeys) {
                 try {
                     if (!items.needUpdate(key, null))
                         continue;

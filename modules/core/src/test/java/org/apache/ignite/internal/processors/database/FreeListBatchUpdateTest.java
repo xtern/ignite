@@ -18,7 +18,6 @@ package org.apache.ignite.internal.processors.database;
 
 import java.io.File;
 import java.io.IOException;
-import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -50,6 +49,7 @@ import org.apache.ignite.testframework.GridTestUtils;
 import org.apache.ignite.testframework.junits.common.GridCommonAbstractTest;
 import org.junit.After;
 import org.junit.Before;
+import org.junit.Ignore;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
@@ -78,12 +78,12 @@ public class FreeListBatchUpdateTest extends GridCommonAbstractTest {
     @Parameterized.Parameters(name = "with atomicity={0} and persistence={1}")
     public static Iterable<Object[]> setup() {
         return Arrays.asList(new Object[][]{
+            {CacheAtomicityMode.ATOMIC, false},
+            {CacheAtomicityMode.ATOMIC, true},
             {CacheAtomicityMode.TRANSACTIONAL, false},
-//            {CacheAtomicityMode.ATOMIC, true},
-//            {CacheAtomicityMode.TRANSACTIONAL, false},
-//            {CacheAtomicityMode.TRANSACTIONAL, true},
-//            {CacheAtomicityMode.TRANSACTIONAL_SNAPSHOT, false},
-//            {CacheAtomicityMode.TRANSACTIONAL_SNAPSHOT, true}
+            {CacheAtomicityMode.TRANSACTIONAL, true},
+            {CacheAtomicityMode.TRANSACTIONAL_SNAPSHOT, false},
+            {CacheAtomicityMode.TRANSACTIONAL_SNAPSHOT, true}
         });
     }
 
@@ -260,41 +260,30 @@ public class FreeListBatchUpdateTest extends GridCommonAbstractTest {
 
         node.createCache(ccfg());
 
-//        System.setProperty("MAX_LINES", "1191000");
+        int cnt = 1_000_000;
+        int minSize = 0;
+        int maxSize = 2048;
+        int start = 0;
 
-        ExecutorService execService = Executors.newFixedThreadPool(4);
+        log.info("Loading " + cnt + " random entries per " + minSize + " - " + maxSize + " bytes.");
 
-        ProcessTableFile load = new LoadTable("EIP_DBAOSB_DEPOHISTPARAM", "/home/xtern/src/data/cod_data_mini.zip", execService, node, 1);
+        Map<String, byte[]> srcMap = new HashMap<>();
 
-        load.process();
+        for (int i = start; i < start + cnt; i++) {
+            int size = minSize + ThreadLocalRandom.current().nextInt(maxSize - minSize);
 
-        execService.shutdown();
+            byte[] obj = new byte[size];
 
+            srcMap.put(String.valueOf(i), obj);
+        }
 
-//        int cnt = 1_000_000;
-//        int minSize = 256;
-//        int maxSize = 1536;
-//        int start = 0;
-//
-//        log.info("Loading " + cnt + " random entries per " + minSize + " - " + maxSize + " bytes.");
-//
-//        Map<String, byte[]> srcMap = new HashMap<>();
-//
-//        for (int i = start; i < start + cnt; i++) {
-//            int size = minSize + ThreadLocalRandom.current().nextInt(maxSize - minSize);
-//
-//            byte[] obj = new byte[size];
-//
-//            srcMap.put(String.valueOf(i), obj);
-//        }
-//
-//        try (IgniteDataStreamer<String, byte[]> streamer = node.dataStreamer(DEF_CACHE_NAME)) {
-//            streamer.addData(srcMap);
-//        }
-//
-//        srcMap.put(String.valueOf(1), new byte[65536]);
+        try (IgniteDataStreamer<String, byte[]> streamer = node.dataStreamer(DEF_CACHE_NAME)) {
+            streamer.addData(srcMap);
+        }
 
-//        node.cache(DEF_CACHE_NAME).put(String.valueOf(1), new byte[65536]);
+        srcMap.put(String.valueOf(1), new byte[65536]);
+
+        node.cache(DEF_CACHE_NAME).put(String.valueOf(1), new byte[65536]);
 
         log.info("Done");
 
@@ -325,19 +314,68 @@ public class FreeListBatchUpdateTest extends GridCommonAbstractTest {
 
         log.info("Verification on node2");
 
-//        validateCacheEntries(node2.cache(DEF_CACHE_NAME), srcMap);
-//
-//        if (persistence) {
-//            node2.close();
-//
-//            Ignite ignite = startGrid(1);
-//
-//            ignite.cluster().active(true);
-//
-//            log.info("Validate entries after restart");
-//
-//            validateCacheEntries(ignite.cache(DEF_CACHE_NAME), srcMap);
-//        }
+        validateCacheEntries(node2.cache(DEF_CACHE_NAME), srcMap);
+
+        if (persistence) {
+            node2.close();
+
+            Ignite ignite = startGrid(1);
+
+            ignite.cluster().active(true);
+
+            log.info("Validate entries after restart");
+
+            validateCacheEntries(ignite.cache(DEF_CACHE_NAME), srcMap);
+        }
+    }
+
+    /**
+     *
+     */
+    @Test
+    public void testBatchPutAllLoader() throws Exception {
+        Ignite node = startGrid(0);
+
+        node.cluster().active(true);
+
+        node.createCache(ccfg());
+
+        ExecutorService execSvc = Executors.newFixedThreadPool(4);
+
+        ProcessTableFile load = new LoadTable("EIP_DBAOSB_DEPOHISTPARAM", "/home/xtern/src/data/cod_data_mini.zip", execSvc, node, 1);
+
+        load.process();
+
+        execSvc.shutdown();
+
+        log.info("Done");
+
+        IgniteCache cache = node.cache(DEF_CACHE_NAME);
+
+        if (persistence)
+            node.cluster().active(false);
+
+        final IgniteEx node2 = startGrid(1);
+
+        if (persistence) {
+            List<BaselineNode> list = new ArrayList<>(node.cluster().currentBaselineTopology());
+
+            list.add(node2.localNode());
+
+            node.cluster().active(true);
+
+            node.cluster().setBaselineTopology(list);
+        }
+
+        log.info("await rebalance");
+
+        awaitRebalance(node2, DEF_CACHE_NAME);
+
+        U.sleep(2_000);
+
+        node.close();
+
+        log.info("Verification on node2");
     }
 
     /**
@@ -354,7 +392,7 @@ public class FreeListBatchUpdateTest extends GridCommonAbstractTest {
 
                 return true;
             }
-        }, 30_000);
+        }, 60_000);
 
         U.sleep(1000);
 
