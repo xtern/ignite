@@ -70,6 +70,9 @@ public class GridDhtPartitionDemandMessage extends GridCacheGroupIdMessage {
     /** Topology version. */
     private AffinityTopologyVersion topVer;
 
+    /** */
+    private long timestamp;
+
     /**
      * @param rebalanceId Rebalance id for this node.
      * @param topVer Topology version.
@@ -132,6 +135,7 @@ public class GridDhtPartitionDemandMessage extends GridCacheGroupIdMessage {
         cp.workerId = workerId;
         cp.topVer = topVer;
         cp.parts = parts;
+        cp.timestamp = U.currentTimeMillis();
         return cp;
     }
 
@@ -161,6 +165,14 @@ public class GridDhtPartitionDemandMessage extends GridCacheGroupIdMessage {
      */
     long timeout() {
         return timeout;
+    }
+
+    long timestamp() {
+        return timestamp;
+    }
+
+    void timestamp(long timestamp) {
+        this.timestamp = timestamp;
     }
 
     /**
@@ -297,6 +309,12 @@ public class GridDhtPartitionDemandMessage extends GridCacheGroupIdMessage {
 
                 writer.incrementState();
 
+            case 10:
+                if (!writer.writeLong("timestamp", timestamp))
+                    return false;
+
+                writer.incrementState();
+
         }
 
         return true;
@@ -360,7 +378,13 @@ public class GridDhtPartitionDemandMessage extends GridCacheGroupIdMessage {
                     return false;
 
                 reader.incrementState();
+            case 10:
+                timestamp = reader.readLong("timestamp");
 
+                if (!reader.isLastRead())
+                    return false;
+
+                reader.incrementState();
         }
 
         return reader.afterMessageRead(GridDhtPartitionDemandMessage.class);

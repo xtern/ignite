@@ -772,7 +772,7 @@ public abstract class AbstractFreeList<T extends Storable> extends PagesList imp
                     pageId = takeEmptyPage(b, ioVersions(), statHolder);
 
                     if (pageId != 0L) {
-                        remainPageSpace = (b << shift);
+                        remainPageSpace = (b << shift) + 4;
 
                         break;
                     }

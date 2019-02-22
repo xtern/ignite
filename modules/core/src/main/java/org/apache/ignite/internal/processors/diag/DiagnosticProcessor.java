@@ -99,6 +99,17 @@ public class DiagnosticProcessor extends GridProcessorAdapter {
     }
 
     /** */
+    public void timeTrack(DiagnosticTopics topic, long time) {
+        if (!enabled)
+            return;
+
+        if (TOTAL == topic)
+            enabled = false;
+
+        timings.get(topic.name()).add(time);
+    }
+
+    /** */
     private void endTrack(String topic) {
         Long value = tracks.remove(topic);
 

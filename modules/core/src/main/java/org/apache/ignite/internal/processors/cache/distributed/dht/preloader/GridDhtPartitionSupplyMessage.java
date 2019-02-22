@@ -85,6 +85,8 @@ public class GridDhtPartitionSupplyMessage extends GridCacheGroupIdMessage imple
     @GridDirectMap(keyType = int.class, valueType = long.class)
     private Map<Integer, Long> keysPerCache;
 
+    private long timestamp;
+
     /**
      * @param rebalanceId Rebalance id.
      * @param grpId Cache group ID.
@@ -342,6 +344,11 @@ public class GridDhtPartitionSupplyMessage extends GridCacheGroupIdMessage imple
 
                 writer.incrementState();
 
+            case 13:
+                if (!writer.writeLong("timestamp", timestamp))
+                    return false;
+
+                writer.incrementState();
         }
 
         return true;
@@ -431,9 +438,26 @@ public class GridDhtPartitionSupplyMessage extends GridCacheGroupIdMessage imple
 
                 reader.incrementState();
 
+            case 13:
+                timestamp = reader.readLong("timestamp");
+
+                if (!reader.isLastRead())
+                    return false;
+
+                reader.incrementState();
+
         }
 
         return reader.afterMessageRead(GridDhtPartitionSupplyMessage.class);
+    }
+
+
+    public void timestamp(long timestamp) {
+        this.timestamp = timestamp;
+    }
+
+    public long timestamp() {
+        return timestamp;
     }
 
     /** {@inheritDoc} */

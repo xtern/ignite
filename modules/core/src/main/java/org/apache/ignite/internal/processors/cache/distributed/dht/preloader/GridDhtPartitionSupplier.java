@@ -53,6 +53,9 @@ import org.apache.ignite.lang.IgnitePredicate;
 import org.apache.ignite.spi.IgniteSpiException;
 
 import static org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtPartitionState.OWNING;
+//import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.DEMAND_MSG_SEND;
+import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.SUPPLIER_PROCESS_MSG;
+import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.TOTAL;
 
 /**
  * Class for supplying partitions to demanding nodes.
@@ -184,6 +187,9 @@ class GridDhtPartitionSupplier {
 
         T3<UUID, Integer, AffinityTopologyVersion> contextId = new T3<>(nodeId, topicId, demandMsg.topologyVersion());
 
+        //log.info("timestamp " + (U.currentTimeMillis() - demandMsg.timestamp()));
+//        grp.shared().kernalContext().diagnostic().timeTrack(DEMAND_MSG_SEND, U.currentTimeMillis() - demandMsg.timestamp());
+
         if (demandMsg.rebalanceId() < 0) { // Demand node requested context cleanup.
             synchronized (scMap) {
                 SupplyContext sctx = scMap.get(contextId);
@@ -253,6 +259,10 @@ class GridDhtPartitionSupplier {
             long maxBatchesCnt = grp.config().getRebalanceBatchesPrefetchCount();
 
             if (sctx == null) {
+                grp.shared().kernalContext().diagnostic().beginTrack(TOTAL);
+
+                grp.shared().kernalContext().diagnostic().beginTrack(SUPPLIER_PROCESS_MSG);
+
                 if (log.isDebugEnabled())
                     log.debug("Starting supplying rebalancing [" + supplyRoutineInfo(topicId, nodeId, demandMsg) +
                         ", fullPartitions=" + S.compact(demandMsg.partitions().fullSet()) +
@@ -444,6 +454,10 @@ class GridDhtPartitionSupplier {
 
             if (log.isInfoEnabled())
                 log.info("Finished supplying rebalancing [" + supplyRoutineInfo(topicId, nodeId, demandMsg) + "]");
+
+            grp.shared().kernalContext().diagnostic().endTrack(SUPPLIER_PROCESS_MSG);
+            grp.shared().kernalContext().diagnostic().endTrack(TOTAL);
+            grp.shared().kernalContext().diagnostic().printStats();
         }
         catch (Throwable t) {
             if (grp.shared().kernalContext().isStopping())
@@ -515,6 +529,8 @@ class GridDhtPartitionSupplier {
         try {
             if (log.isDebugEnabled())
                 log.debug("Send next supply message [" + supplyRoutineInfo(topicId, demander.id(), demandMsg) + "]");
+
+//            supplyMsg.timestamp(U.currentTimeMillis());
 
             grp.shared().io().sendOrderedMessage(demander, demandMsg.topic(), supplyMsg, grp.ioPolicy(), demandMsg.timeout());
 

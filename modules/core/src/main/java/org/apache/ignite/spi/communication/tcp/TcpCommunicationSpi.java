@@ -71,9 +71,11 @@ import org.apache.ignite.internal.IgniteInternalFuture;
 import org.apache.ignite.internal.IgniteInterruptedCheckedException;
 import org.apache.ignite.internal.IgniteKernal;
 import org.apache.ignite.internal.cluster.ClusterTopologyCheckedException;
+import org.apache.ignite.internal.managers.communication.GridIoMessage;
 import org.apache.ignite.internal.managers.discovery.IgniteDiscoverySpi;
 import org.apache.ignite.internal.managers.eventstorage.GridLocalEventListener;
 import org.apache.ignite.internal.managers.eventstorage.HighPriorityListener;
+import org.apache.ignite.internal.processors.cache.distributed.dht.preloader.GridDhtPartitionSupplyMessage;
 import org.apache.ignite.internal.util.GridConcurrentFactory;
 import org.apache.ignite.internal.util.GridSpinReadWriteLock;
 import org.apache.ignite.internal.util.future.GridFinishedFuture;
@@ -158,6 +160,7 @@ import static org.apache.ignite.events.EventType.EVT_NODE_FAILED;
 import static org.apache.ignite.events.EventType.EVT_NODE_LEFT;
 import static org.apache.ignite.failure.FailureType.CRITICAL_ERROR;
 import static org.apache.ignite.failure.FailureType.SYSTEM_WORKER_TERMINATION;
+//import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.SUPPLY_MSG_SEND;
 import static org.apache.ignite.internal.util.nio.GridNioSessionMetaKey.SSL_META;
 import static org.apache.ignite.plugin.extensions.communication.Message.DIRECT_TYPE_SIZE;
 import static org.apache.ignite.spi.communication.tcp.internal.TcpCommunicationConnectionCheckFuture.SES_FUT_META;
@@ -821,6 +824,18 @@ public class TcpCommunicationSpi extends IgniteSpiAdapter implements Communicati
                     }
                     else
                         c = NOOP;
+
+//                    if (msg instanceof GridIoMessage) {
+//                        GridIoMessage msg0 = (GridIoMessage)msg;
+//
+//                        Message msg1 = msg0.message();
+//
+//                        if (msg1 instanceof GridDhtPartitionSupplyMessage) {
+//
+////                            ((IgniteEx)ignite).context().diagnostic().timeTrack(SUPPLY_MSG_SEND, (U.currentTimeMillis() - ((GridDhtPartitionSupplyMessage)msg1).timestamp()));
+//
+//                        }
+//                    }
 
                     notifyListener(connKey.nodeId(), msg, c);
                 }

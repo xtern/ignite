@@ -97,6 +97,7 @@ import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.DEMAND
 //import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.DEMANDER_PROCESS_MSG_BATCH_UNLOCK;
 //import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.DEMANDER_PROCESS_MSG_BATCH_UPDATE;
 import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.DEMANDER_PROCESS_MSG_SINGLE;
+//import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.SUPPLY_MSG_SEND;
 import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.TOTAL;
 import static org.apache.ignite.internal.processors.dr.GridDrType.DR_NONE;
 import static org.apache.ignite.internal.processors.dr.GridDrType.DR_PRELOAD;
@@ -543,6 +544,8 @@ public class GridDhtPartitionDemander {
                         try {
 //                            ctx.kernalContext().diagnostic().beginTrack(SEND_DEMAND);
 
+                            demandMsg.timestamp(U.currentTimeMillis());
+
                             ctx.io().sendOrderedMessage(node, rebalanceTopics.get(topicId),
                                 demandMsg.convertIfNeeded(node.version()), grp.ioPolicy(), demandMsg.timeout());
 
@@ -702,6 +705,8 @@ public class GridDhtPartitionDemander {
         ctx.kernalContext().diagnostic().beginTrack(DEMANDER_PROCESS_MSG);
 
         AffinityTopologyVersion topVer = supplyMsg.topologyVersion();
+
+//        ctx.kernalContext().diagnostic().timeTrack(SUPPLY_MSG_SEND, (U.currentTimeMillis() - supplyMsg.timestamp()));
 
         final RebalanceFuture fut = rebalanceFut;
 
@@ -937,6 +942,7 @@ public class GridDhtPartitionDemander {
                 // Send demand message.
                 try {
 //                    ctx.kernalContext().diagnostic().beginTrack(SEND_DEMAND);
+                    d.timestamp(U.currentTimeMillis());
 //
                     ctx.io().sendOrderedMessage(node, rebalanceTopics.get(topicId),
                         d.convertIfNeeded(node.version()), grp.ioPolicy(), grp.config().getRebalanceTimeout());
@@ -1532,6 +1538,8 @@ public class GridDhtPartitionDemander {
             try {
                 for (int idx = 0; idx < ctx.gridConfig().getRebalanceThreadPoolSize(); idx++) {
                     d.topic(GridCachePartitionExchangeManager.rebalanceTopic(idx));
+
+                    d.timestamp(U.currentTimeMillis());
 
                     ctx.io().sendOrderedMessage(node, GridCachePartitionExchangeManager.rebalanceTopic(idx),
                         d.convertIfNeeded(node.version()), grp.ioPolicy(), grp.config().getRebalanceTimeout());

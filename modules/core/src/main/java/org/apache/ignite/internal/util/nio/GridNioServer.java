@@ -55,6 +55,7 @@ import org.apache.ignite.configuration.ConnectorConfiguration;
 import org.apache.ignite.internal.IgniteInternalFuture;
 import org.apache.ignite.internal.IgniteInterruptedCheckedException;
 import org.apache.ignite.internal.managers.communication.GridIoMessage;
+import org.apache.ignite.internal.processors.cache.distributed.dht.preloader.GridDhtPartitionSupplyMessage;
 import org.apache.ignite.internal.util.GridConcurrentHashSet;
 import org.apache.ignite.internal.util.GridUnsafe;
 import org.apache.ignite.internal.util.future.GridCompoundFuture;
@@ -558,6 +559,15 @@ public class GridNioServer<T> {
         assert ses instanceof GridSelectorNioSessionImpl;
 
         GridSelectorNioSessionImpl impl = (GridSelectorNioSessionImpl)ses;
+
+//        if (msg instanceof GridIoMessage) {
+//            GridIoMessage msg0 = (GridIoMessage)msg;
+//
+//            Message msg1 = msg0.message();
+//
+//            if (msg1 instanceof GridDhtPartitionSupplyMessage)
+//                ((GridDhtPartitionSupplyMessage)msg1).timestamp(U.currentTimeMillis());
+//        }
 
         if (createFut) {
             NioOperationFuture<?> fut = new NioOperationFuture<Void>(impl, NioOperation.REQUIRE_WRITE, msg,
