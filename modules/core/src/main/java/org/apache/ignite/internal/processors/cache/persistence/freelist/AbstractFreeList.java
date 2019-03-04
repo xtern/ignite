@@ -640,7 +640,7 @@ public abstract class AbstractFreeList<T extends Storable> extends PagesList imp
     }
 
     /** {@inheritDoc} */
-    @Override public void insertBatch(Collection<T> rows, IoStatisticsHolder statHolder) throws IgniteCheckedException {
+    @Override public void insertDataRows(Collection<T> rows, IoStatisticsHolder statHolder) throws IgniteCheckedException {
         // 1. split into 3 bags
         //  A. Large objects.
         //  B1. Tails of large objects

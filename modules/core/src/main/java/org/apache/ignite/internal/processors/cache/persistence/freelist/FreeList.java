@@ -40,7 +40,7 @@ public interface FreeList<T extends Storable> {
      * @param rows Rows.
      * @throws IgniteCheckedException If failed.
      */
-    public void insertBatch(Collection<T> rows, IoStatisticsHolder statHolder) throws IgniteCheckedException;
+    public void insertDataRows(Collection<T> rows, IoStatisticsHolder statHolder) throws IgniteCheckedException;
 
     /**
      * @param link Row link.

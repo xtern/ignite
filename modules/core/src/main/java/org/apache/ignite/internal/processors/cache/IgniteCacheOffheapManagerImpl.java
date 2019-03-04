@@ -19,14 +19,12 @@ package org.apache.ignite.internal.processors.cache;
 
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.NavigableMap;
 import java.util.NoSuchElementException;
 import java.util.Set;
 import java.util.TreeMap;
@@ -105,7 +103,6 @@ import org.apache.ignite.internal.util.lang.GridCursor;
 import org.apache.ignite.internal.util.lang.GridIterator;
 import org.apache.ignite.internal.util.lang.IgniteInClosure2X;
 import org.apache.ignite.internal.util.typedef.F;
-import org.apache.ignite.internal.util.typedef.T2;
 import org.apache.ignite.internal.util.typedef.internal.CU;
 import org.apache.ignite.internal.util.typedef.internal.U;
 import org.apache.ignite.lang.IgniteBiTuple;
@@ -1682,6 +1679,128 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
             invoke0(cctx, new SearchRow(cacheId, key), c);
         }
 
+        //@Override
+        public void invokeAll(GridCacheContext cctx, List<KeyCacheObject> keys, OffheapInvokeAllClosure c) throws IgniteCheckedException {
+            int cacheId = grp.sharedGroup() ? cctx.cacheId() : CU.UNDEFINED_CACHE_ID;
+
+            List<CacheDataRow> updateRows = null;
+
+            Set<KeyCacheObject> insertKeys = null;
+
+            // Optimization for in memory preloader.
+            if (c.preload() && !cctx.group().persistenceEnabled()) {
+                Iterator<KeyCacheObject> itr = keys.iterator();
+                KeyCacheObject firstKey = null;
+                KeyCacheObject lastKey = null;
+
+                while (itr.hasNext()) {
+                    lastKey = itr.next();
+
+                    if (firstKey == null)
+                        firstKey = lastKey;
+                }
+
+                assert lastKey.hashCode() >= firstKey.hashCode() : "Keys not sorted by hash: first=" + firstKey.hashCode() + ", last=" + lastKey.hashCode();
+
+                GridCursor<CacheDataRow> cur = dataTree.find(new SearchRow(cacheId, firstKey), new SearchRow(cacheId, lastKey));
+
+                while (cur.next()) {
+                    // todo optimize insertKeys creation
+                    if (insertKeys == null)
+                        insertKeys = new HashSet<>(keys);
+
+                    CacheDataRow row = cur.get();
+
+//                    try {
+                        if (insertKeys.remove(row.key()) && c.apply(row)) { //, items.get(row.key()).version()))
+                            if (updateRows == null)
+                                updateRows = new ArrayList<>(8);
+
+                            updateRows.add(row);
+                        }
+//                    }
+//                    catch (GridCacheEntryRemovedException e) {
+//                        items.onRemove(row.key());
+//                    }
+                }
+            } else {
+                    insertKeys = new HashSet<>();
+
+//                    for (BatchedCacheEntries.BatchedCacheMapEntryInfo info : items.values()) {
+//                        try {
+//                            CacheDataRow row = find(cctx, info.key());
+//
+//                            if (info.needUpdate(row)) {
+//                                if (row != null)
+//                                    updateRows.add(row);
+//                                else
+//                                    insertKeys.add(info.key());
+//                            }
+//                        }
+//                        catch (GridCacheEntryRemovedException e) {
+//                            items.onRemove(info.key());
+//                        }
+//                    }
+            }
+
+                // Updates.
+//                if (updateRows != null)
+//                    for (CacheDataRow row : updateRows) {
+//                        KeyCacheObject key = row.key();
+//                        // todo why we don't need here to marshal cache object (call valueBytes)
+//
+//                        BatchedCacheEntries.BatchedCacheMapEntryInfo entry = items.get(key);
+//
+//                        update(cctx, key, entry.value(), entry.version(), entry.expireTime(), row);
+//                    }
+//
+//                // New.
+//                if (insertKeys == null)
+//                    insertKeys = items.keys();
+//
+//                List<DataRow> newRows = new ArrayList<>(insertKeys.size());
+//
+//                for (KeyCacheObject key : insertKeys) {
+//                    try {
+//                        if (!items.needUpdate(key, null))
+//                            continue;
+//                    }
+//                    catch (GridCacheEntryRemovedException e) {
+//                        items.onRemove(key);
+//                    }
+//
+//                    BatchedCacheEntries.BatchedCacheMapEntryInfo entry = items.get(key);
+//
+//                    CacheObject val = entry.value();
+//                    val.valueBytes(cctx.cacheObjectContext());
+//                    key.valueBytes(cctx.cacheObjectContext());
+//
+////                long expTime = entry.ttl() < 0 ? CU.toExpireTime(entry.ttl()) : entry.ttl();
+//
+//                    DataRow row = makeDataRow(key, val, entry.version(), entry.expireTime(), cacheId);
+//
+//                    assert row.value() != null : key.hashCode();
+//
+//                    newRows.add(row);
+//                }
+//
+////            cctx.kernalContext().diagnostic().beginTrack(PRELOAD_OFFHEAP_BATCH_INSERT);
+//
+//                rowStore.freeList().insertDataRows(newRows, grp.statisticsHolderData());
+//
+////            cctx.kernalContext().diagnostic().endTrack(PRELOAD_OFFHEAP_BATCH_INSERT);
+//
+////            cctx.kernalContext().diagnostic().beginTrack(PRELOAD_OFFHEAP_BATCH_TREE_INSERT);
+//
+//                for (DataRow row : newRows) {
+//                    dataTree.putx(row);
+//
+//                    finishUpdate(cctx, row, null);
+//                }
+
+
+        }
+
         /** {@inheritDoc} */
         @Override public void updateBatch(BatchedCacheEntries items) throws IgniteCheckedException {
 //            int size = items.size();
@@ -1805,7 +1924,7 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
 
 //            cctx.kernalContext().diagnostic().beginTrack(PRELOAD_OFFHEAP_BATCH_INSERT);
 
-            rowStore.freeList().insertBatch(newRows, grp.statisticsHolderData());
+            rowStore.freeList().insertDataRows(newRows, grp.statisticsHolderData());
 
 //            cctx.kernalContext().diagnostic().endTrack(PRELOAD_OFFHEAP_BATCH_INSERT);
 
@@ -1881,7 +2000,7 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
                 dataRows.add(row);
             }
 
-            rowStore.freeList().insertBatch(dataRows, grp.statisticsHolderData());
+            rowStore.freeList().insertDataRows(dataRows, grp.statisticsHolderData());
 
             for (DataRow row : dataRows) {
                 dataTree.putx(row);

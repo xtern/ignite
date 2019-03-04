@@ -47,6 +47,7 @@ import org.apache.ignite.internal.util.lang.GridCursor;
 import org.apache.ignite.internal.util.lang.GridIterator;
 import org.apache.ignite.internal.util.lang.IgniteInClosure2X;
 import org.apache.ignite.lang.IgniteBiTuple;
+import org.apache.ignite.lang.IgnitePredicate;
 import org.jetbrains.annotations.Nullable;
 
 /**
@@ -651,6 +652,13 @@ public interface IgniteCacheOffheapManager {
          * @return Old row.
          */
         @Nullable public CacheDataRow oldRow();
+    }
+
+    /**
+     *
+     */
+    interface OffheapInvokeAllClosure extends OffheapInvokeClosure, IgnitePredicate<CacheDataRow> {
+        boolean preload();
     }
 
     /**

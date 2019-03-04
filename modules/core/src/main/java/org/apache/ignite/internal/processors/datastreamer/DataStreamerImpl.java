@@ -142,7 +142,7 @@ public class DataStreamerImpl<K, V> implements IgniteDataStreamer<K, V>, Delayed
     private final Map<Long, ThreadBuffer> threadBufMap = new ConcurrentHashMap<>();
 
     /** Isolated receiver. */
-    private static final StreamReceiver ISOLATED_UPDATER = batchPageWriteEnabled ? new OptimizedIsolatedUpdater() : new IsolatedUpdater();
+    private static final StreamReceiver ISOLATED_UPDATER = new IsolatedUpdater();//batchPageWriteEnabled ? new OptimizedIsolatedUpdater() : new IsolatedUpdater();
 
     /** Amount of permissions should be available to continue new data processing. */
     private static final int REMAP_SEMAPHORE_PERMISSIONS_COUNT = Integer.MAX_VALUE;
