@@ -657,8 +657,8 @@ public interface IgniteCacheOffheapManager {
     /**
      *
      */
-    interface OffheapInvokeAllClosure extends OffheapInvokeClosure, IgnitePredicate<CacheDataRow> {
-        boolean preload();
+    interface OffheapInvokeAllClosure extends IgniteTree.InvokeAllClosure<CacheDataRow>, IgnitePredicate<CacheDataRow> {
+//        boolean preload();
     }
 
     /**

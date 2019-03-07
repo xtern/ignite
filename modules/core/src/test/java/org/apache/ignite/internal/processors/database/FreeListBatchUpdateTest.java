@@ -53,8 +53,8 @@ import org.junit.Ignore;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
-import ru.sbrf.gg.load.LoadTable;
-import ru.sbrf.gg.load.ProcessTableFile;
+//import ru.sbrf.gg.load.LoadTable;
+//import ru.sbrf.gg.load.ProcessTableFile;
 
 import static org.apache.ignite.IgniteSystemProperties.IGNITE_PDS_WAL_REBALANCE_THRESHOLD;
 import static org.junit.Assert.assertArrayEquals;
@@ -332,51 +332,51 @@ public class FreeListBatchUpdateTest extends GridCommonAbstractTest {
     /**
      *
      */
-    @Test
-    public void testBatchPutAllLoader() throws Exception {
-        Ignite node = startGrid(0);
-
-        node.cluster().active(true);
-
-        node.createCache(ccfg());
-
-        ExecutorService execSvc = Executors.newFixedThreadPool(4);
-
-        ProcessTableFile load = new LoadTable("EIP_DBAOSB_DEPOHISTPARAM", "/home/xtern/src/data/cod_data_mini.zip", execSvc, node, 1);
-
-        load.process();
-
-        execSvc.shutdown();
-
-        log.info("Done");
-
-        IgniteCache cache = node.cache(DEF_CACHE_NAME);
-
-        if (persistence)
-            node.cluster().active(false);
-
-        final IgniteEx node2 = startGrid(1);
-
-        if (persistence) {
-            List<BaselineNode> list = new ArrayList<>(node.cluster().currentBaselineTopology());
-
-            list.add(node2.localNode());
-
-            node.cluster().active(true);
-
-            node.cluster().setBaselineTopology(list);
-        }
-
-        log.info("await rebalance");
-
-        awaitRebalance(node2, DEF_CACHE_NAME);
-
-        U.sleep(2_000);
-
-        node.close();
-
-        log.info("Verification on node2");
-    }
+//    @Test
+//    public void testBatchPutAllLoader() throws Exception {
+//        Ignite node = startGrid(0);
+//
+//        node.cluster().active(true);
+//
+//        node.createCache(ccfg());
+//
+//        ExecutorService execSvc = Executors.newFixedThreadPool(4);
+//
+//        ProcessTableFile load = new LoadTable("EIP_DBAOSB_DEPOHISTPARAM", "/home/xtern/src/data/cod_data_mini.zip", execSvc, node, 1);
+//
+//        load.process();
+//
+//        execSvc.shutdown();
+//
+//        log.info("Done");
+//
+//        IgniteCache cache = node.cache(DEF_CACHE_NAME);
+//
+//        if (persistence)
+//            node.cluster().active(false);
+//
+//        final IgniteEx node2 = startGrid(1);
+//
+//        if (persistence) {
+//            List<BaselineNode> list = new ArrayList<>(node.cluster().currentBaselineTopology());
+//
+//            list.add(node2.localNode());
+//
+//            node.cluster().active(true);
+//
+//            node.cluster().setBaselineTopology(list);
+//        }
+//
+//        log.info("await rebalance");
+//
+//        awaitRebalance(node2, DEF_CACHE_NAME);
+//
+//        U.sleep(2_000);
+//
+//        node.close();
+//
+//        log.info("Verification on node2");
+//    }
 
     /**
      * @param node Ignite node.

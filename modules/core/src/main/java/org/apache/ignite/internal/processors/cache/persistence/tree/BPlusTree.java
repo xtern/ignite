@@ -19,6 +19,7 @@ package org.apache.ignite.internal.processors.cache.persistence.tree;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
@@ -58,6 +59,7 @@ import org.apache.ignite.internal.processors.cache.persistence.tree.reuse.ReuseB
 import org.apache.ignite.internal.processors.cache.persistence.tree.reuse.ReuseList;
 import org.apache.ignite.internal.processors.cache.persistence.tree.util.PageHandler;
 import org.apache.ignite.internal.processors.cache.persistence.tree.util.PageHandlerWrapper;
+import org.apache.ignite.internal.processors.cache.tree.DataRow;
 import org.apache.ignite.internal.processors.failure.FailureProcessor;
 import org.apache.ignite.internal.stat.IoStatisticsHolder;
 import org.apache.ignite.internal.stat.IoStatisticsHolderNoOp;
@@ -1025,6 +1027,41 @@ public abstract class BPlusTree<L, T extends L> extends DataStructure implements
         }
     }
 
+
+//    /**
+//     * @param lower Lower bound inclusive or {@code null} if unbounded.
+//     * @param upper Upper bound inclusive or {@code null} if unbounded.
+//     * @param c Filter closure.
+//     * @param x Implementation specific argument, {@code null} always means that we need to return full detached data row.
+//     * @return Cursor.
+//     * @throws IgniteCheckedException If failed.
+//     */
+//    public final GridCursor<T> findAll(List<L> filteredRows, TreeRowClosure<L, T> c, Object x) throws IgniteCheckedException {
+//        checkDestroyed();
+//
+//        lower, L upper
+//
+//        try {
+//            if (lower == null)
+//                return findLowerUnbounded(upper, c, x);
+//
+//            ForwardAllCursor cursor = new ForwardAllCursor(lower, upper, c, x);
+//
+//            cursor.find();
+//
+//            return cursor;
+//        }
+//        catch (IgniteCheckedException e) {
+//            throw new IgniteCheckedException("Runtime failure on bounds: [lower=" + lower + ", upper=" + upper + "]", e);
+//        }
+//        catch (RuntimeException | AssertionError e) {
+//            throw new CorruptedTreeException("Runtime failure on bounds: [lower=" + lower + ", upper=" + upper + "]", e);
+//        }
+//        finally {
+//            checkDestroyed();
+//        }
+//    }
+
     /**
      * @param lower Lower bound inclusive.
      * @param upper Upper bound inclusive.
@@ -1820,6 +1857,78 @@ public abstract class BPlusTree<L, T extends L> extends DataStructure implements
             x.releaseAll();
             checkDestroyed();
         }
+    }
+
+    /** {@inheritDoc} */
+    @Override public void invokeAll(List<L> rows, Object z, InvokeAllClosure<T> c) throws IgniteCheckedException {
+        checkDestroyed();
+
+        // todo No algorithm this is draft implementation only for check that closure is working properly
+        L min = rows.iterator().next();
+
+        L max = rows.listIterator(rows.size()).previous();
+
+
+        GridCursor<T> cur = find(min, max, new TreeRowClosure() {
+            @Override
+            public boolean apply(BPlusTree tree, BPlusIO io, long pageAddr, int idx) throws IgniteCheckedException {
+                qqq
+
+                return false;
+            }
+        }, null);
+
+        while (cur.next()) {
+            T t = cur.get();
+
+
+        }
+
+//        InvokeAll x = new InvokeAll(row, z, c);
+
+//        try {
+//            for (;;) {
+//                x.init();
+//
+//                Result res = invokeDown(x, x.rootId, 0L, 0L, x.rootLvl);
+//
+//                switch (res) {
+//                    case RETRY:
+//                    case RETRY_ROOT:
+//                        checkInterrupted();
+//
+//                        continue;
+//
+//                    default:
+//                        if (!x.isFinished()) {
+//                            res = x.tryFinish();
+//
+//                            if (res == RETRY || res == RETRY_ROOT) {
+//                                checkInterrupted();
+//
+//                                continue;
+//                            }
+//
+//                            assert x.isFinished(): res;
+//                        }
+//
+//                        return;
+//                }
+//            }
+//        }
+//        catch (UnregisteredClassException | UnregisteredBinaryTypeException e) {
+//            throw e;
+//        }
+//        catch (IgniteCheckedException e) {
+//            throw new IgniteCheckedException("Runtime failure on search row: " + row, e);
+//        }
+//        catch (RuntimeException | AssertionError e) {
+//            throw new CorruptedTreeException("Runtime failure on search row: " + row, e);
+//        }
+//        finally {
+//            x.releaseAll();
+//            checkDestroyed();
+//        }
     }
 
     /**
@@ -5487,6 +5596,149 @@ public abstract class BPlusTree<L, T extends L> extends DataStructure implements
                 if (nextPageId == 0)
                     return;
             }
+        }
+    }
+
+    /**
+     * Forward cursor.
+     */
+    private final class ForwardAllCursor extends AbstractForwardCursor implements GridCursor<T> {
+        /** */
+        final Object x;
+
+        /** */
+        private T[] rows = (T[])EMPTY;
+
+        /** */
+        private int row = -1;
+
+        /** */
+        private final TreeRowClosure<L, T> c;
+
+        /**
+         * @param lowerBound Lower bound.
+         * @param upperBound Upper bound.
+         * @param c Filter closure.
+         * @param x Implementation specific argument, {@code null} always means that we need to return full detached data row.
+         */
+        ForwardAllCursor(L lowerBound, L upperBound, TreeRowClosure<L, T> c, Object x) {
+            super(lowerBound, upperBound);
+
+            this.c = c;
+            this.x = x;
+        }
+
+        /** {@inheritDoc} */
+        @Override boolean fillFromBuffer0(long pageAddr, BPlusIO<L> io, int startIdx, int cnt) throws IgniteCheckedException {
+            if (startIdx == -1) {
+                if (lowerBound != null)
+                    startIdx = findLowerBound(pageAddr, io, cnt);
+                else
+                    startIdx = 0;
+            }
+
+            if (upperBound != null && cnt != startIdx)
+                cnt = findUpperBound(pageAddr, io, startIdx, cnt);
+
+            int cnt0 = cnt - startIdx;
+
+            if (cnt0 == 0)
+                return false;
+
+            if (rows == EMPTY)
+                rows = (T[])new Object[cnt0];
+
+            int resCnt = 0;
+
+            for (int idx = startIdx; idx < cnt; idx++) {
+                //todo here we can filter values
+                if (c == null || c.apply(BPlusTree.this, io, pageAddr, idx)) {
+                    T locRow = getRow(io, pageAddr, idx, x);
+
+
+
+                    rows = GridArrays.set(rows, resCnt++, locRow);
+                }
+            }
+
+            if (resCnt == 0) {
+                rows = (T[])EMPTY;
+
+                return false;
+            }
+
+            GridArrays.clearTail(rows, resCnt);
+
+            return true;
+        }
+
+        /** {@inheritDoc} */
+        @Override boolean reinitialize0() throws IgniteCheckedException {
+            return next();
+        }
+
+        /** {@inheritDoc} */
+        @Override void onNotFound(boolean readDone) {
+            if (readDone)
+                rows = null;
+            else {
+                if (rows != EMPTY) {
+                    assert rows.length > 0; // Otherwise it makes no sense to create an array.
+
+                    // Fake clear.
+                    rows[0] = null;
+                }
+            }
+        }
+
+        /** {@inheritDoc} */
+        @Override void init0() {
+            row = -1;
+        }
+
+        /** {@inheritDoc} */
+        @Override public boolean next() throws IgniteCheckedException {
+            if (rows == null)
+                return false;
+
+            if (++row < rows.length && rows[row] != null) {
+                clearLastRow(); // Allow to GC the last returned row.
+
+                return true;
+            }
+
+            T lastRow = clearLastRow();
+
+            row = 0;
+
+            return nextPage(lastRow);
+        }
+
+        /**
+         * @return Cleared last row.
+         */
+        private T clearLastRow() {
+            if (row == 0)
+                return null;
+
+            int last = row - 1;
+
+            T r = rows[last];
+
+            assert r != null;
+
+            rows[last] = null;
+
+            return r;
+        }
+
+        /** {@inheritDoc} */
+        @Override public T get() {
+            T r = rows[row];
+
+            assert r != null;
+
+            return r;
         }
     }
 
