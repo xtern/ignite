@@ -22,9 +22,11 @@ import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.Iterator;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
+import javax.naming.OperationNotSupportedException;
 import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.IgniteException;
 import org.apache.ignite.IgniteSystemProperties;
@@ -47,6 +49,7 @@ import org.apache.ignite.internal.pagemem.wal.record.delta.NewRootInitRecord;
 import org.apache.ignite.internal.pagemem.wal.record.delta.RemoveRecord;
 import org.apache.ignite.internal.pagemem.wal.record.delta.ReplaceRecord;
 import org.apache.ignite.internal.pagemem.wal.record.delta.SplitExistingPageRecord;
+import org.apache.ignite.internal.processors.cache.KeyCacheObject;
 import org.apache.ignite.internal.processors.cache.persistence.DataStructure;
 import org.apache.ignite.internal.processors.cache.persistence.tree.io.BPlusIO;
 import org.apache.ignite.internal.processors.cache.persistence.tree.io.BPlusInnerIO;
@@ -74,6 +77,7 @@ import org.apache.ignite.internal.util.typedef.internal.SB;
 import org.apache.ignite.internal.util.typedef.internal.U;
 import org.apache.ignite.lang.IgniteInClosure;
 import org.jetbrains.annotations.Nullable;
+import sun.reflect.generics.reflectiveObjects.NotImplementedException;
 
 import static org.apache.ignite.IgniteSystemProperties.IGNITE_BPLUS_TREE_LOCK_RETRIES;
 import static org.apache.ignite.internal.processors.cache.persistence.tree.BPlusTree.Bool.DONE;
@@ -1859,76 +1863,8 @@ public abstract class BPlusTree<L, T extends L> extends DataStructure implements
         }
     }
 
-    /** {@inheritDoc} */
-    @Override public void invokeAll(List<L> rows, Object z, InvokeAllClosure<T> c) throws IgniteCheckedException {
-        checkDestroyed();
-
-        // todo No algorithm this is draft implementation only for check that closure is working properly
-        L min = rows.iterator().next();
-
-        L max = rows.listIterator(rows.size()).previous();
-
-
-        GridCursor<T> cur = find(min, max, new TreeRowClosure() {
-            @Override
-            public boolean apply(BPlusTree tree, BPlusIO io, long pageAddr, int idx) throws IgniteCheckedException {
-                qqq
-
-                return false;
-            }
-        }, null);
-
-        while (cur.next()) {
-            T t = cur.get();
-
-
-        }
-
-//        InvokeAll x = new InvokeAll(row, z, c);
-
-//        try {
-//            for (;;) {
-//                x.init();
-//
-//                Result res = invokeDown(x, x.rootId, 0L, 0L, x.rootLvl);
-//
-//                switch (res) {
-//                    case RETRY:
-//                    case RETRY_ROOT:
-//                        checkInterrupted();
-//
-//                        continue;
-//
-//                    default:
-//                        if (!x.isFinished()) {
-//                            res = x.tryFinish();
-//
-//                            if (res == RETRY || res == RETRY_ROOT) {
-//                                checkInterrupted();
-//
-//                                continue;
-//                            }
-//
-//                            assert x.isFinished(): res;
-//                        }
-//
-//                        return;
-//                }
-//            }
-//        }
-//        catch (UnregisteredClassException | UnregisteredBinaryTypeException e) {
-//            throw e;
-//        }
-//        catch (IgniteCheckedException e) {
-//            throw new IgniteCheckedException("Runtime failure on search row: " + row, e);
-//        }
-//        catch (RuntimeException | AssertionError e) {
-//            throw new CorruptedTreeException("Runtime failure on search row: " + row, e);
-//        }
-//        finally {
-//            x.releaseAll();
-//            checkDestroyed();
-//        }
+    @Override public void invokeAll(List<L> rows, Object z, InvokeAllClosure<T, L> c) throws IgniteCheckedException {
+        throw new UnsupportedOperationException();
     }
 
     /**

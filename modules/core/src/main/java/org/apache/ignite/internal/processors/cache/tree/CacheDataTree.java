@@ -17,6 +17,9 @@
 
 package org.apache.ignite.internal.processors.cache.tree;
 
+import java.util.ArrayList;
+import java.util.List;
+import java.util.ListIterator;
 import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.internal.pagemem.PageUtils;
 import org.apache.ignite.internal.processors.cache.CacheGroupContext;
@@ -38,6 +41,8 @@ import org.apache.ignite.internal.processors.cache.tree.mvcc.data.MvccDataLeafIO
 import org.apache.ignite.internal.processors.cache.tree.mvcc.data.MvccDataRow;
 import org.apache.ignite.internal.stat.IoStatisticsHolder;
 import org.apache.ignite.internal.util.GridUnsafe;
+import org.apache.ignite.internal.util.lang.GridCursor;
+import org.apache.ignite.internal.util.typedef.T2;
 import org.apache.ignite.internal.util.typedef.internal.CU;
 
 import static org.apache.ignite.internal.pagemem.PageIdUtils.itemId;
@@ -119,6 +124,106 @@ public class CacheDataTree extends BPlusTree<CacheSearchRow, CacheDataRow> {
      */
     public CacheDataRowStore rowStore() {
         return rowStore;
+    }
+
+    /** {@inheritDoc} */
+    @Override public void invokeAll(List<CacheSearchRow> rows, Object z, InvokeAllClosure<CacheDataRow, CacheSearchRow> c) throws IgniteCheckedException {
+//        checkDestroyed();
+
+        // todo No algorithm this is draft implementation only for check that closure is working properly
+        CacheSearchRow min = rows.iterator().next();
+
+        CacheSearchRow max = rows.listIterator(rows.size()).previous();
+
+        List<T2<CacheDataRow, CacheSearchRow>> batch = new ArrayList<>();
+
+        GridCursor<CacheDataRow> cur = find(min, max, new TreeRowClosure() {
+
+            private final ListIterator<CacheSearchRow> rowItr = rows.listIterator();
+
+            private KeyCacheObject lastKey;
+
+            private CacheSearchRow lastSearchRow;
+
+            @Override
+            public boolean apply(BPlusTree tree, BPlusIO io, long pageAddr, int idx) throws IgniteCheckedException {
+                CacheDataRow row = getRow(io, pageAddr, idx, null);
+
+                KeyCacheObject key = row.key();
+
+                while (rowItr.hasNext() && (lastKey == null || lastKey.hashCode() < key.hashCode())) {
+                    //tuple.set(OperationType.PUT, null, lastRow);
+                    batch.add(new T2<>(row, lastSearchRow));
+
+                    lastSearchRow = rowItr.next();
+
+                    lastKey = lastSearchRow.key();
+                }
+
+                ListIterator<CacheSearchRow> eqItr = rows.listIterator(rowItr.nextIndex() - 1);
+
+                while (lastKey != null && lastKey.hashCode() == key.hashCode()) {
+                    if (lastKey.equals(key))
+                        return true;
+
+                    lastKey = eqItr.next().key();
+                }
+
+                return false;
+            }
+        }, null);
+
+//        while (cur.next()) {
+//            T t = cur.get();
+//
+//
+//        }
+
+//        InvokeAll x = new InvokeAll(row, z, c);
+
+//        try {
+//            for (;;) {
+//                x.init();
+//
+//                Result res = invokeDown(x, x.rootId, 0L, 0L, x.rootLvl);
+//
+//                switch (res) {
+//                    case RETRY:
+//                    case RETRY_ROOT:
+//                        checkInterrupted();
+//
+//                        continue;
+//
+//                    default:
+//                        if (!x.isFinished()) {
+//                            res = x.tryFinish();
+//
+//                            if (res == RETRY || res == RETRY_ROOT) {
+//                                checkInterrupted();
+//
+//                                continue;
+//                            }
+//
+//                            assert x.isFinished(): res;
+//                        }
+//
+//                        return;
+//                }
+//            }
+//        }
+//        catch (UnregisteredClassException | UnregisteredBinaryTypeException e) {
+//            throw e;
+//        }
+//        catch (IgniteCheckedException e) {
+//            throw new IgniteCheckedException("Runtime failure on search row: " + row, e);
+//        }
+//        catch (RuntimeException | AssertionError e) {
+//            throw new CorruptedTreeException("Runtime failure on search row: " + row, e);
+//        }
+//        finally {
+//            x.releaseAll();
+//            checkDestroyed();
+//        }
     }
 
     /** {@inheritDoc} */

@@ -21,6 +21,7 @@ import java.util.Collection;
 import java.util.List;
 import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.internal.util.lang.GridCursor;
+import org.apache.ignite.internal.util.typedef.T2;
 import org.apache.ignite.internal.util.typedef.T3;
 import org.jetbrains.annotations.Nullable;
 
@@ -51,7 +52,7 @@ public interface IgniteTree<L, T> {
      * @param c Closure.
      * @throws IgniteCheckedException If failed.
      */
-    public void invokeAll(List<L> keys, Object x, InvokeAllClosure<T> c) throws IgniteCheckedException;
+    public void invokeAll(List<L> keys, Object x, InvokeAllClosure<T, L> c) throws IgniteCheckedException;
 
     /**
      * Returns the value to which the specified key is mapped, or {@code null} if this tree contains no mapping for the
@@ -142,15 +143,16 @@ public interface IgniteTree<L, T> {
     }
 
     /**
-     *
+     * T found row
+     * L search row
      */
-    interface InvokeAllClosure<T> {
+    interface InvokeAllClosure<T, L> {
         /**
          *
-         * @param rows Old row or {@code null} if old row not found.
+         * @param rows Old row -> new row
          * @throws IgniteCheckedException If failed.
          */
-        void call(@Nullable Collection<T> rows) throws IgniteCheckedException;
+        void call(@Nullable Collection<T2<T, L>> rows) throws IgniteCheckedException;
 
         /**
          *
