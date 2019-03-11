@@ -2487,13 +2487,17 @@ public class DataStreamerImpl<K, V> implements IgniteDataStreamer<K, V>, Delayed
                 cctx.shared().database().checkpointReadLock();
 
                 try {
-                    for (BatchedCacheEntries e : batchMap.values()) {
-                        e.lock();
+                    for (BatchedCacheEntries b : batchMap.values()) {
+                        b.lock();
                         try {
                             // todo topFut.validateCache
-                            cctx.offheap().updateBatch(e);
+
+                            cctx.offheap().invokeAll(b.context(), b.keys(), b.part(), b.new UpdateClosure());
+                            //cctx.offheap().updateBatch(batch);
+
+
                         } finally {
-                            e.unlock();
+                            b.unlock();
                         }
                     }
                 }

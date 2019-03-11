@@ -43,6 +43,7 @@ import org.apache.ignite.internal.stat.IoStatisticsHolder;
 import org.apache.ignite.internal.util.GridUnsafe;
 import org.apache.ignite.internal.util.lang.GridCursor;
 import org.apache.ignite.internal.util.typedef.T2;
+import org.apache.ignite.internal.util.typedef.T3;
 import org.apache.ignite.internal.util.typedef.internal.CU;
 
 import static org.apache.ignite.internal.pagemem.PageIdUtils.itemId;
@@ -128,7 +129,7 @@ public class CacheDataTree extends BPlusTree<CacheSearchRow, CacheDataRow> {
 
     /** {@inheritDoc} */
     @Override public void invokeAll(List<CacheSearchRow> rows, Object z, InvokeAllClosure<CacheDataRow, CacheSearchRow> c) throws IgniteCheckedException {
-//        checkDestroyed();
+        checkDestroyed();
 
         // todo No algorithm this is draft implementation only for check that closure is working properly
         CacheSearchRow min = rows.iterator().next();
@@ -137,7 +138,7 @@ public class CacheDataTree extends BPlusTree<CacheSearchRow, CacheDataRow> {
 
         List<T2<CacheDataRow, CacheSearchRow>> batch = new ArrayList<>();
 
-        GridCursor<CacheDataRow> cur = find(min, max, new TreeRowClosure() {
+        GridCursor<CacheDataRow> cur = find(min, max, new TreeRowClosure<CacheSearchRow, CacheDataRow>() {
 
             private final ListIterator<CacheSearchRow> rowItr = rows.listIterator();
 
@@ -163,8 +164,11 @@ public class CacheDataTree extends BPlusTree<CacheSearchRow, CacheDataRow> {
                 ListIterator<CacheSearchRow> eqItr = rows.listIterator(rowItr.nextIndex() - 1);
 
                 while (lastKey != null && lastKey.hashCode() == key.hashCode()) {
-                    if (lastKey.equals(key))
+                    if (lastKey.equals(key)) {
+                        batch.add(new T2<>(row, lastSearchRow));
+
                         return true;
+                    }
 
                     lastKey = eqItr.next().key();
                 }
@@ -172,6 +176,21 @@ public class CacheDataTree extends BPlusTree<CacheSearchRow, CacheDataRow> {
                 return false;
             }
         }, null);
+
+        while (cur.next());
+
+
+        // todo call on insertion point
+        c.call(batch);
+
+        // todo
+        for (T3<OperationType, CacheDataRow, CacheDataRow> t3 : c.result()) {
+            OperationType oper = t3.get1();
+            CacheDataRow newRow = t3.get3();
+
+            if (oper == OperationType.PUT)
+                putx(newRow);
+        }
 
 //        while (cur.next()) {
 //            T t = cur.get();

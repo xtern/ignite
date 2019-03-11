@@ -455,6 +455,16 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
     }
 
     /** {@inheritDoc} */
+    @Override public void invokeAll(
+        GridCacheContext cctx,
+        Collection<KeyCacheObject> keys,
+        GridDhtLocalPartition part,
+        OffheapInvokeAllClosure c)
+        throws IgniteCheckedException {
+        dataStore(part).invokeAll(cctx, keys, c);
+    }
+
+    /** {@inheritDoc} */
     @Override public void update(
         GridCacheContext cctx,
         KeyCacheObject key,
@@ -1681,8 +1691,10 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
             invoke0(cctx, new SearchRow(cacheId, key), c);
         }
 
-        //@Override
-        public void invokeAll(GridCacheContext cctx, List<KeyCacheObject> keys, OffheapInvokeAllClosure c) throws IgniteCheckedException {
+
+        /** {@inheritDoc} */
+        @Override public void invokeAll(GridCacheContext cctx, Collection<KeyCacheObject> keys, OffheapInvokeAllClosure c)
+            throws IgniteCheckedException {
             int cacheId = grp.sharedGroup() ? cctx.cacheId() : CU.UNDEFINED_CACHE_ID;
 
             List<CacheSearchRow> searchRows = new ArrayList<>(keys.size());

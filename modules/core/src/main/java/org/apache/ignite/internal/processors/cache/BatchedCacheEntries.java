@@ -29,10 +29,17 @@ import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.internal.processors.affinity.AffinityTopologyVersion;
 import org.apache.ignite.internal.processors.cache.distributed.dht.GridDhtCacheEntry;
 import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtInvalidPartitionException;
+import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtLocalPartition;
 import org.apache.ignite.internal.processors.cache.persistence.CacheDataRow;
+import org.apache.ignite.internal.processors.cache.persistence.CacheSearchRow;
+import org.apache.ignite.internal.processors.cache.tree.DataRow;
 import org.apache.ignite.internal.processors.cache.version.GridCacheVersion;
 import org.apache.ignite.internal.processors.dr.GridDrType;
+import org.apache.ignite.internal.util.IgniteTree;
+import org.apache.ignite.internal.util.typedef.T2;
+import org.apache.ignite.internal.util.typedef.T3;
 import org.apache.ignite.internal.util.typedef.internal.U;
+import org.jetbrains.annotations.Nullable;
 
 import static org.apache.ignite.internal.processors.cache.GridCacheMapEntry.ATOMIC_VER_COMPARATOR;
 //import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.PRELOAD_TREE_FINISH_UPDATE1;
@@ -42,7 +49,10 @@ import static org.apache.ignite.internal.processors.cache.GridCacheMapEntry.ATOM
  */
 public class BatchedCacheEntries {
     /** */
-    private final int partId;
+//    private final int partId;
+
+    /** */
+    private final GridDhtLocalPartition part;
 
     /** */
     private final GridCacheContext cctx;
@@ -66,8 +76,8 @@ public class BatchedCacheEntries {
     public BatchedCacheEntries(AffinityTopologyVersion topVer, int partId, GridCacheContext cctx, boolean preload) {
         this.topVer = topVer;
         this.cctx = cctx;
-        this.partId = partId;
         this.preload = preload;
+        this.part = cctx.topology().localPartition(partId, topVer, true, true);
     }
 
     /** */
@@ -87,8 +97,13 @@ public class BatchedCacheEntries {
     }
 
     /** */
-    public int part() {
-        return partId;
+//    public int part() {
+//        return partId;
+//    }
+
+    /** */
+    public GridDhtLocalPartition part() {
+        return part;
     }
 
     /** */
@@ -276,6 +291,61 @@ public class BatchedCacheEntries {
 //    public KeyCacheObject lastKey() {
 //        return lastKey;
 //    }
+
+    public class UpdateClosure implements IgniteCacheOffheapManager.OffheapInvokeAllClosure {
+
+        private List<T3<IgniteTree.OperationType, CacheDataRow, CacheDataRow>> resBatch = new ArrayList<>(entries.size());
+
+        @Override public void call(@Nullable Collection<T2<CacheDataRow, CacheSearchRow>> rows) throws IgniteCheckedException {
+            for (T2<CacheDataRow, CacheSearchRow> t2 : rows) {
+                CacheDataRow oldRow = t2.get1();
+
+                KeyCacheObject key = t2.get2().key();
+
+                BatchedCacheMapEntryInfo newRowInfo = get(key);
+
+                // todo
+//                if (key.partition() == -1)
+//                    key.partition(partId);
+
+                try {
+                    if (newRowInfo.needUpdate(oldRow)) {
+                        CacheDataRow newRow = new DataRow(key, newRowInfo.value(), newRowInfo.version(), part().id(), newRowInfo.expireTime(), context().cacheId());
+
+                        boolean noop = false;
+
+                        if (oldRow != null) {
+                            // todo think about batch updates
+                            //GridDhtLocalPartition part = cctx.topology().localPartition(partId, topVer, true, true);
+
+                            newRow = context().offheap().dataStore(part()).createRow(
+                                cctx,
+                                key,
+                                newRowInfo.value(),
+                                newRowInfo.version(),
+                                newRowInfo.expireTime(),
+                                oldRow);
+
+                            noop = oldRow.link() == newRow.link();
+                        }
+
+                        resBatch.add(new T3<>(noop ? IgniteTree.OperationType.NOOP : IgniteTree.OperationType.PUT, oldRow, newRow));
+                    }
+                }
+                catch (GridCacheEntryRemovedException e) {
+                    onRemove(key);
+                }
+            }
+        }
+
+        @Override public Collection<T3<IgniteTree.OperationType, CacheDataRow, CacheDataRow>> result() {
+            return resBatch;
+        }
+
+        @Override public boolean apply(CacheDataRow row) {
+            return false;
+        }
+    }
 
     public static class BatchedCacheMapEntryInfo {
         // todo think about remove
