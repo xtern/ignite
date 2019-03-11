@@ -138,46 +138,84 @@ public class CacheDataTree extends BPlusTree<CacheSearchRow, CacheDataRow> {
 
         List<T2<CacheDataRow, CacheSearchRow>> batch = new ArrayList<>();
 
-        GridCursor<CacheDataRow> cur = find(min, max, new TreeRowClosure<CacheSearchRow, CacheDataRow>() {
+//        GridCursor<CacheDataRow> cur = find(min, max, new TreeRowClosure<CacheSearchRow, CacheDataRow>() {
+//
+//            private final ListIterator<CacheSearchRow> rowItr = rows.listIterator();
+//
+//            private KeyCacheObject lastKey;
+//
+//            private CacheSearchRow lastSearchRow;
+//
+//            @Override
+//            public boolean apply(BPlusTree tree, BPlusIO io, long pageAddr, int idx) throws IgniteCheckedException {
+//                CacheDataRow row = getRow(io, pageAddr, idx, null);
+//
+//                KeyCacheObject key = row.key();
+//
+//                while (rowItr.hasNext() && (lastKey == null || lastKey.hashCode() < key.hashCode())) {
+//                    //tuple.set(OperationType.PUT, null, lastRow);
+//                    batch.add(new T2<>(row, lastSearchRow));
+//
+//                    lastSearchRow = rowItr.next();
+//
+//                    lastKey = lastSearchRow.key();
+//                }
+//
+//                ListIterator<CacheSearchRow> eqItr = rows.listIterator(rowItr.nextIndex() - 1);
+//
+//                while (lastKey != null && lastKey.hashCode() == key.hashCode()) {
+//                    if (lastKey.equals(key)) {
+//                        batch.add(new T2<>(row, lastSearchRow));
+//
+//                        return true;
+//                    }
+//
+//                    lastKey = eqItr.next().key();
+//                }
+//
+//                return false;
+//            }
+//        }, null);
 
-            private final ListIterator<CacheSearchRow> rowItr = rows.listIterator();
+        final ListIterator<CacheSearchRow> rowItr = rows.listIterator();
 
-            private KeyCacheObject lastKey;
 
-            private CacheSearchRow lastSearchRow;
 
-            @Override
-            public boolean apply(BPlusTree tree, BPlusIO io, long pageAddr, int idx) throws IgniteCheckedException {
-                CacheDataRow row = getRow(io, pageAddr, idx, null);
+        GridCursor<CacheDataRow> cur = find(min, max, null, null);
 
-                KeyCacheObject key = row.key();
+//        @Override
+//        public boolean apply(BPlusTree tree, BPlusIO io, long pageAddr, int idx) throws IgniteCheckedException {
+//        boolean hasNext = true;
 
-                while (rowItr.hasNext() && (lastKey == null || lastKey.hashCode() < key.hashCode())) {
-                    //tuple.set(OperationType.PUT, null, lastRow);
-                    batch.add(new T2<>(row, lastSearchRow));
+        while (cur.next()) {
+            CacheDataRow row = cur.get();//getRow(io, pageAddr, idx, null);
+            KeyCacheObject key = row.key();
 
-                    lastSearchRow = rowItr.next();
+            CacheSearchRow lastSearchRow = null;
+            KeyCacheObject lastKey = null;
 
-                    lastKey = lastSearchRow.key();
-                }
+            while (rowItr.hasNext() && (lastKey == null || lastKey.hashCode() < key.hashCode())) {
+                //tuple.set(OperationType.PUT, null, lastRow);
+                batch.add(new T2<>(row, lastSearchRow));
 
-                ListIterator<CacheSearchRow> eqItr = rows.listIterator(rowItr.nextIndex() - 1);
+                lastSearchRow = rowItr.next();
 
-                while (lastKey != null && lastKey.hashCode() == key.hashCode()) {
-                    if (lastKey.equals(key)) {
-                        batch.add(new T2<>(row, lastSearchRow));
-
-                        return true;
-                    }
-
-                    lastKey = eqItr.next().key();
-                }
-
-                return false;
+                lastKey = lastSearchRow.key();
             }
-        }, null);
 
-        while (cur.next());
+            ListIterator<CacheSearchRow> eqItr = rows.listIterator(rowItr.nextIndex() - 1);
+
+            while (lastKey != null && lastKey.hashCode() == key.hashCode()) {
+                if (lastKey.equals(key)) {
+                    batch.add(new T2<>(row, lastSearchRow));
+//                    return true;
+                }
+
+                lastKey = eqItr.next().key();
+            }
+
+//            return false;
+        }
 
 
         // todo call on insertion point
