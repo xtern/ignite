@@ -777,6 +777,12 @@ public interface IgniteCacheOffheapManager {
             @Nullable CacheDataRow oldRow) throws IgniteCheckedException;
 
         /**
+         * @param rows New data rows.
+         * @throws IgniteCheckedException If failed.
+         */
+        public void insertDataRows(Collection<CacheDataRow> rows) throws IgniteCheckedException;
+
+        /**
          * @param cctx Cache context.
          * @param cleanupRows Rows to cleanup.
          * @throws IgniteCheckedException If failed.

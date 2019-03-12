@@ -334,8 +334,13 @@ public class CacheDataRowAdapter implements CacheDataRow {
 
             byte[] bytes = PageUtils.getBytes(addr, off, len);
             off += len;
+            try {
+                key = coctx.kernalContext().cacheObjects().toKeyCacheObject(coctx, type, bytes);
+            } catch (RuntimeException e) {
+                System.out.println("(critical fail) len=" + len);
 
-            key = coctx.kernalContext().cacheObjects().toKeyCacheObject(coctx, type, bytes);
+                throw e;
+            }
 
             if (rowData == RowData.KEY_ONLY)
                 return;

@@ -1021,6 +1021,8 @@ public class GridDhtPartitionDemander {
     ) throws IgniteCheckedException {
         ctx.kernalContext().diagnostic().beginTrack(DEMANDER_PROCESS_MSG_BATCH);
 
+        log.info("process " + entries.size());
+
         try {
 
             if (entries.isEmpty())
@@ -1079,7 +1081,8 @@ public class GridDhtPartitionDemander {
 
                     // todo looks ugly (batch already have context)
 //                ctx.kernalContext().diagnostic().beginTrack(DEMANDER_PROCESS_MSG_BATCH_UPDATE);
-                    cctx.offheap().updateBatch(batch);
+                    cctx.offheap().invokeAll(cctx, batch.keys(), batch.part(), batch.new UpdateClosure());
+                    //cctx.offheap().updateBatch(batch);
 //                ctx.kernalContext().diagnostic().endTrack(DEMANDER_PROCESS_MSG_BATCH_UPDATE);
                 }
                 finally {

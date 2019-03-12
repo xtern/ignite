@@ -128,7 +128,7 @@ public class CacheDataTree extends BPlusTree<CacheSearchRow, CacheDataRow> {
     }
 
     /** {@inheritDoc} */
-    @Override public void invokeAll(List<CacheSearchRow> rows, Object z, InvokeAllClosure<CacheDataRow, CacheSearchRow> c) throws IgniteCheckedException {
+    @Override public void invokeAll(List<CacheSearchRow> rows, Object z1, InvokeAllClosure<CacheDataRow, CacheSearchRow> c) throws IgniteCheckedException {
         checkDestroyed();
 
         // todo No algorithm this is draft implementation only for check that closure is working properly
@@ -179,8 +179,6 @@ public class CacheDataTree extends BPlusTree<CacheSearchRow, CacheDataRow> {
 
         final ListIterator<CacheSearchRow> rowItr = rows.listIterator();
 
-
-
         GridCursor<CacheDataRow> cur = find(min, max, null, null);
 
 //        @Override
@@ -188,6 +186,8 @@ public class CacheDataTree extends BPlusTree<CacheSearchRow, CacheDataRow> {
 //        boolean hasNext = true;
 
         while (cur.next()) {
+            assert false;
+
             CacheDataRow row = cur.get();//getRow(io, pageAddr, idx, null);
             KeyCacheObject key = row.key();
 
@@ -217,6 +217,9 @@ public class CacheDataTree extends BPlusTree<CacheSearchRow, CacheDataRow> {
 //            return false;
         }
 
+        while (rowItr.hasNext())
+            batch.add(new T2<>(null, rowItr.next()));
+
 
         // todo call on insertion point
         c.call(batch);
@@ -225,9 +228,12 @@ public class CacheDataTree extends BPlusTree<CacheSearchRow, CacheDataRow> {
         for (T3<OperationType, CacheDataRow, CacheDataRow> t3 : c.result()) {
             OperationType oper = t3.get1();
             CacheDataRow newRow = t3.get3();
+// 1482869858
+            if (oper == OperationType.PUT) {
+                System.out.println(">xxx> put " + newRow.key().hashCode());
 
-            if (oper == OperationType.PUT)
-                putx(newRow);
+                put(newRow);
+            }
         }
 
 //        while (cur.next()) {

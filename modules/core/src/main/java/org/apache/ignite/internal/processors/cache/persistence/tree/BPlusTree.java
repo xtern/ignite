@@ -50,6 +50,7 @@ import org.apache.ignite.internal.pagemem.wal.record.delta.RemoveRecord;
 import org.apache.ignite.internal.pagemem.wal.record.delta.ReplaceRecord;
 import org.apache.ignite.internal.pagemem.wal.record.delta.SplitExistingPageRecord;
 import org.apache.ignite.internal.processors.cache.KeyCacheObject;
+import org.apache.ignite.internal.processors.cache.persistence.CacheSearchRow;
 import org.apache.ignite.internal.processors.cache.persistence.DataStructure;
 import org.apache.ignite.internal.processors.cache.persistence.tree.io.BPlusIO;
 import org.apache.ignite.internal.processors.cache.persistence.tree.io.BPlusInnerIO;
@@ -3469,8 +3470,11 @@ public abstract class BPlusTree<L, T extends L> extends DataStructure implements
             int maxCnt = io.getMaxCount(pageAddr, pageSize());
             int cnt = io.getCount(pageAddr);
 
-            if (cnt == maxCnt) // Need to split page.
+            if (cnt == maxCnt) { // Need to split page.
+                System.out.println(">xxx> insert with split hash=" + ((CacheSearchRow)row).hash() + " max=" + maxCnt);
+
                 return insertWithSplit(pageId, page, pageAddr, io, idx, lvl);
+            }
 
             insertSimple(pageId, page, pageAddr, io, idx, null);
 
@@ -3544,6 +3548,8 @@ public abstract class BPlusTree<L, T extends L> extends DataStructure implements
 
                     // Do move up.
                     cnt = io.getCount(pageAddr);
+
+                    System.out.println(">xxx> insert with split " + pageAddr);
 
                     // Last item from backward row goes up.
                     L moveUpRow = io.getLookupRow(BPlusTree.this, pageAddr, cnt - 1);

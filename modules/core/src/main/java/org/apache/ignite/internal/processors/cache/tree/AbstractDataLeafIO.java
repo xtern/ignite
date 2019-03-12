@@ -144,6 +144,8 @@ public abstract class AbstractDataLeafIO extends BPlusLeafIO<CacheSearchRow> imp
         long link = getLink(pageAddr, idx);
         int hash = getHash(pageAddr, idx);
 
+        System.out.println("hash=" + hash + " link=" + link);
+
         int cacheId = storeCacheId() ? getCacheId(pageAddr, idx) : CU.UNDEFINED_CACHE_ID;
 
         if (storeMvccVersion()) {

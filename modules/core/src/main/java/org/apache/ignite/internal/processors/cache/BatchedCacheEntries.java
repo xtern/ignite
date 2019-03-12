@@ -19,11 +19,8 @@ package org.apache.ignite.internal.processors.cache;
 
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
-import java.util.NavigableMap;
 import java.util.Set;
 import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.internal.processors.affinity.AffinityTopologyVersion;
@@ -296,7 +293,10 @@ public class BatchedCacheEntries {
 
         private List<T3<IgniteTree.OperationType, CacheDataRow, CacheDataRow>> resBatch = new ArrayList<>(entries.size());
 
+        /** {@inheritDoc} */
         @Override public void call(@Nullable Collection<T2<CacheDataRow, CacheSearchRow>> rows) throws IgniteCheckedException {
+            List<CacheDataRow> newRows = new ArrayList<>(16);
+
             for (T2<CacheDataRow, CacheSearchRow> t2 : rows) {
                 CacheDataRow oldRow = t2.get1();
 
@@ -310,14 +310,12 @@ public class BatchedCacheEntries {
 
                 try {
                     if (newRowInfo.needUpdate(oldRow)) {
-                        CacheDataRow newRow = new DataRow(key, newRowInfo.value(), newRowInfo.version(), part().id(), newRowInfo.expireTime(), context().cacheId());
+                        CacheDataRow newRow = null;
 
                         boolean noop = false;
 
                         if (oldRow != null) {
                             // todo think about batch updates
-                            //GridDhtLocalPartition part = cctx.topology().localPartition(partId, topVer, true, true);
-
                             newRow = context().offheap().dataStore(part()).createRow(
                                 cctx,
                                 key,
@@ -328,6 +326,19 @@ public class BatchedCacheEntries {
 
                             noop = oldRow.link() == newRow.link();
                         }
+                        else {
+                            CacheObject val = newRowInfo.value();
+
+                            val.valueBytes(cctx.cacheObjectContext());
+                            key.valueBytes(cctx.cacheObjectContext());
+
+                            if (key.partition() == -1)
+                                key.partition(part().id());
+
+                            newRow = new DataRow(key, val, newRowInfo.version(), part().id(), newRowInfo.expireTime(), context().cacheId());
+
+                            newRows.add(newRow);
+                        }
 
                         resBatch.add(new T3<>(noop ? IgniteTree.OperationType.NOOP : IgniteTree.OperationType.PUT, oldRow, newRow));
                     }
@@ -336,6 +347,10 @@ public class BatchedCacheEntries {
                     onRemove(key);
                 }
             }
+
+            System.out.println(">xxx> insert " + newRows.size() + " using freelist");
+
+            context().offheap().dataStore(part()).insertDataRows(newRows);
         }
 
         @Override public Collection<T3<IgniteTree.OperationType, CacheDataRow, CacheDataRow>> result() {
