@@ -181,14 +181,8 @@ public class CacheDataTree extends BPlusTree<CacheSearchRow, CacheDataRow> {
 
         GridCursor<CacheDataRow> cur = find(min, max, null, null);
 
-//        @Override
-//        public boolean apply(BPlusTree tree, BPlusIO io, long pageAddr, int idx) throws IgniteCheckedException {
-//        boolean hasNext = true;
-
         while (cur.next()) {
-            assert false;
-
-            CacheDataRow row = cur.get();//getRow(io, pageAddr, idx, null);
+            CacheDataRow row = cur.get();
             KeyCacheObject key = row.key();
 
             CacheSearchRow lastSearchRow = null;
@@ -206,15 +200,11 @@ public class CacheDataTree extends BPlusTree<CacheSearchRow, CacheDataRow> {
             ListIterator<CacheSearchRow> eqItr = rows.listIterator(rowItr.nextIndex() - 1);
 
             while (lastKey != null && lastKey.hashCode() == key.hashCode()) {
-                if (lastKey.equals(key)) {
+                if (lastKey.equals(key))
                     batch.add(new T2<>(row, lastSearchRow));
-//                    return true;
-                }
 
                 lastKey = eqItr.next().key();
             }
-
-//            return false;
         }
 
         while (rowItr.hasNext())
@@ -229,11 +219,8 @@ public class CacheDataTree extends BPlusTree<CacheSearchRow, CacheDataRow> {
             OperationType oper = t3.get1();
             CacheDataRow newRow = t3.get3();
 // 1482869858
-            if (oper == OperationType.PUT) {
-                System.out.println(">xxx> put " + newRow.key().hashCode());
-
+            if (oper == OperationType.PUT)
                 put(newRow);
-            }
         }
 
 //        while (cur.next()) {

@@ -30,6 +30,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicBoolean;
 import javax.cache.processor.EntryProcessor;
+import javax.naming.OperationNotSupportedException;
 import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.IgniteException;
 import org.apache.ignite.failure.FailureContext;
@@ -86,6 +87,7 @@ import org.apache.ignite.internal.processors.cache.persistence.tree.util.PageHan
 import org.apache.ignite.internal.processors.cache.persistence.wal.FileWALPointer;
 import org.apache.ignite.internal.processors.cache.tree.CacheDataRowStore;
 import org.apache.ignite.internal.processors.cache.tree.CacheDataTree;
+import org.apache.ignite.internal.processors.cache.tree.DataRow;
 import org.apache.ignite.internal.processors.cache.tree.PendingEntriesTree;
 import org.apache.ignite.internal.processors.cache.tree.PendingRow;
 import org.apache.ignite.internal.processors.cache.tree.mvcc.data.MvccUpdateResult;
@@ -100,6 +102,7 @@ import org.apache.ignite.internal.util.typedef.internal.CU;
 import org.apache.ignite.internal.util.typedef.internal.S;
 import org.apache.ignite.internal.util.typedef.internal.U;
 import org.apache.ignite.lang.IgniteBiTuple;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import static org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtPartitionState.MOVING;
@@ -1738,6 +1741,13 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
             }
         }
 
+        @Override
+        public @NotNull DataRow makeDataRow(KeyCacheObject key, CacheObject val, GridCacheVersion ver, long expireTime,
+            int cacheId) {
+            //todo
+            throw new RuntimeException("fuck off");
+        }
+
         /** {@inheritDoc} */
         @Override public int partId() {
             return partId;
@@ -1960,14 +1970,14 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
             delegate.updateBatch(batch);
         }
 
-        /** {@inheritDoc} */
-        @Override public void insertDataRows(Collection<CacheDataRow> rows) throws IgniteCheckedException {
-            assert ctx.database().checkpointLockIsHeldByThread();
-
-            CacheDataStore delegate = init0(false);
-
-            delegate.insertDataRows(rows);
-        }
+//        /** {@inheritDoc} */
+//        @Override public void insertDataRows(Collection<CacheDataRow> rows) throws IgniteCheckedException {
+//            assert ctx.database().checkpointLockIsHeldByThread();
+//
+//            CacheDataStore delegate = init0(false);
+//
+//            delegate.insertDataRows(rows);
+//        }
 
         /** {@inheritDoc} */
         @Override public void updateBatch(

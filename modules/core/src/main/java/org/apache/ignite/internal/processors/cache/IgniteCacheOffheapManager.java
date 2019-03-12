@@ -35,6 +35,7 @@ import org.apache.ignite.internal.processors.cache.persistence.RowStore;
 import org.apache.ignite.internal.processors.cache.persistence.partstate.GroupPartitionId;
 import org.apache.ignite.internal.processors.cache.persistence.partstate.PartitionRecoverState;
 import org.apache.ignite.internal.processors.cache.persistence.tree.reuse.ReuseList;
+import org.apache.ignite.internal.processors.cache.tree.DataRow;
 import org.apache.ignite.internal.processors.cache.tree.PendingEntriesTree;
 import org.apache.ignite.internal.processors.cache.tree.mvcc.data.MvccUpdateResult;
 import org.apache.ignite.internal.processors.cache.tree.mvcc.search.MvccLinkAwareSearchRow;
@@ -49,6 +50,7 @@ import org.apache.ignite.internal.util.lang.GridIterator;
 import org.apache.ignite.internal.util.lang.IgniteInClosure2X;
 import org.apache.ignite.lang.IgniteBiTuple;
 import org.apache.ignite.lang.IgnitePredicate;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 /**
@@ -676,6 +678,9 @@ public interface IgniteCacheOffheapManager {
      *
      */
     interface CacheDataStore {
+
+        @NotNull public DataRow makeDataRow(KeyCacheObject key, CacheObject val, GridCacheVersion ver, long expireTime, int cacheId);
+
         /**
          * @return Partition ID.
          */
@@ -775,12 +780,6 @@ public interface IgniteCacheOffheapManager {
             GridCacheVersion ver,
             long expireTime,
             @Nullable CacheDataRow oldRow) throws IgniteCheckedException;
-
-        /**
-         * @param rows New data rows.
-         * @throws IgniteCheckedException If failed.
-         */
-        public void insertDataRows(Collection<CacheDataRow> rows) throws IgniteCheckedException;
 
         /**
          * @param cctx Cache context.

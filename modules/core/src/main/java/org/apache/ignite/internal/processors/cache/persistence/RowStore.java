@@ -17,6 +17,7 @@
 
 package org.apache.ignite.internal.processors.cache.persistence;
 
+import java.util.Collection;
 import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.internal.pagemem.PageMemory;
 import org.apache.ignite.internal.processors.cache.CacheGroupContext;
@@ -100,13 +101,8 @@ public class RowStore {
      * @throws IgniteCheckedException If failed.
      */
     public void addRow(CacheDataRow row, IoStatisticsHolder statHolder) throws IgniteCheckedException {
-        if (!persistenceEnabled) {
-//            ctx.kernalContext().diagnostic().beginTrack(PRELOAD_OFFHEAP_INVOKE_INSERT_FREELIST);
-
+        if (!persistenceEnabled)
             freeList.insertDataRow(row, statHolder);
-
-//            ctx.kernalContext().diagnostic().endTrack(PRELOAD_OFFHEAP_INVOKE_INSERT_FREELIST);
-        }
         else {
             ctx.database().checkpointReadLock();
 
@@ -120,6 +116,27 @@ public class RowStore {
             }
         }
     }
+
+    /**
+     * @param rows Rows.
+     * @throws IgniteCheckedException If failed.
+     */
+    public void addRows(Collection<CacheDataRow> rows, IoStatisticsHolder statHolder) throws IgniteCheckedException {
+        if (!persistenceEnabled)
+            freeList.insertDataRows(rows, statHolder);
+        else {
+            ctx.database().checkpointReadLock();
+
+            try {
+                freeList.insertDataRows(rows, statHolder);
+            }
+            finally {
+                ctx.database().checkpointReadUnlock();
+            }
+        }
+    }
+
+
 
     /**
      * @param link Row link.

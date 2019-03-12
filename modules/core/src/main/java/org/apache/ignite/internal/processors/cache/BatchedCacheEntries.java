@@ -35,6 +35,7 @@ import org.apache.ignite.internal.processors.dr.GridDrType;
 import org.apache.ignite.internal.util.IgniteTree;
 import org.apache.ignite.internal.util.typedef.T2;
 import org.apache.ignite.internal.util.typedef.T3;
+import org.apache.ignite.internal.util.typedef.internal.CU;
 import org.apache.ignite.internal.util.typedef.internal.U;
 import org.jetbrains.annotations.Nullable;
 
@@ -297,6 +298,8 @@ public class BatchedCacheEntries {
         @Override public void call(@Nullable Collection<T2<CacheDataRow, CacheSearchRow>> rows) throws IgniteCheckedException {
             List<CacheDataRow> newRows = new ArrayList<>(16);
 
+            final int cacheId = cctx.group().storeCacheIdInDataPage() ? cctx.cacheId() : CU.UNDEFINED_CACHE_ID;
+
             for (T2<CacheDataRow, CacheSearchRow> t2 : rows) {
                 CacheDataRow oldRow = t2.get1();
 
@@ -327,17 +330,31 @@ public class BatchedCacheEntries {
                             noop = oldRow.link() == newRow.link();
                         }
                         else {
+
+                            CacheObjectContext coCtx = cctx.cacheObjectContext();
+
                             CacheObject val = newRowInfo.value();
 
-                            val.valueBytes(cctx.cacheObjectContext());
-                            key.valueBytes(cctx.cacheObjectContext());
+                            val.valueBytes(coCtx);
+                            key.valueBytes(coCtx);
 
                             if (key.partition() == -1)
                                 key.partition(part().id());
 
-                            newRow = new DataRow(key, val, newRowInfo.version(), part().id(), newRowInfo.expireTime(), context().cacheId());
+                            newRow = new DataRow(key, val, newRowInfo.version(), part().id(), newRowInfo.expireTime(), cacheId);
 
                             newRows.add(newRow);
+//                            newRow = context().offheap().dataStore(part()).createRow(
+//                                cctx,
+//                                key,
+//                                newRowInfo.value(),
+//                                newRowInfo.version(),
+//                                newRowInfo.expireTime(),
+//                                oldRow);
+//
+//                            newRow = context().offheap().dataStore(part()).makeDataRow(key, val, newRowInfo.version(), newRowInfo.expireTime(), cacheId);
+////
+//                            context().offheap().dataStore(part()).rowStore().addRow(newRow, cctx.group().statisticsHolderData());
                         }
 
                         resBatch.add(new T3<>(noop ? IgniteTree.OperationType.NOOP : IgniteTree.OperationType.PUT, oldRow, newRow));
@@ -348,9 +365,9 @@ public class BatchedCacheEntries {
                 }
             }
 
-            System.out.println(">xxx> insert " + newRows.size() + " using freelist");
-
-            context().offheap().dataStore(part()).insertDataRows(newRows);
+            // todo add addRows to rowstore
+            //insertDataRows
+            context().offheap().dataStore(part()).rowStore().addRows(newRows, cctx.group().statisticsHolderData());
         }
 
         @Override public Collection<T3<IgniteTree.OperationType, CacheDataRow, CacheDataRow>> result() {

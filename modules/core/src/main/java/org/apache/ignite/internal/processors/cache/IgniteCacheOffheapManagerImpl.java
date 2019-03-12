@@ -1706,11 +1706,6 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
         }
 
         /** {@inheritDoc} */
-        @Override public void insertDataRows(Collection<CacheDataRow> newRows) throws IgniteCheckedException {
-            rowStore.freeList().insertDataRows(newRows, grp.statisticsHolderData());
-        }
-
-        /** {@inheritDoc} */
         @Override public void updateBatch(BatchedCacheEntries items) throws IgniteCheckedException {
 //            int size = items.size();
 
@@ -2077,12 +2072,13 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
             @Nullable CacheDataRow oldRow) throws IgniteCheckedException {
             int cacheId = grp.storeCacheIdInDataPage() ? cctx.cacheId() : CU.UNDEFINED_CACHE_ID;
 
-//            ctx.kernalContext().diagnostic().beginTrack(PRELOAD_TREE_ADD_ROW);
-
             DataRow dataRow = makeDataRow(key, val, ver, expireTime, cacheId);
 
-            if (canUpdateOldRow(cctx, oldRow, dataRow) && rowStore.updateRow(oldRow.link(), dataRow, grp.statisticsHolderData()))
+            if (canUpdateOldRow(cctx, oldRow, dataRow) && rowStore.updateRow(oldRow.link(), dataRow, grp.statisticsHolderData())) {
+                assert false;
+
                 dataRow.link(oldRow.link());
+            }
             else {
                 CacheObjectContext coCtx = cctx.cacheObjectContext();
 
@@ -2092,12 +2088,13 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
                 rowStore.addRow(dataRow, grp.statisticsHolderData());
             }
 
-//            ctx.kernalContext().diagnostic().endTrack(PRELOAD_TREE_ADD_ROW);
-
             assert dataRow.link() != 0 : dataRow;
 
-            if (grp.sharedGroup() && dataRow.cacheId() == CU.UNDEFINED_CACHE_ID)
+            if (grp.sharedGroup() && dataRow.cacheId() == CU.UNDEFINED_CACHE_ID) {
+                assert false;
+
                 dataRow.cacheId(cctx.cacheId());
+            }
 
             return dataRow;
         }
@@ -2110,7 +2107,7 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
          * @param cacheId Cache id.
          * @return Made data row.
          */
-        @NotNull private DataRow makeDataRow(KeyCacheObject key, CacheObject val, GridCacheVersion ver, long expireTime,
+        @NotNull public DataRow makeDataRow(KeyCacheObject key, CacheObject val, GridCacheVersion ver, long expireTime,
             int cacheId) {
             if (key.partition() == -1)
                 key.partition(partId);
