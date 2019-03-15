@@ -17,6 +17,9 @@
 
 package org.apache.ignite.internal.processors.cache.tree;
 
+import java.util.ArrayList;
+import java.util.Iterator;
+import java.util.List;
 import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.internal.pagemem.PageUtils;
 import org.apache.ignite.internal.pagemem.store.PageStore;
@@ -45,6 +48,8 @@ import org.apache.ignite.internal.processors.cache.tree.mvcc.search.MvccDataPage
 import org.apache.ignite.internal.stat.IoStatisticsHolder;
 import org.apache.ignite.internal.util.GridUnsafe;
 import org.apache.ignite.internal.util.lang.GridCursor;
+import org.apache.ignite.internal.util.typedef.T2;
+import org.apache.ignite.internal.util.typedef.T3;
 import org.apache.ignite.internal.util.typedef.internal.CU;
 
 import static java.lang.Boolean.FALSE;
@@ -325,6 +330,134 @@ public class CacheDataTree extends BPlusTree<CacheSearchRow, CacheDataRow> {
      */
     public CacheDataRowStore rowStore() {
         return rowStore;
+    }
+
+    /** {@inheritDoc} */
+    @Override public void invokeAll(List<CacheSearchRow> rows, Object z1, InvokeAllClosure<CacheDataRow, CacheSearchRow> c) throws IgniteCheckedException {
+        checkDestroyed();
+
+        int cnt = rows.size();
+
+        assert cnt > 0 : cnt;
+
+        // todo No algorithm this is draft implementation only for check that closure is working properly
+        CacheSearchRow lower = rows.get(0);
+        CacheSearchRow upper = rows.get(cnt - 1);
+
+        List<T2<CacheDataRow, CacheSearchRow>> batch = new ArrayList<>(cnt);
+
+        Iterator<CacheSearchRow> rowItr = rows.iterator();
+
+        assert lower.key().hashCode() <= upper.key().hashCode() : "lower=" + lower.key().hashCode() + ", upper=" + upper.key().hashCode();
+
+        GridCursor<CacheDataRow> cur = find(lower, upper, CacheDataRowAdapter.RowData.FULL);
+
+        CacheSearchRow lastSearchRow = null;
+        KeyCacheObject newKey = null;
+
+        while (rowItr.hasNext() && cur.next()) {
+            CacheDataRow oldRow = cur.get();
+            KeyCacheObject oldKey = oldRow.key();
+
+            while (rowItr.hasNext() && (newKey == null || newKey.hashCode() <= oldKey.hashCode())) {
+                if (newKey != null && newKey.hashCode() == oldKey.hashCode()) {
+                    while (newKey.hashCode() == oldKey.hashCode()) {
+
+                        if (newKey.equals(oldKey))
+                            batch.add(new T2<>(oldRow, lastSearchRow));
+                        else
+                            batch.add(new T2<>(null, lastSearchRow));
+
+                        if (!rowItr.hasNext())
+                            break;
+
+                        lastSearchRow = rowItr.next();
+                        newKey = lastSearchRow.key();
+                    }
+                }
+                else {
+                    if (lastSearchRow != null)
+                        batch.add(new T2<>(null, lastSearchRow));
+
+                    if (!rowItr.hasNext())
+                        break;
+
+                    lastSearchRow = rowItr.next();
+                    newKey = lastSearchRow.key();
+                }
+            }
+        }
+
+        while (rowItr.hasNext())
+            batch.add(new T2<>(null, rowItr.next()));
+
+        // todo call on insertion point
+        c.call(batch);
+
+        // todo
+        for (T3<OperationType, CacheDataRow, CacheDataRow> t3 : c.result()) {
+            OperationType oper = t3.get1();
+            CacheDataRow oldRow = t3.get2();
+            CacheDataRow newRow = t3.get3();
+
+            if (oper == OperationType.PUT)
+                put(newRow);
+            else
+            if (oper == OperationType.REMOVE)
+                remove(oldRow);
+        }
+
+//        while (cur.next()) {
+//            T t = cur.get();
+//
+//
+//        }
+
+//        InvokeAll x = new InvokeAll(row, z, c);
+
+//        try {
+//            for (;;) {
+//                x.init();
+//
+//                Result res = invokeDown(x, x.rootId, 0L, 0L, x.rootLvl);
+//
+//                switch (res) {
+//                    case RETRY:
+//                    case RETRY_ROOT:
+//                        checkInterrupted();
+//
+//                        continue;
+//
+//                    default:
+//                        if (!x.isFinished()) {
+//                            res = x.tryFinish();
+//
+//                            if (res == RETRY || res == RETRY_ROOT) {
+//                                checkInterrupted();
+//
+//                                continue;
+//                            }
+//
+//                            assert x.isFinished(): res;
+//                        }
+//
+//                        return;
+//                }
+//            }
+//        }
+//        catch (UnregisteredClassException | UnregisteredBinaryTypeException e) {
+//            throw e;
+//        }
+//        catch (IgniteCheckedException e) {
+//            throw new IgniteCheckedException("Runtime failure on search row: " + row, e);
+//        }
+//        catch (RuntimeException | AssertionError e) {
+//            throw new CorruptedTreeException("Runtime failure on search row: " + row, e);
+//        }
+//        finally {
+//            x.releaseAll();
+//            checkDestroyed();
+//        }
     }
 
     /** {@inheritDoc} */

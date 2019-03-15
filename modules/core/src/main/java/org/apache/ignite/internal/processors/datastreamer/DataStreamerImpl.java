@@ -53,6 +53,7 @@ import org.apache.ignite.IgniteDataStreamerTimeoutException;
 import org.apache.ignite.IgniteException;
 import org.apache.ignite.IgniteInterruptedException;
 import org.apache.ignite.IgniteLogger;
+import org.apache.ignite.IgniteSystemProperties;
 import org.apache.ignite.cache.CacheMode;
 import org.apache.ignite.cluster.ClusterNode;
 import org.apache.ignite.cluster.ClusterTopologyException;
@@ -73,6 +74,7 @@ import org.apache.ignite.internal.managers.deployment.GridDeployment;
 import org.apache.ignite.internal.managers.eventstorage.GridLocalEventListener;
 import org.apache.ignite.internal.processors.affinity.AffinityTopologyVersion;
 import org.apache.ignite.internal.processors.affinity.GridAffinityProcessor;
+import org.apache.ignite.internal.processors.cache.BatchedCacheEntries;
 import org.apache.ignite.internal.processors.cache.CacheObject;
 import org.apache.ignite.internal.processors.cache.CacheObjectContext;
 import org.apache.ignite.internal.processors.cache.DynamicCacheDescriptor;
@@ -129,6 +131,10 @@ public class DataStreamerImpl<K, V> implements IgniteDataStreamer<K, V>, Delayed
     /** Per thread buffer size. */
     private int bufLdrSzPerThread = DFLT_PER_THREAD_BUFFER_SIZE;
 
+    /** */
+    private static final boolean batchPageWriteEnabled =
+        IgniteSystemProperties.getBoolean(IgniteSystemProperties.IGNITE_DATA_STORAGE_BATCH_PAGE_WRITE, false);
+
     /**
      * Thread buffer map: on each thread there are future and list of entries which will be streamed after filling
      * thread batch.
@@ -136,7 +142,7 @@ public class DataStreamerImpl<K, V> implements IgniteDataStreamer<K, V>, Delayed
     private final Map<Long, ThreadBuffer> threadBufMap = new ConcurrentHashMap<>();
 
     /** Isolated receiver. */
-    private static final StreamReceiver ISOLATED_UPDATER = new IsolatedUpdater();
+    private static final StreamReceiver ISOLATED_UPDATER = new IsolatedUpdater();//batchPageWriteEnabled ? new OptimizedIsolatedUpdater() : new IsolatedUpdater();
 
     /** Amount of permissions should be available to continue new data processing. */
     private static final int REMAP_SEMAPHORE_PERMISSIONS_COUNT = Integer.MAX_VALUE;
@@ -2331,6 +2337,205 @@ public class DataStreamerImpl<K, V> implements IgniteDataStreamer<K, V>, Delayed
             }
         }
     }
+
+    /**
+     * Isolated batch receiver which only loads entry initial value.
+     *
+     * todo
+     */
+    protected static class OptimizedIsolatedUpdater extends IsolatedUpdater {
+        /** */
+        private static final long serialVersionUID = 0L;
+
+        /** {@inheritDoc} */
+        @Override public void receive(
+            IgniteCache<KeyCacheObject, CacheObject> cache,
+            Collection<Map.Entry<KeyCacheObject, CacheObject>> entries
+        ) {
+            IgniteCacheProxy<KeyCacheObject, CacheObject> proxy = (IgniteCacheProxy<KeyCacheObject, CacheObject>)cache;
+
+            GridCacheAdapter<KeyCacheObject, CacheObject> internalCache = proxy.context().cache();
+
+            if (internalCache.context().mvccEnabled() || internalCache.isNear() || internalCache.context().isLocal() || entries.size() < 10) { // todo threshold
+                super.receive(cache, entries);
+
+                return;
+            }
+
+//            if (internalCache.isNear())
+//                internalCache = internalCache.context().near().dht();
+
+            GridCacheContext<?, ?> cctx = internalCache.context();
+
+            GridDhtTopologyFuture topFut = cctx.shared().exchange().lastFinishedFuture();
+
+            AffinityTopologyVersion topVer = topFut.topologyVersion();
+
+            GridCacheVersion ver = cctx.versions().isolatedStreamerVersion();
+
+            long ttl = CU.TTL_ETERNAL;
+            long expiryTime = CU.EXPIRE_TIME_ETERNAL;
+
+            ExpiryPolicy plc = cctx.expiry();
+
+            Collection<Integer> reservedParts = new HashSet<>();
+            Collection<Integer> ignoredParts = new HashSet<>();
+
+            Map<Integer, BatchedCacheEntries> batchMap = new HashMap<>();
+
+            try {
+//                log.info("Received " + entries.size());
+
+                for (Entry<KeyCacheObject, CacheObject> e : entries) {
+//                    cctx.shared().database().checkpointReadLock();
+
+                    try {
+                        e.getKey().finishUnmarshal(cctx.cacheObjectContext(), cctx.deploy().globalLoader());
+
+                        BatchedCacheEntries batch = null;
+
+                        if (plc != null) {
+                            ttl = CU.toTtl(plc.getExpiryForCreation());
+
+                            if (ttl == CU.TTL_ZERO)
+                                continue;
+                            else if (ttl == CU.TTL_NOT_CHANGED)
+                                ttl = 0;
+
+                            expiryTime = CU.toExpireTime(ttl);
+                        }
+
+                        // todo kill duplication
+                        int p = cctx.affinity().partition(e.getKey());
+
+                        if (ignoredParts.contains(p))
+                            continue;
+
+                        if (!reservedParts.contains(p)) {
+                            GridDhtLocalPartition part = cctx.topology().localPartition(p, topVer, true);
+
+                            if (!part.reserve()) {
+                                ignoredParts.add(p);
+
+                                continue;
+                            }
+                            else {
+                                // We must not allow to read from RENTING partitions.
+                                if (part.state() == GridDhtPartitionState.RENTING) {
+                                    part.release();
+
+                                    ignoredParts.add(p);
+
+                                    continue;
+                                }
+
+                                reservedParts.add(p);
+                            }
+                        }
+
+                        ///
+                        batch = batchMap.computeIfAbsent(p, v -> new BatchedCacheEntries(topVer, p, cctx, false));
+
+                        boolean primary = cctx.affinity().primaryByKey(cctx.localNode(), e.getKey(), topVer);
+
+                        batch.addEntry(e.getKey(), e.getValue(), expiryTime, ttl, ver, primary ? GridDrType.DR_LOAD : GridDrType.DR_PRELOAD);
+
+
+//                            if (topFut != null) {
+//                                Throwable err = topFut.validateCache(cctx, false, false, entry.key(), null);
+//
+//                                if (err != null)
+//                                    throw new IgniteCheckedException(err);
+//                            }
+
+//                            boolean primary = cctx.affinity().primaryByKey(cctx.localNode(), entry.key(), topVer);
+//
+//                            entry.initialValue(e.getValue(),
+//                                ver,
+//                                ttl,
+//                                expiryTime,
+//                                false,
+//                                topVer,
+//                                primary ? GridDrType.DR_LOAD : GridDrType.DR_PRELOAD,
+//                                false);
+//
+//                            entry.touch(topVer);
+//
+//                            CU.unwindEvicts(cctx);
+//
+//                            entry.onUnlock();
+//                        }
+                    }
+                    catch (GridDhtInvalidPartitionException ignored) {
+                        ignoredParts.add(cctx.affinity().partition(e.getKey()));
+                    }
+//                    catch (GridCacheEntryRemovedException ignored) {
+//                        // No-op.
+//                    }
+                    catch (IgniteCheckedException ex) {
+                        IgniteLogger log = cache.unwrap(Ignite.class).log();
+
+                        U.error(log, "Failed to set initial value for cache entry: " + e, ex);
+
+                        throw new IgniteException("Failed to set initial value for cache entry.", ex);
+                    }
+//                    finally {
+////                        cctx.shared().database().checkpointReadUnlock();
+//                    }
+                }
+
+                cctx.shared().database().checkpointReadLock();
+
+                try {
+                    for (BatchedCacheEntries b : batchMap.values()) {
+                        b.lock();
+                        try {
+                            // todo topFut.validateCache
+
+                            cctx.offheap().invokeAll(b.context(), b.keys(), b.part(), b.new UpdateClosure());
+                            //cctx.offheap().updateBatch(batch);
+
+
+                        } finally {
+                            b.unlock();
+                        }
+                    }
+                }
+                catch (IgniteCheckedException e) {
+                    // todo handle exceptions properly
+                    IgniteLogger log = cache.unwrap(Ignite.class).log();
+
+                    U.error(log, "Failed to set initial value for cache entry.", e);
+
+                    throw new IgniteException("Failed to set initial value for cache entry.", e);
+                }
+                finally {
+                    cctx.shared().database().checkpointReadUnlock();
+                }
+
+            }
+            finally {
+                for (Integer part : reservedParts) {
+                    GridDhtLocalPartition locPart = cctx.topology().localPartition(part, topVer, false);
+
+                    assert locPart != null : "Evicted reserved partition: " + locPart;
+
+                    locPart.release();
+                }
+
+                try {
+                    if (!cctx.isNear() && cctx.shared().wal() != null)
+                        cctx.shared().wal().flush(null, false);
+                }
+                catch (IgniteCheckedException e) {
+                    U.error(log, "Failed to write preloaded entries into write-ahead log.", e);
+
+                    throw new IgniteException("Failed to write preloaded entries into write-ahead log.", e);
+                }
+            }
+        }
+    }
+
 
     /**
      * Key object wrapper. Using identity equals prevents slow down in case of hash code collision.

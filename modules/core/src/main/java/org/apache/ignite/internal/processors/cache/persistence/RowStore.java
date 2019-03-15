@@ -17,6 +17,7 @@
 
 package org.apache.ignite.internal.processors.cache.persistence;
 
+import java.util.Collection;
 import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.internal.pagemem.PageMemory;
 import org.apache.ignite.internal.processors.cache.CacheGroupContext;
@@ -26,6 +27,10 @@ import org.apache.ignite.internal.processors.cache.persistence.freelist.FreeList
 import org.apache.ignite.internal.processors.cache.persistence.tree.util.PageHandler;
 import org.apache.ignite.internal.processors.query.GridQueryRowCacheCleaner;
 import org.apache.ignite.internal.stat.IoStatisticsHolder;
+
+//import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.PRELOAD_OFFHEAP_INVOKE_INSERT_FREELIST;
+
+//import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.PRELOAD_FREELIST_REMOVE;
 
 /**
  * Data store for H2 rows.
@@ -80,11 +85,12 @@ public class RowStore {
             freeList.removeDataRowByLink(link, statHolder);
         else {
             ctx.database().checkpointReadLock();
-
+//            ctx.kernalContext().diagnostic().beginTrack(PRELOAD_FREELIST_REMOVE);
             try {
                 freeList.removeDataRowByLink(link, statHolder);
             }
             finally {
+//                ctx.kernalContext().diagnostic().endTrack(PRELOAD_FREELIST_REMOVE);
                 ctx.database().checkpointReadUnlock();
             }
         }
@@ -104,6 +110,25 @@ public class RowStore {
                 freeList.insertDataRow(row, statHolder);
 
                 assert row.link() != 0L;
+            }
+            finally {
+                ctx.database().checkpointReadUnlock();
+            }
+        }
+    }
+
+    /**
+     * @param rows Rows.
+     * @throws IgniteCheckedException If failed.
+     */
+    public void addRows(Collection<CacheDataRow> rows, IoStatisticsHolder statHolder) throws IgniteCheckedException {
+        if (!persistenceEnabled)
+            freeList.insertDataRows(rows, statHolder);
+        else {
+            ctx.database().checkpointReadLock();
+
+            try {
+                freeList.insertDataRows(rows, statHolder);
             }
             finally {
                 ctx.database().checkpointReadUnlock();

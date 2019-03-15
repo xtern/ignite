@@ -55,6 +55,8 @@ import org.apache.ignite.lang.IgnitePredicate;
 import org.apache.ignite.spi.IgniteSpiException;
 
 import static org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtPartitionState.OWNING;
+import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.SUPPLIER_PROCESS_MSG;
+import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.TOTAL;
 
 /**
  * Class for supplying partitions to demanding nodes.
@@ -255,6 +257,10 @@ class GridDhtPartitionSupplier {
             long maxBatchesCnt = grp.config().getRebalanceBatchesPrefetchCount();
 
             if (sctx == null) {
+                grp.shared().kernalContext().diagnostic().beginTrack(TOTAL);
+
+                grp.shared().kernalContext().diagnostic().beginTrack(SUPPLIER_PROCESS_MSG);
+
                 if (log.isDebugEnabled())
                     log.debug("Starting supplying rebalancing [" + supplyRoutineInfo(topicId, nodeId, demandMsg) +
                         ", fullPartitions=" + S.compact(demandMsg.partitions().fullSet()) +
@@ -429,6 +435,10 @@ class GridDhtPartitionSupplier {
 
             if (log.isInfoEnabled())
                 log.info("Finished supplying rebalancing [" + supplyRoutineInfo(topicId, nodeId, demandMsg) + "]");
+
+            grp.shared().kernalContext().diagnostic().endTrack(SUPPLIER_PROCESS_MSG);
+            grp.shared().kernalContext().diagnostic().endTrack(TOTAL);
+            grp.shared().kernalContext().diagnostic().printStats();
         }
         catch (Throwable t) {
             if (grp.shared().kernalContext().isStopping())

@@ -3504,6 +3504,91 @@ public abstract class GridCacheMapEntry extends GridMetadataAwareAdapter impleme
         }
     }
 
+    /** {@inheritDoc} */
+    @Override public void finishPreload(
+        @Nullable CacheObject val,
+        long expTime,
+        long ttl,
+        GridCacheVersion ver,
+        AffinityTopologyVersion topVer,
+        GridDrType drType,
+        MvccVersion mvccVer,
+        boolean preload
+    ) throws IgniteCheckedException {
+        boolean fromStore = false;
+        boolean walEnabled = !cctx.isNear() && cctx.group().persistenceEnabled() && cctx.group().walEnabled();
+
+        update(val, expTime, ttl, ver, true);
+
+        boolean skipQryNtf = false;
+
+        if (val == null) {
+            skipQryNtf = true;
+
+            if (cctx.deferredDelete() && !deletedUnlocked() && !isInternal())
+                deletedUnlocked(true);
+        }
+        else if (deletedUnlocked())
+            deletedUnlocked(false);
+
+        long updateCntr = 0;
+
+        if (!preload)
+            updateCntr = nextPartitionCounter(topVer, true, null);
+
+        if (walEnabled) {
+            if (cctx.mvccEnabled()) {
+                cctx.shared().wal().log(new MvccDataRecord(new MvccDataEntry(
+                    cctx.cacheId(),
+                    key,
+                    val,
+                    val == null ? DELETE : GridCacheOperation.CREATE,
+                    null,
+                    ver,
+                    expTime,
+                    partition(),
+                    updateCntr,
+                    mvccVer == null ? MvccUtils.INITIAL_VERSION : mvccVer
+                )));
+            } else {
+                cctx.shared().wal().log(new DataRecord(new DataEntry(
+                    cctx.cacheId(),
+                    key,
+                    val,
+                    val == null ? DELETE : GridCacheOperation.CREATE,
+                    null,
+                    ver,
+                    expTime,
+                    partition(),
+                    updateCntr
+                )));
+            }
+        }
+
+        drReplicate(drType, val, ver, topVer);
+
+        if (!skipQryNtf) {
+            cctx.continuousQueries().onEntryUpdated(
+                key,
+                val,
+                null,
+                this.isInternal() || !this.context().userCache(),
+                this.partition(),
+                true,
+                true,
+                updateCntr,
+                null,
+                topVer);
+        }
+
+        onUpdateFinished(updateCntr);
+
+        if (!fromStore && cctx.store().isLocal()) {
+            if (val != null)
+                cctx.store().put(null, key, val, ver);
+        }
+    }
+
     /**
      * @param cntr Updated partition counter.
      */

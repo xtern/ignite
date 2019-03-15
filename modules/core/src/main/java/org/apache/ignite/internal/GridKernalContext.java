@@ -46,6 +46,7 @@ import org.apache.ignite.internal.processors.compress.CompressionProcessor;
 import org.apache.ignite.internal.processors.continuous.GridContinuousProcessor;
 import org.apache.ignite.internal.processors.datastreamer.DataStreamProcessor;
 import org.apache.ignite.internal.processors.datastructures.DataStructuresProcessor;
+import org.apache.ignite.internal.processors.diag.DiagnosticProcessor;
 import org.apache.ignite.internal.processors.failure.FailureProcessor;
 import org.apache.ignite.internal.processors.hadoop.HadoopHelper;
 import org.apache.ignite.internal.processors.hadoop.HadoopProcessorAdapter;
@@ -482,6 +483,9 @@ public interface GridKernalContext extends Iterable<GridComponent> {
      * Gets failure processor.
      */
     public FailureProcessor failure();
+
+    /** */
+    public DiagnosticProcessor diagnostic();
 
     /**
      * Print grid kernal memory stats (sizes of internal structures, etc.).

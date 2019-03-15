@@ -18,10 +18,12 @@
 package org.apache.ignite.internal.processors.cache;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
@@ -103,6 +105,7 @@ import org.apache.ignite.internal.util.lang.GridCursor;
 import org.apache.ignite.internal.util.lang.GridIterator;
 import org.apache.ignite.internal.util.lang.IgniteInClosure2X;
 import org.apache.ignite.internal.util.typedef.F;
+import org.apache.ignite.internal.util.typedef.T3;
 import org.apache.ignite.internal.util.typedef.X;
 import org.apache.ignite.internal.util.typedef.internal.CU;
 import org.apache.ignite.internal.util.typedef.internal.U;
@@ -445,6 +448,16 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
         OffheapInvokeClosure c)
         throws IgniteCheckedException {
         dataStore(part).invoke(cctx, key, c);
+    }
+
+    /** {@inheritDoc} */
+    @Override public void invokeAll(
+        GridCacheContext cctx,
+        Collection<KeyCacheObject> keys,
+        GridDhtLocalPartition part,
+        OffheapInvokeAllClosure c)
+        throws IgniteCheckedException {
+        dataStore(part).invokeAll(cctx, keys, c);
     }
 
     /** {@inheritDoc} */
@@ -1589,6 +1602,8 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
          * @param dataRow New row.
          * @return {@code True} if it is possible to update old row data.
          * @throws IgniteCheckedException If failed.
+         *
+         * todo think about this meth
          */
         private boolean canUpdateOldRow(GridCacheContext cctx, @Nullable CacheDataRow oldRow, DataRow dataRow)
             throws IgniteCheckedException {
@@ -1599,7 +1614,7 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
                 return false;
 
             // Use grp.sharedGroup() flag since it is possible cacheId is not yet set here.
-            boolean sizeWithCacheId = grp.sharedGroup();
+//            boolean sizeWithCacheId = grp.sharedGroup();
 
             int oldLen = oldRow.size();
 
@@ -1625,6 +1640,20 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
             finally {
                 busyLock.leaveBusy();
             }
+        }
+
+
+        /** {@inheritDoc} */
+        @Override public void invokeAll(GridCacheContext cctx, Collection<KeyCacheObject> keys, OffheapInvokeAllClosure c)
+            throws IgniteCheckedException {
+            int cacheId = grp.sharedGroup() ? cctx.cacheId() : CU.UNDEFINED_CACHE_ID;
+
+            List<CacheSearchRow> searchRows = new ArrayList<>(keys.size());
+
+            for (KeyCacheObject key : keys)
+                searchRows.add(new SearchRow(cacheId, key));
+
+            invokeAll0(cctx, searchRows, c);
         }
 
         /**
@@ -1663,6 +1692,62 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
 
                 default:
                     assert false : c.operationType();
+            }
+        }
+
+        /**
+         * @param cctx Cache context.
+         * @param rows Search rows.
+         * @param c Closure.
+         * @throws IgniteCheckedException If failed.
+         */
+        private void invokeAll0(GridCacheContext cctx, List<CacheSearchRow> rows, OffheapInvokeAllClosure c)
+            throws IgniteCheckedException {
+            if (!busyLock.enterBusy())
+                throw new NodeStoppingException("Operation has been cancelled (node is stopping).");
+
+            try {
+                assert cctx.shared().database().checkpointLockIsHeldByThread();
+
+//                ctx.kernalContext().diagnostic().beginTrack(PRELOAD_TREE_INVOKE);
+
+                dataTree.invokeAll(rows, CacheDataRowAdapter.RowData.NO_KEY, c);
+
+//                ctx.kernalContext().diagnostic().endTrack(PRELOAD_TREE_INVOKE);
+
+                for (T3<IgniteTree.OperationType, CacheDataRow, CacheDataRow> tuple : c.result()) {
+                    IgniteTree.OperationType opType = tuple.get1();
+
+                    CacheDataRow oldRow = tuple.get2();
+
+                    CacheDataRow newRow = tuple.get3();
+
+                    switch (opType) {
+                        case PUT: {
+                            assert newRow != null : tuple;
+
+                            finishUpdate(cctx, newRow, oldRow);
+                            break;
+                        }
+
+                        case REMOVE: {
+                            finishRemove(cctx, newRow.key(), oldRow);
+
+                            break;
+                        }
+
+                        case NOOP:
+                            break;
+
+                        default:
+                            assert false : opType;
+                    }
+                }
+
+
+            }
+            finally {
+                busyLock.leaveBusy();
             }
         }
 
@@ -1705,7 +1790,7 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
          * @param cacheId Cache id.
          * @return Made data row.
          */
-        @NotNull private DataRow makeDataRow(KeyCacheObject key, CacheObject val, GridCacheVersion ver, long expireTime,
+        @NotNull public DataRow makeDataRow(KeyCacheObject key, CacheObject val, GridCacheVersion ver, long expireTime,
             int cacheId) {
             if (key.partition() == -1)
                 key.partition(partId);
@@ -2533,13 +2618,17 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
             if (oldRow != null) {
                 assert oldRow.link() != 0 : oldRow;
 
-                if (pendingTree() != null && oldRow.expireTime() != 0)
+                if (pendingTree() != null && oldRow.expireTime() != 0) {
+//                    cctx.kernalContext().diagnostic().beginTrack(PRELOAD_PENDING_TREE_REMOVE);
                     pendingTree().removex(new PendingRow(cacheId, oldRow.expireTime(), oldRow.link()));
+//                    cctx.kernalContext().diagnostic().endTrack(PRELOAD_PENDING_TREE_REMOVE);
+                }
             }
 
             if (pendingTree() != null && expireTime != 0) {
+//                cctx.kernalContext().diagnostic().beginTrack(PRELOAD_PENDING_TREE_PUT);
                 pendingTree().putx(new PendingRow(cacheId, expireTime, newRow.link()));
-
+//                cctx.kernalContext().diagnostic().endTrack(PRELOAD_PENDING_TREE_PUT);
                 hasPendingEntries = true;
             }
         }
@@ -2810,6 +2899,7 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
             dataTree.destroy(new IgniteInClosure<CacheSearchRow>() {
                 @Override public void apply(CacheSearchRow row) {
                     try {
+//                        log.info("Remove row: " + row.key().hashCode() + " link " + row.link());
                         rowStore.removeRow(row.link(), grp.statisticsHolderData());
                     }
                     catch (IgniteCheckedException e) {

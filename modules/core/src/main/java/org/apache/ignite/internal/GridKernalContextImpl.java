@@ -48,6 +48,7 @@ import org.apache.ignite.internal.managers.eventstorage.GridEventStorageManager;
 import org.apache.ignite.internal.managers.failover.GridFailoverManager;
 import org.apache.ignite.internal.managers.indexing.GridIndexingManager;
 import org.apache.ignite.internal.managers.loadbalancer.GridLoadBalancerManager;
+import org.apache.ignite.internal.processors.diag.DiagnosticProcessor;
 import org.apache.ignite.internal.processors.service.ServiceProcessorAdapter;
 import org.apache.ignite.internal.processors.affinity.GridAffinityProcessor;
 import org.apache.ignite.internal.processors.authentication.IgniteAuthenticationProcessor;
@@ -433,6 +434,9 @@ public class GridKernalContextImpl implements GridKernalContext, Externalizable 
     /** Failure processor. */
     private FailureProcessor failureProc;
 
+    /** */
+    private DiagnosticProcessor diagProc;
+
     /** Recovery mode flag. Flag is set to {@code false} when discovery manager started. */
     private boolean recoveryMode = true;
 
@@ -598,6 +602,8 @@ public class GridKernalContextImpl implements GridKernalContext, Externalizable 
 
         else if (comp instanceof FailureProcessor)
             failureProc = (FailureProcessor)comp;
+        else if (comp instanceof DiagnosticProcessor)
+            diagProc = (DiagnosticProcessor)comp;
         else if (comp instanceof GridTaskProcessor)
             taskProc = (GridTaskProcessor)comp;
         else if (comp instanceof GridJobProcessor)
@@ -1218,6 +1224,11 @@ public class GridKernalContextImpl implements GridKernalContext, Externalizable 
     /** {@inheritDoc} */
     @Override public FailureProcessor failure() {
         return failureProc;
+    }
+
+    /** {@inheritDoc} */
+    @Override public DiagnosticProcessor diagnostic() {
+        return diagProc;
     }
 
     /** {@inheritDoc} */
