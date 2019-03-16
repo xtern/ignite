@@ -1171,8 +1171,6 @@ public class GridDhtPartitionDemander {
     ) throws IgniteCheckedException {
         assert ctx.database().checkpointLockIsHeldByThread();
 
-//        ctx.kernalContext().diagnostic().beginTrack(PRELOAD_ENTRY);
-
         try {
             GridCacheEntryEx cached = null;
 
@@ -1549,11 +1547,11 @@ public class GridDhtPartitionDemander {
                     int remainingRoutines = remaining.size() - 1;
 
                     U.log(log, "Completed " + ((remainingRoutines == 0 ? "(final) " : "") +
-                        "rebalancing [grp=" + grp.cacheOrGroupName() +
-                        ", supplier=" + nodeId +
-                        ", topVer=" + topologyVersion() +
-                        ", progress=" + (routines - remainingRoutines) + "/" + routines + "," +
-                        ", batch=" + batchPageWriteEnabled + "]"));
+                            "rebalancing [grp=" + grp.cacheOrGroupName() +
+                            ", supplier=" + nodeId +
+                            ", topVer=" + topologyVersion() +
+                            ", progress=" + (routines - remainingRoutines) + "/" + routines + "," +
+                            ", batch=" + batchPageWriteEnabled + "]"));
 
                     remaining.remove(nodeId);
                 }
@@ -1657,4 +1655,3 @@ public class GridDhtPartitionDemander {
         }
     }
 }
-

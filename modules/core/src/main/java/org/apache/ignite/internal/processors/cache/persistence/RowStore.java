@@ -28,10 +28,6 @@ import org.apache.ignite.internal.processors.cache.persistence.tree.util.PageHan
 import org.apache.ignite.internal.processors.query.GridQueryRowCacheCleaner;
 import org.apache.ignite.internal.stat.IoStatisticsHolder;
 
-//import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.PRELOAD_OFFHEAP_INVOKE_INSERT_FREELIST;
-
-//import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.PRELOAD_FREELIST_REMOVE;
-
 /**
  * Data store for H2 rows.
  */
@@ -85,12 +81,11 @@ public class RowStore {
             freeList.removeDataRowByLink(link, statHolder);
         else {
             ctx.database().checkpointReadLock();
-//            ctx.kernalContext().diagnostic().beginTrack(PRELOAD_FREELIST_REMOVE);
+
             try {
                 freeList.removeDataRowByLink(link, statHolder);
             }
             finally {
-//                ctx.kernalContext().diagnostic().endTrack(PRELOAD_FREELIST_REMOVE);
                 ctx.database().checkpointReadUnlock();
             }
         }

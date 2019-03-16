@@ -666,7 +666,7 @@ public class MetaStorage implements DbCheckpointListener, ReadWriteMetastorage {
         FreeListImpl(int cacheId, String name, DataRegionMetricsImpl regionMetrics, DataRegion dataRegion,
             ReuseList reuseList,
             IgniteWriteAheadLogManager wal, long metaPageId, boolean initNew) throws IgniteCheckedException {
-            super(cacheId, name, regionMetrics, dataRegion, reuseList, wal, metaPageId, initNew, cctx.kernalContext());
+            super(cacheId, name, regionMetrics, dataRegion, reuseList, wal, metaPageId, initNew);
         }
 
         /** {@inheritDoc} */

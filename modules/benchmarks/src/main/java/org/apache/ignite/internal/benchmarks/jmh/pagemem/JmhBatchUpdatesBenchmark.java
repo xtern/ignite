@@ -191,7 +191,6 @@ public class JmhBatchUpdatesBenchmark {
             .setDataRegionName(batch ? REG_BATCH : REG_SINGLE);
     }
 
-
     /**
      * Test single updates.
      *
