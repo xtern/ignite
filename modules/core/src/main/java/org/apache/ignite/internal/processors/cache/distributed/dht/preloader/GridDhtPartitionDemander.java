@@ -81,10 +81,6 @@ import static org.apache.ignite.events.EventType.EVT_CACHE_REBALANCE_PART_LOADED
 import static org.apache.ignite.events.EventType.EVT_CACHE_REBALANCE_STARTED;
 import static org.apache.ignite.events.EventType.EVT_CACHE_REBALANCE_STOPPED;
 import static org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtPartitionState.MOVING;
-import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.DEMANDER_PROCESS_MSG;
-import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.DEMANDER_PROCESS_MSG_BATCH;
-import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.DEMANDER_PROCESS_MSG_SINGLE;
-import static org.apache.ignite.internal.processors.diag.DiagnosticTopics.TOTAL;
 import static org.apache.ignite.internal.processors.dr.GridDrType.DR_NONE;
 import static org.apache.ignite.internal.processors.dr.GridDrType.DR_PRELOAD;
 
@@ -488,8 +484,6 @@ public class GridDhtPartitionDemander {
             for (int i = 0; i < stripes; i++)
                 stripePartitions.add(new IgniteDhtDemandedPartitionsMap());
 
-            ctx.kernalContext().diagnostic().beginTrack(TOTAL);
-
             // Reserve one stripe for historical partitions.
             if (parts.hasHistorical()) {
                 stripePartitions.set(stripes - 1, new IgniteDhtDemandedPartitionsMap(parts.historicalMap(), null));
@@ -673,8 +667,6 @@ public class GridDhtPartitionDemander {
         final UUID nodeId,
         final GridDhtPartitionSupplyMessage supplyMsg
     ) {
-        ctx.kernalContext().diagnostic().beginTrack(DEMANDER_PROCESS_MSG);
-
         AffinityTopologyVersion topVer = supplyMsg.topologyVersion();
 
         final RebalanceFuture fut = rebalanceFut;
@@ -868,8 +860,6 @@ public class GridDhtPartitionDemander {
         catch (IgniteSpiException | IgniteCheckedException e) {
             LT.error(log, e, "Error during rebalancing [" + demandRoutineInfo(topicId, nodeId, supplyMsg) +
                 ", err=" + e + ']');
-        } finally {
-            ctx.kernalContext().diagnostic().endTrack(DEMANDER_PROCESS_MSG);
         }
     }
 
@@ -883,35 +873,29 @@ public class GridDhtPartitionDemander {
     ) throws IgniteCheckedException {
         GridCacheContext cctx = null;
 
-        ctx.kernalContext().diagnostic().beginTrack(DEMANDER_PROCESS_MSG_SINGLE);
-        try {
-            // Loop through all received entries and try to preload them.
-            for (GridCacheEntryInfo entry : entries) {
+        // Loop through all received entries and try to preload them.
+        for (GridCacheEntryInfo entry : entries) {
+            if (cctx == null || (grp.sharedGroup() && entry.cacheId() != cctx.cacheId())) {
+                cctx = grp.sharedGroup() ? grp.shared().cacheContext(entry.cacheId()) : grp.singleCacheContext();
 
-                if (cctx == null || (grp.sharedGroup() && entry.cacheId() != cctx.cacheId())) {
-                    cctx = grp.sharedGroup() ? grp.shared().cacheContext(entry.cacheId()) : grp.singleCacheContext();
-
-                    if (cctx == null)
-                        continue;
-                    else if (cctx.isNear())
-                        cctx = cctx.dhtCache().context();
-                }
-
-                if (!preloadEntry(from, p, entry, topVer, cctx)) {
-                    if (log.isTraceEnabled())
-                        log.trace("Got entries for invalid partition during " +
-                            "preloading (will skip) [p=" + p + ", entry=" + entry + ']');
-
-                    break;
-                }
-
-                for (GridCacheContext cctx0 : grp.caches()) {
-                    if (cctx0.statisticsEnabled())
-                        cctx0.cache().metrics0().onRebalanceKeyReceived();
-                }
+                if (cctx == null)
+                    continue;
+                else if (cctx.isNear())
+                    cctx = cctx.dhtCache().context();
             }
-        } finally {
-            ctx.kernalContext().diagnostic().endTrack(DEMANDER_PROCESS_MSG_SINGLE);
+
+            if (!preloadEntry(from, p, entry, topVer, cctx)) {
+                if (log.isTraceEnabled())
+                    log.trace("Got entries for invalid partition during " +
+                        "preloading (will skip) [p=" + p + ", entry=" + entry + ']');
+
+                break;
+            }
+
+            for (GridCacheContext cctx0 : grp.caches()) {
+                if (cctx0.statisticsEnabled())
+                    cctx0.cache().metrics0().onRebalanceKeyReceived();
+            }
         }
     }
 
@@ -928,70 +912,64 @@ public class GridDhtPartitionDemander {
         Collection<GridCacheEntryInfo> entries,
         AffinityTopologyVersion topVer
     ) throws IgniteCheckedException {
-        ctx.kernalContext().diagnostic().beginTrack(DEMANDER_PROCESS_MSG_BATCH);
+        if (entries.isEmpty())
+            return;
 
-        try {
-            if (entries.isEmpty())
-                return;
+        Map<Integer, BatchedCacheEntries> cctxMap = new HashMap<>();
 
-            Map<Integer, BatchedCacheEntries> cctxMap = new HashMap<>();
+        // Map by context.
+        for (GridCacheEntryInfo info : entries) {
+            try {
+                GridCacheContext cctx0 = grp.sharedGroup() ? ctx.cacheContext(info.cacheId()) : grp.singleCacheContext();
 
-            // Map by context.
-            for (GridCacheEntryInfo info : entries) {
-                try {
-                    GridCacheContext cctx0 = grp.sharedGroup() ? ctx.cacheContext(info.cacheId()) : grp.singleCacheContext();
+                if (cctx0 == null)
+                    return;
 
-                    if (cctx0 == null)
-                        return;
+                if (cctx0.isNear())
+                    cctx0 = cctx0.dhtCache().context();
 
-                    if (cctx0.isNear())
-                        cctx0 = cctx0.dhtCache().context();
+                final GridCacheContext cctx = cctx0;
 
-                    final GridCacheContext cctx = cctx0;
+                if (log.isTraceEnabled())
+                    log.trace("Rebalancing key [key=" + info.key() + ", part=" + p + ", node=" + from.id() + ']');
 
-                    if (log.isTraceEnabled())
-                        log.trace("Rebalancing key [key=" + info.key() + ", part=" + p + ", node=" + from.id() + ']');
+                BatchedCacheEntries batch = cctxMap.get(cctx.cacheId());
 
-                    BatchedCacheEntries batch = cctxMap.get(cctx.cacheId());
+                if (batch == null) {
+                    // todo lock should be called for ALL group
+                    cctx.group().listenerLock().readLock().lock();
 
-                    if (batch == null) {
-                        // todo lock should be called for ALL group
-                        cctx.group().listenerLock().readLock().lock();
-
-                        cctxMap.put(cctx.cacheId(), batch = new BatchedCacheEntries(topVer, p, cctx, true));
-                    }
-
-                    batch.addEntry(info.key(), info.value(), info.expireTime(), info.ttl(), info.version(), DR_PRELOAD);
+                    cctxMap.put(cctx.cacheId(), batch = new BatchedCacheEntries(topVer, p, cctx, true));
                 }
-                catch (GridDhtInvalidPartitionException ignored) {
-                    if (log.isDebugEnabled())
-                        log.debug("Partition became invalid during rebalancing (will ignore): " + p);
+
+                batch.addEntry(info.key(), info.value(), info.expireTime(), info.ttl(), info.version(), DR_PRELOAD);
+            }
+            catch (GridDhtInvalidPartitionException ignored) {
+                if (log.isDebugEnabled())
+                    log.debug("Partition became invalid during rebalancing (will ignore): " + p);
+            }
+        }
+
+        for (BatchedCacheEntries batch : cctxMap.values()) {
+            assert batch.size() > BATCH_PRELOAD_THRESHOLD : batch.size();
+
+            GridCacheContext cctx = batch.context();
+
+            batch.lock();
+
+            try {
+                cctx.offheap().invokeAll(cctx, batch.keys(), batch.part(), batch.new UpdateClosure());
+            }
+            finally {
+                batch.unlock();
+
+                cctx.group().listenerLock().readLock().unlock();
+
+                for (GridCacheContext cctx0 : grp.caches()) {
+                    if (cctx0.statisticsEnabled())
+                        cctx0.cache().metrics0().onRebalanceKeysReceived(batch.size());
                 }
             }
-
-            for (BatchedCacheEntries batch : cctxMap.values()) {
-                assert batch.size() > BATCH_PRELOAD_THRESHOLD : batch.size();
-
-                GridCacheContext cctx = batch.context();
-
-                batch.lock();
-
-                try {
-                    cctx.offheap().invokeAll(cctx, batch.keys(), batch.part(), batch.new UpdateClosure());
-                }
-                finally {
-                    batch.unlock();
-
-                    cctx.group().listenerLock().readLock().unlock();
-
-                    for (GridCacheContext cctx0 : grp.caches()) {
-                        if (cctx0.statisticsEnabled())
-                            cctx0.cache().metrics0().onRebalanceKeysReceived(batch.size());
-                    }
-                }
-            }
-        } finally {
-            ctx.kernalContext().diagnostic().endTrack(DEMANDER_PROCESS_MSG_BATCH);
         }
     }
 
@@ -1411,19 +1389,7 @@ public class GridDhtPartitionDemander {
             this.rebalanceId = rebalanceId;
 
             ctx = grp.shared();
-
-//            ctx.kernalContext().diagnostic().beginTrack(TOTAL);
         }
-
-//        @Override protected boolean onDone(@Nullable Boolean res, @Nullable Throwable err, boolean cancel) {
-//            if (ctx != null) { // can be dummy
-//                ctx.kernalContext().diagnostic().endTrack(TOTAL);
-//
-//                ctx.kernalContext().diagnostic().printStats();
-//            }
-//
-//            return super.onDone(res, err, cancel);
-//        }
 
         /**
          * Dummy future. Will be done by real one.
@@ -1590,11 +1556,6 @@ public class GridDhtPartitionDemander {
                         ", batch=" + batchPageWriteEnabled + "]"));
 
                     remaining.remove(nodeId);
-
-                    ctx.kernalContext().diagnostic().endTrack(DEMANDER_PROCESS_MSG);
-
-                    ctx.kernalContext().diagnostic().endTrack(TOTAL);
-                    ctx.kernalContext().diagnostic().printStats();
                 }
 
                 checkIsDone();
