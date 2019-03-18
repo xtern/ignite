@@ -41,6 +41,7 @@ import org.apache.ignite.internal.processors.cache.distributed.dht.topology.Grid
 import org.apache.ignite.internal.util.typedef.PA;
 import org.apache.ignite.internal.util.typedef.internal.U;
 import org.apache.ignite.testframework.GridTestUtils;
+import org.apache.ignite.testframework.junits.WithSystemProperty;
 import org.apache.ignite.testframework.junits.common.GridCommonAbstractTest;
 import org.junit.After;
 import org.junit.Before;
@@ -62,7 +63,10 @@ public class FreeListPreloadWithBatchUpdatesTest extends GridCommonAbstractTest 
     private static final int HDR_SIZE = 8 + 32;
 
     /** */
-    private static final long DEF_REG_SIZE = 6 * 1024 * 1024 * 1024L;
+    private static final long DEF_REG_SIZE_INIT = 3400 * 1024 * 1024L;
+
+    /** */
+    private static final long DEF_REG_SIZE = 6144 * 1024 * 1024L;
 
     /** */
     private static final String DEF_CACHE_NAME = "some-cache";
@@ -73,15 +77,15 @@ public class FreeListPreloadWithBatchUpdatesTest extends GridCommonAbstractTest 
         return Arrays.asList(new Object[][]{
             {CacheAtomicityMode.ATOMIC, false},
             {CacheAtomicityMode.ATOMIC, true},
-//            {CacheAtomicityMode.TRANSACTIONAL, false},
-//            {CacheAtomicityMode.TRANSACTIONAL, true},
-//            {CacheAtomicityMode.TRANSACTIONAL_SNAPSHOT, false},
-//            {CacheAtomicityMode.TRANSACTIONAL_SNAPSHOT, true}
+            {CacheAtomicityMode.TRANSACTIONAL, false},
+            {CacheAtomicityMode.TRANSACTIONAL, true},
+            {CacheAtomicityMode.TRANSACTIONAL_SNAPSHOT, false},
+            {CacheAtomicityMode.TRANSACTIONAL_SNAPSHOT, true}
         });
     }
 
     /** */
-    @Parameterized.Parameter(0)
+    @Parameterized.Parameter()
     public CacheAtomicityMode cacheAtomicityMode;
 
     /** */
@@ -93,7 +97,7 @@ public class FreeListPreloadWithBatchUpdatesTest extends GridCommonAbstractTest 
         IgniteConfiguration cfg = super.getConfiguration(igniteInstanceName);
 
         DataRegionConfiguration def = new DataRegionConfiguration();
-        def.setInitialSize(3400 * 1024 * 1024L);
+        def.setInitialSize(DEF_REG_SIZE_INIT);
         def.setMaxSize(DEF_REG_SIZE);
         def.setPersistenceEnabled(persistence);
 
@@ -117,8 +121,6 @@ public class FreeListPreloadWithBatchUpdatesTest extends GridCommonAbstractTest 
     @Before
     public void before() throws Exception {
         cleanPersistenceDir();
-
-        System.setProperty(IGNITE_DATA_STORAGE_BATCH_PAGE_WRITE, "true");
     }
 
     /**
@@ -129,15 +131,13 @@ public class FreeListPreloadWithBatchUpdatesTest extends GridCommonAbstractTest 
         stopAllGrids();
 
         cleanPersistenceDir();
-
-        System.clearProperty(IGNITE_PDS_WAL_REBALANCE_THRESHOLD);
-        System.clearProperty(IGNITE_DATA_STORAGE_BATCH_PAGE_WRITE);
     }
 
     /**
      *
      */
     @Test
+    @WithSystemProperty(key = IGNITE_DATA_STORAGE_BATCH_PAGE_WRITE, value = "true")
     public void testBatchRebalance() throws Exception {
         Ignite node = startGrid(0);
 
@@ -148,16 +148,14 @@ public class FreeListPreloadWithBatchUpdatesTest extends GridCommonAbstractTest 
         node.createCache(ccfg());
 
         int cnt = 100_000;
-        int minSize = 0;
-        int maxSize = 2048;
-        int start = 0;
 
-        log.info("Loading " + cnt + " random entries per " + minSize + " - " + maxSize + " bytes.");
+        int minSize = 0;
+        int maxSize = 16384;
 
         Map<Integer, byte[]> srcMap = new HashMap<>();
 
-        for (int i = start; i < start + cnt; i++) {
-            int size = minSize + ThreadLocalRandom.current().nextInt(maxSize - minSize);
+        for (int i = 0; i < cnt; i++) {
+            int size = maxSize == minSize ? maxSize : minSize + ThreadLocalRandom.current().nextInt(maxSize - minSize);
 
             byte[] obj = new byte[size];
 
@@ -168,13 +166,7 @@ public class FreeListPreloadWithBatchUpdatesTest extends GridCommonAbstractTest 
             streamer.addData(srcMap);
         }
 
-        srcMap.put(1, new byte[65536]);
-
-        node.cache(DEF_CACHE_NAME).put(1, new byte[65536]);
-
-        log.info("Done");
-
-        IgniteCache cache = node.cache(DEF_CACHE_NAME);
+        log.info("Data loaded.");
 
         if (persistence)
             node.cluster().active(false);
@@ -191,15 +183,11 @@ public class FreeListPreloadWithBatchUpdatesTest extends GridCommonAbstractTest 
             node.cluster().setBaselineTopology(list);
         }
 
-        log.info("await rebalance");
+        log.info("Await rebalance.");
 
         awaitRebalance(node2, DEF_CACHE_NAME);
 
-        U.sleep(2_000);
-
         node.close();
-
-        log.info("Verification on node2");
 
         validateCacheEntries(node2.cache(DEF_CACHE_NAME), srcMap);
 
@@ -220,16 +208,16 @@ public class FreeListPreloadWithBatchUpdatesTest extends GridCommonAbstractTest 
      *
      */
     @Test
+    @WithSystemProperty(key = IGNITE_PDS_WAL_REBALANCE_THRESHOLD, value = "100")
+    @WithSystemProperty(key = IGNITE_DATA_STORAGE_BATCH_PAGE_WRITE, value = "true")
     public void testBatchHistoricalRebalance() throws Exception {
         if (!persistence)
             return;
 
         // TODO https://issues.apache.org/jira/browse/IGNITE-7384
-        // http://apache-ignite-developers.2346864.n4.nabble.com/Historical-rebalance-td38380.html
+        // TODO http://apache-ignite-developers.2346864.n4.nabble.com/Historical-rebalance-td38380.html
         if (cacheAtomicityMode == CacheAtomicityMode.TRANSACTIONAL_SNAPSHOT)
             return;
-
-        System.setProperty(IGNITE_PDS_WAL_REBALANCE_THRESHOLD, "100");
 
         Ignite node = startGrids(2);
 
@@ -244,7 +232,7 @@ public class FreeListPreloadWithBatchUpdatesTest extends GridCommonAbstractTest 
         Map<Integer, byte[]> srcMap = new HashMap<>();
 
         for (int i = 0; i < cnt; i++) {
-            byte[] obj = new byte[ThreadLocalRandom.current().nextInt(1024)];
+            byte[] obj = new byte[ThreadLocalRandom.current().nextInt(16384)];
 
             srcMap.put(i, obj);
         }
@@ -297,6 +285,7 @@ public class FreeListPreloadWithBatchUpdatesTest extends GridCommonAbstractTest 
     /** */
     @Test
     @Ignore
+    @WithSystemProperty(key = IGNITE_DATA_STORAGE_BATCH_PAGE_WRITE, value = "true")
     public void checkStreamer() throws Exception {
         Ignite node = startGrids(4);
 
@@ -342,7 +331,7 @@ public class FreeListPreloadWithBatchUpdatesTest extends GridCommonAbstractTest 
             }
         }, 60_000);
 
-        U.sleep(1000);
+        U.sleep(3000);
 
         assertTrue(ok);
     }
@@ -353,20 +342,16 @@ public class FreeListPreloadWithBatchUpdatesTest extends GridCommonAbstractTest 
      */
     @SuppressWarnings("unchecked")
     private void validateCacheEntries(IgniteCache cache, Map<?, byte[]> map) {
-        log.info("Cache validation: " + map.size());
+        int size = cache.size();
 
-        assertEquals(map.size(), cache.size());
+        assertEquals("Cache size mismatch.", map.size(), size);
+
+        log.info("Validation " + cache.getName() + ", size=" + size);
 
         for (Map.Entry<?, byte[]> e : map.entrySet()) {
-            String idx = "idx=" + e.getKey();
+            String idx = "key=" + e.getKey();
 
-            byte[] bytes = (byte[])cache.get(e.getKey());
-
-            assertNotNull(idx, bytes);
-
-            assertEquals(idx + ": length not equal", e.getValue().length, bytes.length);
-
-            assertArrayEquals(idx, e.getValue(), bytes);
+            assertArrayEquals(idx, e.getValue(), (byte[])cache.get(e.getKey()));
         }
     }
 
@@ -387,3 +372,5 @@ public class FreeListPreloadWithBatchUpdatesTest extends GridCommonAbstractTest 
             .setAtomicityMode(cacheAtomicityMode);
     }
 }
+
+

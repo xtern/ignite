@@ -355,14 +355,13 @@ public class CacheDataTree extends BPlusTree<CacheSearchRow, CacheDataRow> {
         CacheSearchRow lastSearchRow = null;
         KeyCacheObject newKey = null;
 
-        while (rowItr.hasNext() && cur.next()) {
+        while (cur.next()) {
             CacheDataRow oldRow = cur.get();
             KeyCacheObject oldKey = oldRow.key();
 
-            while (rowItr.hasNext() && (newKey == null || newKey.hashCode() <= oldKey.hashCode())) {
+            while (newKey == null || newKey.hashCode() <= oldKey.hashCode()) {
                 if (newKey != null && newKey.hashCode() == oldKey.hashCode()) {
                     while (newKey.hashCode() == oldKey.hashCode()) {
-
                         if (newKey.equals(oldKey))
                             batch.add(new T2<>(oldRow, lastSearchRow));
                         else
@@ -385,6 +384,9 @@ public class CacheDataTree extends BPlusTree<CacheSearchRow, CacheDataRow> {
                     lastSearchRow = rowItr.next();
                     newKey = lastSearchRow.key();
                 }
+
+                if (!rowItr.hasNext())
+                    break;
             }
         }
 

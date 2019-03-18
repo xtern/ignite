@@ -756,7 +756,7 @@ public abstract class AbstractFreeList<T extends Storable> extends PagesList imp
                 int written;
 
                 if (dataRows.size() == 1) {
-                    written = fragment ? row.size() - (rows.size() % maxPayloadSize) : 0;
+                    written = fragment ? row.size() - (row.size() % maxPayloadSize) : 0;
 
                     written = write(pageId, writeRows, initIo, row, written, FAIL_I, statHolder);
                 } else
