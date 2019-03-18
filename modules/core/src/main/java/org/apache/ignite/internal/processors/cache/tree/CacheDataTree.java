@@ -408,58 +408,6 @@ public class CacheDataTree extends BPlusTree<CacheSearchRow, CacheDataRow> {
             if (oper == OperationType.REMOVE)
                 remove(oldRow);
         }
-
-//        while (cur.next()) {
-//            T t = cur.get();
-//
-//
-//        }
-
-//        InvokeAll x = new InvokeAll(row, z, c);
-
-//        try {
-//            for (;;) {
-//                x.init();
-//
-//                Result res = invokeDown(x, x.rootId, 0L, 0L, x.rootLvl);
-//
-//                switch (res) {
-//                    case RETRY:
-//                    case RETRY_ROOT:
-//                        checkInterrupted();
-//
-//                        continue;
-//
-//                    default:
-//                        if (!x.isFinished()) {
-//                            res = x.tryFinish();
-//
-//                            if (res == RETRY || res == RETRY_ROOT) {
-//                                checkInterrupted();
-//
-//                                continue;
-//                            }
-//
-//                            assert x.isFinished(): res;
-//                        }
-//
-//                        return;
-//                }
-//            }
-//        }
-//        catch (UnregisteredClassException | UnregisteredBinaryTypeException e) {
-//            throw e;
-//        }
-//        catch (IgniteCheckedException e) {
-//            throw new IgniteCheckedException("Runtime failure on search row: " + row, e);
-//        }
-//        catch (RuntimeException | AssertionError e) {
-//            throw new CorruptedTreeException("Runtime failure on search row: " + row, e);
-//        }
-//        finally {
-//            x.releaseAll();
-//            checkDestroyed();
-//        }
     }
 
     /** {@inheritDoc} */
