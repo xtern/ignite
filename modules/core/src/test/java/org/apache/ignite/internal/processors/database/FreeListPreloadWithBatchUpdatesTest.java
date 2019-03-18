@@ -45,7 +45,6 @@ import org.apache.ignite.testframework.junits.WithSystemProperty;
 import org.apache.ignite.testframework.junits.common.GridCommonAbstractTest;
 import org.junit.After;
 import org.junit.Before;
-import org.junit.Ignore;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
@@ -282,39 +281,6 @@ public class FreeListPreloadWithBatchUpdatesTest extends GridCommonAbstractTest 
         validateCacheEntries(node2.cache(DEF_CACHE_NAME), srcMap);
     }
 
-    /** */
-    @Test
-    @Ignore
-    @WithSystemProperty(key = IGNITE_DATA_STORAGE_BATCH_PAGE_WRITE, value = "true")
-    public void checkStreamer() throws Exception {
-        Ignite node = startGrids(4);
-
-        node.cluster().active(true);
-
-        IgniteCache<String, byte[]> cache = node.createCache(ccfg(8, CacheMode.REPLICATED));
-
-        awaitPartitionMapExchange();
-
-        int cnt = 1024;
-
-        try (IgniteDataStreamer<String, byte[]> streamer = node.dataStreamer(DEF_CACHE_NAME)) {
-
-            for (int i = 0; i < cnt; i++)
-                streamer.addData(String.valueOf(i), new byte[128]);
-        }
-
-        log.info("Sleep");
-
-        U.sleep(5_000);
-
-        assert GridTestUtils.waitForCondition(() -> {
-            return cache.size() == cnt;
-        }, 10_000);
-
-        for (int i = 0; i < cnt; i++)
-            assertTrue(cache.get(String.valueOf(i)).length == 128);
-    }
-
     /**
      * @param node Ignite node.
      * @param name Cache name.
@@ -351,7 +317,7 @@ public class FreeListPreloadWithBatchUpdatesTest extends GridCommonAbstractTest 
         for (Map.Entry<?, byte[]> e : map.entrySet()) {
             String idx = "key=" + e.getKey();
 
-            assertArrayEquals(idx, e.getValue(), (byte[])cache.get(e.getKey()));
+            assertEquals(idx, e.getValue().length, ((byte[])cache.get(e.getKey())).length);
         }
     }
 

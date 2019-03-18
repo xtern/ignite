@@ -958,7 +958,7 @@ public class GridDhtPartitionDemander {
             batch.lock();
 
             try {
-                cctx.offheap().invokeAll(cctx, batch.keys(), batch.part(), batch.new UpdateClosure());
+                cctx.offheap().invokeAll(cctx, batch.keys(), batch.part(), batch.new BatchUpdateClosure());
             }
             finally {
                 batch.unlock();

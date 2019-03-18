@@ -98,7 +98,7 @@ import org.apache.ignite.internal.util.GridEmptyCloseableIterator;
 import org.apache.ignite.internal.util.GridLongList;
 import org.apache.ignite.internal.util.GridSpinBusyLock;
 import org.apache.ignite.internal.util.GridStripedLock;
-import org.apache.ignite.internal.util.IgniteTree.OperationType;
+import org.apache.ignite.internal.util.IgniteTree;
 import org.apache.ignite.internal.util.lang.GridCloseableIterator;
 import org.apache.ignite.internal.util.lang.GridCursor;
 import org.apache.ignite.internal.util.lang.GridIterator;
@@ -134,6 +134,8 @@ import static org.apache.ignite.internal.processors.cache.mvcc.MvccUtils.state;
 import static org.apache.ignite.internal.processors.cache.mvcc.MvccUtils.unexpectedStateException;
 import static org.apache.ignite.internal.processors.cache.persistence.GridCacheOffheapManager.EMPTY_CURSOR;
 import static org.apache.ignite.internal.processors.cache.persistence.tree.io.DataPageIO.MVCC_INFO_SIZE;
+import static org.apache.ignite.internal.util.IgniteTree.OperationType.NOOP;
+import static org.apache.ignite.internal.util.IgniteTree.OperationType.PUT;
 
 /**
  *
@@ -1708,8 +1710,8 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
 
                 dataTree.invokeAll(rows, CacheDataRowAdapter.RowData.NO_KEY, c);
 
-                for (T3<OperationType, CacheDataRow, CacheDataRow> tuple : c.result()) {
-                    OperationType opType = tuple.get1();
+                for (T3<IgniteTree.OperationType, CacheDataRow, CacheDataRow> tuple : c.result()) {
+                    IgniteTree.OperationType opType = tuple.get1();
                     CacheDataRow oldRow = tuple.get2();
                     CacheDataRow newRow = tuple.get3();
 
@@ -1971,7 +1973,7 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
 
                 invoke0(cctx, clo, clo);
 
-                return clo.operationType() == OperationType.PUT;
+                return clo.operationType() == PUT;
             }
             finally {
                 busyLock.leaveBusy();
@@ -3087,7 +3089,7 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
             /** */
             private CacheDataRow oldRow;
             /** */
-            private OperationType op;
+            private IgniteTree.OperationType op;
 
             /**
              * @param cctx Cache context.
@@ -3132,7 +3134,7 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
                 this.oldRow = oldRow;
 
                 if (oldRow == null) {
-                    op = OperationType.PUT;
+                    op = PUT;
 
                     int cacheId = cacheId();
 
@@ -3144,7 +3146,7 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
                     cacheId(cacheId);
                 }
                 else {
-                    op = OperationType.NOOP;
+                    op = NOOP;
 
                     if (oldRow.mvccTxState() != mvccTxState() ||
                         oldRow.newMvccCoordinatorVersion() != newMvccCoordinatorVersion() ||
@@ -3159,12 +3161,12 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
 
             /** {@inheritDoc} */
             @Override public CacheDataRow newRow() {
-                return op == OperationType.PUT ? this : null;
+                return op == PUT ? this : null;
             }
 
             /** {@inheritDoc} */
-            @Override public OperationType operationType() {
-                return op == null ? OperationType.NOOP : op;
+            @Override public IgniteTree.OperationType operationType() {
+                return op == null ? NOOP : op;
             }
         }
 
