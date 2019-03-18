@@ -248,7 +248,7 @@ public class IgniteCacheDatabaseSharedManager extends GridCacheSharedManagerAdap
             boolean persistenceEnabled = memPlcCfg.isPersistenceEnabled();
 
             CacheFreeListImpl freeList = new CacheFreeListImpl(0,
-                    cctx.igniteInstanceName(),
+                    memPlc.config().getName(),
                     memMetrics,
                     memPlc,
                     null,

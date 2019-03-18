@@ -17,6 +17,7 @@
 
 package org.apache.ignite.internal.processors.cache.persistence;
 
+import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -1967,7 +1968,7 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
 
             return delegate.mvccInitialValue(cctx, key, val, ver, expireTime, mvccVer, newMvccVer);
         }
-        
+
         /** {@inheritDoc} */
         @Override public boolean mvccApplyHistoryIfAbsent(
             GridCacheContext cctx,
@@ -2105,6 +2106,16 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
             CacheDataStore delegate = init0(false);
 
             delegate.invoke(cctx, key, c);
+        }
+
+        /** {@inheritDoc} */
+        @Override public void invokeAll(GridCacheContext cctx, Collection<KeyCacheObject> keys, OffheapInvokeAllClosure c)
+            throws IgniteCheckedException {
+            assert ctx.database().checkpointLockIsHeldByThread();
+
+            CacheDataStore delegate = init0(false);
+
+            delegate.invokeAll(cctx, keys, c);
         }
 
         /** {@inheritDoc} */
