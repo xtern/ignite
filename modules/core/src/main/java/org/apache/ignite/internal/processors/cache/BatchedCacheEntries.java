@@ -443,7 +443,7 @@ public class BatchedCacheEntries {
             if (!update)
                 return;
 
-            entry.finishPreload(val, expTime, ttl, ver, batch.topVer, drType, null, batch.preload);
+            entry.finishInitialUpdate(val, expTime, ttl, ver, batch.topVer, drType, null, batch.preload);
         }
 
         /** */

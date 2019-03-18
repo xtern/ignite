@@ -474,8 +474,8 @@ public class GridDhtPartitionDemander {
                 parts = fut.remaining.get(node.id());
 
                 U.log(log, "Prepared rebalancing [grp=" + grp.cacheOrGroupName()
-                    + ", mode=" + cfg.getRebalanceMode() + ", supplier=" + node.id() + ", partitionsCount=" + parts.size()
-                    + ", topVer=" + fut.topologyVersion() + ", parallelism=" + totalStripes + "]");
+                        + ", mode=" + cfg.getRebalanceMode() + ", supplier=" + node.id() + ", partitionsCount=" + parts.size()
+                        + ", topVer=" + fut.topologyVersion() + ", parallelism=" + totalStripes + "]");
             }
 
             int stripes = totalStripes;

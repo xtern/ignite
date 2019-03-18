@@ -1601,8 +1601,6 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
          * @param dataRow New row.
          * @return {@code True} if it is possible to update old row data.
          * @throws IgniteCheckedException If failed.
-         *
-         * todo think about this meth
          */
         private boolean canUpdateOldRow(GridCacheContext cctx, @Nullable CacheDataRow oldRow, DataRow dataRow)
             throws IgniteCheckedException {

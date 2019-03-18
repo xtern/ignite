@@ -332,23 +332,28 @@ public class CacheDataTree extends BPlusTree<CacheSearchRow, CacheDataRow> {
         return rowStore;
     }
 
-    /** {@inheritDoc} */
-    @Override public void invokeAll(List<CacheSearchRow> rows, Object z1, InvokeAllClosure<CacheDataRow, CacheSearchRow> c) throws IgniteCheckedException {
+    /**
+     * todo fake implementation only for checking that closure is working properly with preloader.
+     * @param keys Keys.
+     * @param x Implementation specific argument, {@code null} always means that we need a full detached data row.
+     * @param c Closure.
+     * @throws IgniteCheckedException If failed.
+     */
+    @Override public void invokeAll(List<CacheSearchRow> keys, Object x, InvokeAllClosure<CacheDataRow, CacheSearchRow> c) throws IgniteCheckedException {
         checkDestroyed();
 
-        int cnt = rows.size();
+        int cnt = keys.size();
 
         assert cnt > 0 : cnt;
 
-        // todo No algorithm this is draft implementation only for check that closure is working properly
-        CacheSearchRow lower = rows.get(0);
-        CacheSearchRow upper = rows.get(cnt - 1);
+        CacheSearchRow lower = keys.get(0);
+        CacheSearchRow upper = keys.get(cnt - 1);
 
         List<T2<CacheDataRow, CacheSearchRow>> batch = new ArrayList<>(cnt);
 
-        Iterator<CacheSearchRow> rowItr = rows.iterator();
+        Iterator<CacheSearchRow> rowItr = keys.iterator();
 
-        assert lower.key().hashCode() <= upper.key().hashCode() : "lower=" + lower.key().hashCode() + ", upper=" + upper.key().hashCode();
+        assert lower.key().hashCode() <= upper.key().hashCode() : "Keys must be lower=" + lower.key().hashCode() + ", upper=" + upper.key().hashCode();
 
         GridCursor<CacheDataRow> cur = find(lower, upper, CacheDataRowAdapter.RowData.FULL);
 
@@ -393,10 +398,8 @@ public class CacheDataTree extends BPlusTree<CacheSearchRow, CacheDataRow> {
         while (rowItr.hasNext())
             batch.add(new T2<>(null, rowItr.next()));
 
-        // todo call on insertion point
         c.call(batch);
 
-        // todo
         for (T3<OperationType, CacheDataRow, CacheDataRow> t3 : c.result()) {
             OperationType oper = t3.get1();
             CacheDataRow oldRow = t3.get2();

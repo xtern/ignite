@@ -1822,8 +1822,8 @@ public abstract class BPlusTree<L, T extends L> extends DataStructure implements
         }
     }
 
-    @Override public void invokeAll(List<L> rows, Object z, InvokeAllClosure<T, L> c) throws IgniteCheckedException {
-        // todo
+    /** {@inheritDoc} */
+    @Override public void invokeAll(List<L> keys, Object z, InvokeAllClosure<T, L> c) throws IgniteCheckedException {
         throw new UnsupportedOperationException("Not implemented yet");
     }
 

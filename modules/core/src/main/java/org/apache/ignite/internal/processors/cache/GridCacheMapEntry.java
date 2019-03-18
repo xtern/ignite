@@ -3504,10 +3504,21 @@ public abstract class GridCacheMapEntry extends GridMetadataAwareAdapter impleme
         }
     }
 
-    /** {@inheritDoc} */
-    @Override public void finishPreload(
+    /**
+     * todo explain this and remove code duplication
+     * @param val New value.
+     * @param expireTime Expiration time.
+     * @param ttl Time to live.
+     * @param ver Version to use.
+     * @param topVer Topology version.
+     * @param drType DR type.
+     * @param mvccVer Mvcc version.
+     * @param preload Flag indicating whether entry is being preloaded.
+     * @throws IgniteCheckedException In case of error.
+     */
+    protected void finishInitialUpdate(
         @Nullable CacheObject val,
-        long expTime,
+        long expireTime,
         long ttl,
         GridCacheVersion ver,
         AffinityTopologyVersion topVer,
@@ -3518,7 +3529,7 @@ public abstract class GridCacheMapEntry extends GridMetadataAwareAdapter impleme
         boolean fromStore = false;
         boolean walEnabled = !cctx.isNear() && cctx.group().persistenceEnabled() && cctx.group().walEnabled();
 
-        update(val, expTime, ttl, ver, true);
+        update(val, expireTime, ttl, ver, true);
 
         boolean skipQryNtf = false;
 
@@ -3545,7 +3556,7 @@ public abstract class GridCacheMapEntry extends GridMetadataAwareAdapter impleme
                     val == null ? DELETE : GridCacheOperation.CREATE,
                     null,
                     ver,
-                    expTime,
+                    expireTime,
                     partition(),
                     updateCntr,
                     mvccVer == null ? MvccUtils.INITIAL_VERSION : mvccVer
@@ -3558,7 +3569,7 @@ public abstract class GridCacheMapEntry extends GridMetadataAwareAdapter impleme
                     val == null ? DELETE : GridCacheOperation.CREATE,
                     null,
                     ver,
-                    expTime,
+                    expireTime,
                     partition(),
                     updateCntr
                 )));

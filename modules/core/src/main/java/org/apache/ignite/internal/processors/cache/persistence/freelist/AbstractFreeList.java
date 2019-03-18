@@ -537,14 +537,7 @@ public abstract class AbstractFreeList<T extends Storable> extends PagesList imp
                 log.info("FreeList [name=" + name +
                     ", buckets=" + BUCKETS +
                     ", dataPages=" + dataPages +
-                    ", reusePages=" + bucketsSize[REUSE_BUCKET].longValue() + "" +
-                    ", bucket[0]=" + bucketsSize[0] +
-                    ", bucket[1]=" + bucketsSize[1] +
-                    ", bucket[2]=" + bucketsSize[2] +
-                    ", bucket[3]=" + bucketsSize[3] +
-                    ", bucket[4]=" + bucketsSize[4] +
-                    ", bucket[5]=" + bucketsSize[5] +
-                    "]");
+                    ", reusePages=" + bucketsSize[REUSE_BUCKET].longValue() + "]");
         }
     }
 
@@ -837,7 +830,7 @@ public abstract class AbstractFreeList<T extends Storable> extends PagesList imp
 
         long nextLink = write(pageId, rmvRow, bag, itemId, FAIL_L, statHolder);
 
-        assert nextLink != FAIL_L : pageId; // Can't fail here.
+        assert nextLink != FAIL_L; // Can't fail here.
 
         while (nextLink != 0L) {
             memMetrics.decrementLargeEntriesPages();
