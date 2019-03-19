@@ -41,6 +41,7 @@ import org.apache.ignite.internal.util.typedef.internal.CU;
 import org.jetbrains.annotations.Nullable;
 
 import static org.apache.ignite.internal.processors.cache.GridCacheMapEntry.ATOMIC_VER_COMPARATOR;
+import static org.apache.ignite.internal.processors.cache.GridCacheMapEntry.log;
 import static org.apache.ignite.internal.util.IgniteTree.OperationType.NOOP;
 import static org.apache.ignite.internal.util.IgniteTree.OperationType.PUT;
 import static org.apache.ignite.internal.util.IgniteTree.OperationType.REMOVE;
@@ -331,6 +332,10 @@ public class CacheMapEntries {
             }
 
             if (!newRows.isEmpty()) {
+                cctx.shared().database().ensureFreeSpace(cctx.dataRegion());
+
+                log.info(">xxx> rows cnt = " + newRows.size());
+
                 cctx.offheap().dataStore(batch.part()).rowStore().addRows(newRows, cctx.group().statisticsHolderData());
 
                 if (cacheId == CU.UNDEFINED_CACHE_ID) {

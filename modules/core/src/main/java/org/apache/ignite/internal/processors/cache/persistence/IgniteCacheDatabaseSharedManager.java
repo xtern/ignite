@@ -955,6 +955,8 @@ public class IgniteCacheDatabaseSharedManager extends GridCacheSharedManagerAdap
 
         CacheFreeListImpl freeListImpl = freeListMap.get(plcCfg.getName());
 
+        log.info("loaded pages: " + pageMem.loadedPages());
+
         for (;;) {
             long allocatedPagesCnt = pageMem.loadedPages();
 

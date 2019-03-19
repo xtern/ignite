@@ -92,7 +92,7 @@ public class GridDhtPartitionDemander {
     private static final int BATCH_PRELOAD_THRESHOLD = 5;
 
     /** */
-    private static final int CHECKPOINT_THRESHOLD = 200;
+    private static final int CHECKPOINT_THRESHOLD = 50;
 
     /** */
     private static final boolean batchPageWriteEnabled =
