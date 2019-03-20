@@ -3351,8 +3351,6 @@ public abstract class GridCacheMapEntry extends GridMetadataAwareAdapter impleme
             };
 
             if (unswapped) {
-                assert false : key;
-
                 update = p.apply(null);
 
                 if (update) {
@@ -3520,7 +3518,7 @@ public abstract class GridCacheMapEntry extends GridMetadataAwareAdapter impleme
                 this.isInternal() || !this.context().userCache(),
                 this.partition(),
                 true,
-                true,
+                preload,
                 updateCntr,
                 null,
                 topVer);
