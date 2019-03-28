@@ -1688,14 +1688,14 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
 
                 dataTree.invokeAll(rows, CacheDataRowAdapter.RowData.NO_KEY, c);
 
-                for (T3<IgniteTree.OperationType, CacheDataRow, CacheDataRow> tuple : c.result()) {
-                    IgniteTree.OperationType opType = tuple.get1();
-                    CacheDataRow oldRow = tuple.get2();
-                    CacheDataRow newRow = tuple.get3();
+                for (T3<IgniteTree.OperationType, CacheDataRow, CacheDataRow> finalOp : c.result()) {
+                    IgniteTree.OperationType opType = finalOp.get1();
+                    CacheDataRow oldRow = finalOp.get2();
+                    CacheDataRow newRow = finalOp.get3();
 
                     switch (opType) {
                         case PUT: {
-                            assert newRow != null : tuple;
+                            assert newRow != null : finalOp;
 
                             finishUpdate(cctx, newRow, oldRow);
 
@@ -1715,8 +1715,6 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
                             assert false : opType;
                     }
                 }
-
-
             }
             finally {
                 busyLock.leaveBusy();
