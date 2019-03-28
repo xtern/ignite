@@ -332,17 +332,18 @@ public class CacheDataTree extends BPlusTree<CacheSearchRow, CacheDataRow> {
     }
 
     /**
-     * todo workaround (fake) implementation only for checking that closure is working properly with preloader.
-     * todo rework
+     * todo Stub implementation. After implementing BPlusTree.invokeAll(...), this stub will be removed.
      */
     @Override public void invokeAll(List<CacheSearchRow> keys, Object x, InvokeAllClosure<CacheDataRow> c)
         throws IgniteCheckedException {
         checkDestroyed();
 
-        List<CacheDataRow> rows = new ArrayList<>(keys.size());
+        int keysCnt = keys.size();
+
+        List<CacheDataRow> rows = new ArrayList<>(keysCnt);
 
         if (c.fastpath()) {
-            GridCursor<CacheDataRow> cur = find(keys.get(0), keys.get(keys.size() - 1), CacheDataRowAdapter.RowData.FULL);
+            GridCursor<CacheDataRow> cur = find(keys.get(0), keys.get(keysCnt - 1), CacheDataRowAdapter.RowData.FULL);
             Iterator<CacheSearchRow> keyItr = keys.iterator();
 
             CacheSearchRow lastRow = null;
@@ -408,9 +409,9 @@ public class CacheDataTree extends BPlusTree<CacheSearchRow, CacheDataRow> {
             OperationType oper = t3.get1();
 
             if (oper == OperationType.PUT)
-                put(t3.get3());
+                putx(t3.get3());
             else if (oper == OperationType.REMOVE)
-                remove(t3.get2()); // old row
+                removex(t3.get2()); // old row
         }
     }
 
