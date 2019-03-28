@@ -18,6 +18,7 @@
 package org.apache.ignite.internal.processors.cache.persistence.tree.util;
 
 import java.nio.ByteBuffer;
+import java.util.List;
 import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.internal.pagemem.PageMemory;
 import org.apache.ignite.internal.pagemem.PageSupport;
@@ -69,6 +70,32 @@ public abstract class PageHandler<X, R> {
         IoStatisticsHolder statHolder
     )
         throws IgniteCheckedException;
+
+    /**
+     * @param cacheId Cache ID.
+     * @param pageId Page ID.
+     * @param page Page absolute pointer.
+     * @param pageAddr Page address.
+     * @param io IO.
+     * @param walPlc Full page WAL record policy.
+     * @param args Arguments.
+     * @param statHolder Statistics holder to track IO operations.
+     * @return Result.
+     * @throws IgniteCheckedException If failed.
+     */
+    public R runAll(
+        int cacheId,
+        long pageId,
+        long page,
+        long pageAddr,
+        PageIO io,
+        Boolean walPlc,
+        List<X> args,
+        int intArg,
+        IoStatisticsHolder statHolder
+    ) throws IgniteCheckedException {
+        throw new UnsupportedOperationException();
+    }
 
     /**
      * @param cacheId Cache ID.
@@ -299,6 +326,75 @@ public abstract class PageHandler<X, R> {
                 assert PageIO.getCrc(pageAddr) == 0; //TODO GG-11480
 
                 if (releaseAfterWrite = h.releaseAfterWrite(grpId, pageId, page, pageAddr, arg, intArg))
+                    writeUnlock(pageMem, grpId, pageId, page, pageAddr, lsnr, walPlc, ok);
+            }
+        }
+        finally {
+            if (releaseAfterWrite)
+                pageMem.releasePage(grpId, pageId, page);
+        }
+    }
+
+    /**
+     * @param pageMem Page memory.
+     * @param grpId Group ID.
+     * @param pageId Page ID.
+     * @param lsnr Lock listener.
+     * @param h Handler.
+     * @param init IO for new page initialization or {@code null} if it is an existing page.
+     * @param wal Write ahead log.
+     * @param walPlc Full page WAL record policy.
+     * @param args Argument.
+     * @param lockFailed Result in case of lock failure due to page recycling.
+     * @param statHolder Statistics holder to track IO operations.
+     * @return Handler result.
+     * @throws IgniteCheckedException If failed.
+     */
+    public static <X, R> R writePageBatch(
+        PageMemory pageMem,
+        int grpId,
+        final long pageId,
+        PageLockListener lsnr,
+        PageHandler<X, R> h,
+        PageIO init,
+        IgniteWriteAheadLogManager wal,
+        Boolean walPlc,
+        List<X> args,
+        int intArg,
+        R lockFailed,
+        IoStatisticsHolder statHolder
+    ) throws IgniteCheckedException {
+        boolean releaseAfterWrite = true;
+
+        long page = pageMem.acquirePage(grpId, pageId, statHolder);
+
+        try {
+            long pageAddr = writeLock(pageMem, grpId, pageId, page, lsnr, false);
+
+            if (pageAddr == 0L)
+                return lockFailed;
+
+            boolean ok = false;
+
+            try {
+                if (init != null) {
+                    // It is a new page and we have to initialize it.
+                    doInitPage(pageMem, grpId, pageId, page, pageAddr, init, wal);
+                    walPlc = FALSE;
+                }
+                else
+                    init = PageIO.getPageIO(pageAddr);
+
+                R res = h.runAll(grpId, pageId, page, pageAddr, init, walPlc, args, intArg, statHolder);
+
+                ok = true;
+
+                return res;
+            }
+            finally {
+                assert PageIO.getCrc(pageAddr) == 0; //TODO GG-11480
+
+                if (releaseAfterWrite = h.releaseAfterWrite(grpId, pageId, page, pageAddr, null, 0))
                     writeUnlock(pageMem, grpId, pageId, page, pageAddr, lsnr, walPlc, ok);
             }
         }
