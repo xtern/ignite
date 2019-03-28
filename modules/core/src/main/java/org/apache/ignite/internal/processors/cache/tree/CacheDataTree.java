@@ -17,6 +17,9 @@
 
 package org.apache.ignite.internal.processors.cache.tree;
 
+import java.util.ArrayList;
+import java.util.Iterator;
+import java.util.List;
 import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.internal.pagemem.PageUtils;
 import org.apache.ignite.internal.pagemem.store.PageStore;
@@ -45,6 +48,7 @@ import org.apache.ignite.internal.processors.cache.tree.mvcc.search.MvccDataPage
 import org.apache.ignite.internal.stat.IoStatisticsHolder;
 import org.apache.ignite.internal.util.GridUnsafe;
 import org.apache.ignite.internal.util.lang.GridCursor;
+import org.apache.ignite.internal.util.typedef.T3;
 import org.apache.ignite.internal.util.typedef.internal.CU;
 
 import static java.lang.Boolean.FALSE;
@@ -325,6 +329,89 @@ public class CacheDataTree extends BPlusTree<CacheSearchRow, CacheDataRow> {
      */
     public CacheDataRowStore rowStore() {
         return rowStore;
+    }
+
+    /**
+     * todo workaround (fake) implementation only for checking that closure is working properly with preloader.
+     * todo rework
+     */
+    @Override public void invokeAll(List<CacheSearchRow> keys, Object x, InvokeAllClosure<CacheDataRow> c)
+        throws IgniteCheckedException {
+        checkDestroyed();
+
+        List<CacheDataRow> rows = new ArrayList<>(keys.size());
+
+        if (c.fastpath()) {
+            GridCursor<CacheDataRow> cur = find(keys.get(0), keys.get(keys.size() - 1), CacheDataRowAdapter.RowData.FULL);
+            Iterator<CacheSearchRow> keyItr = keys.iterator();
+
+            CacheSearchRow lastRow = null;
+            CacheSearchRow row = null;
+            KeyCacheObject key = null;
+
+            CacheDataRow oldRow = null;
+            KeyCacheObject oldKey = null;
+
+            while (cur.next()) {
+                oldRow = cur.get();
+                oldKey = oldRow.key();
+
+                while (key == null || key.hashCode() <= oldKey.hashCode()) {
+                    if (key != null && key.hashCode() == oldKey.hashCode()) {
+                        while (key.hashCode() == oldKey.hashCode()) {
+                            // todo test collision resolution
+                            rows.add(key.equals(oldKey) ? oldRow : null);
+
+                            lastRow = null;
+
+                            if (!keyItr.hasNext())
+                                break;
+
+                            lastRow = row = keyItr.next();
+                            key = row.key();
+                        }
+                    }
+                    else {
+                        if (row != null)
+                            rows.add(null);
+
+                        lastRow = null;
+
+                        if (keyItr.hasNext()) {
+                            lastRow = row = keyItr.next();
+                            key = lastRow.key();
+                        }
+                    }
+
+                    if (!keyItr.hasNext())
+                        break;
+                }
+            }
+
+            if (lastRow != null)
+                rows.add(key.equals(oldKey) ? oldRow : null);
+
+            for (; keyItr.hasNext(); keyItr.next())
+                rows.add(null);
+        } else {
+            for (CacheSearchRow row : keys) {
+                // todo NO_KEY
+                CacheDataRow oldRow = findOne(row, null, CacheDataRowAdapter.RowData.FULL);
+
+                rows.add(oldRow);
+            }
+        }
+
+        c.call(rows);
+
+        for (T3<OperationType, CacheDataRow, CacheDataRow> t3 : c.result()) {
+            OperationType oper = t3.get1();
+
+            if (oper == OperationType.PUT)
+                put(t3.get3());
+            else if (oper == OperationType.REMOVE)
+                remove(t3.get2()); // old row
+        }
     }
 
     /** {@inheritDoc} */
