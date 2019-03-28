@@ -17,8 +17,11 @@
 
 package org.apache.ignite.internal.util;
 
+import java.util.Collection;
+import java.util.List;
 import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.internal.util.lang.GridCursor;
+import org.apache.ignite.internal.util.typedef.T3;
 import org.jetbrains.annotations.Nullable;
 
 /**
@@ -41,6 +44,14 @@ public interface IgniteTree<L, T> {
      * @throws IgniteCheckedException If failed.
      */
     public void invoke(L key, Object x, InvokeClosure<T> c) throws IgniteCheckedException;
+
+    /**
+     * @param keys Keys.
+     * @param x Implementation specific argument, {@code null} always means that we need a full detached data row.
+     * @param c Closure.
+     * @throws IgniteCheckedException If failed.
+     */
+    public void invokeAll(List<L> keys, Object x, InvokeAllClosure<T> c) throws IgniteCheckedException;
 
     /**
      * Returns the value to which the specified key is mapped, or {@code null} if this tree contains no mapping for the
@@ -128,6 +139,31 @@ public interface IgniteTree<L, T> {
          *      be know and this method can not return {@code null}.
          */
         OperationType operationType();
+    }
+
+    /**
+     *
+     */
+    interface InvokeAllClosure<T> {
+        /**
+         *
+         * @param rows Found/not found data rows.
+         * @throws IgniteCheckedException If failed.
+         */
+        void call(Collection<T> rows) throws IgniteCheckedException;
+
+        /**
+         *
+         * @return List of final actions: operation, old row, new row.
+         */
+        Collection<T3<OperationType, T, T>> result();
+
+        /**
+         * @return Fast path flag.
+         * @deprecated Workaround to select B+ tree search strategy, should be removed in final implementation.
+         */
+        @Deprecated
+        boolean fastpath();
     }
 
     /**
