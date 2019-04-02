@@ -16,10 +16,8 @@
  */
 package org.apache.ignite.internal.processors.database;
 
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ThreadLocalRandom;
 import org.apache.ignite.Ignite;
@@ -28,19 +26,12 @@ import org.apache.ignite.IgniteDataStreamer;
 import org.apache.ignite.cache.CacheAtomicityMode;
 import org.apache.ignite.cache.CacheMode;
 import org.apache.ignite.cache.affinity.rendezvous.RendezvousAffinityFunction;
-import org.apache.ignite.cluster.BaselineNode;
 import org.apache.ignite.configuration.CacheConfiguration;
 import org.apache.ignite.configuration.DataRegionConfiguration;
 import org.apache.ignite.configuration.DataStorageConfiguration;
 import org.apache.ignite.configuration.IgniteConfiguration;
 import org.apache.ignite.configuration.WALMode;
 import org.apache.ignite.internal.IgniteEx;
-import org.apache.ignite.internal.IgniteInterruptedCheckedException;
-import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtLocalPartition;
-import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtPartitionState;
-import org.apache.ignite.internal.util.typedef.PA;
-import org.apache.ignite.internal.util.typedef.internal.U;
-import org.apache.ignite.testframework.GridTestUtils;
 import org.apache.ignite.testframework.junits.WithSystemProperty;
 import org.apache.ignite.testframework.junits.common.GridCommonAbstractTest;
 import org.junit.After;
@@ -49,6 +40,7 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
+import static org.apache.ignite.IgniteSystemProperties.IGNITE_BASELINE_AUTO_ADJUST_ENABLED;
 import static org.apache.ignite.IgniteSystemProperties.IGNITE_DATA_STORAGE_BATCH_PAGE_WRITE;
 import static org.apache.ignite.IgniteSystemProperties.IGNITE_PDS_WAL_REBALANCE_THRESHOLD;
 import static org.apache.ignite.configuration.DataStorageConfiguration.DFLT_PAGE_SIZE;
@@ -120,6 +112,11 @@ public class FreeListPreloadWithBatchUpdatesTest extends GridCommonAbstractTest 
 
         cfg.setDataStorageConfiguration(storeCfg);
 
+        cfg.setCacheConfiguration(new CacheConfiguration(DEF_CACHE_NAME)
+            .setAffinity(new RendezvousAffinityFunction(false, 1))
+            .setCacheMode(CacheMode.REPLICATED)
+            .setAtomicityMode(cacheAtomicityMode));
+
         return cfg;
     }
 
@@ -142,20 +139,18 @@ public class FreeListPreloadWithBatchUpdatesTest extends GridCommonAbstractTest 
     }
 
     /**
-     *
+     * @throws Exception If failed.
      */
     @Test
     @WithSystemProperty(key = IGNITE_DATA_STORAGE_BATCH_PAGE_WRITE, value = "true")
+    @WithSystemProperty(key = IGNITE_PDS_WAL_REBALANCE_THRESHOLD, value = "100")
+    @WithSystemProperty(key = IGNITE_BASELINE_AUTO_ADJUST_ENABLED, value = "false")
     public void testBatchRebalance() throws Exception {
-        Ignite node = startGrid(0);
+        Ignite node1 = startGrid(0);
 
-        node.cluster().active(true);
+        node1.cluster().active(true);
 
-        node.cluster().baselineAutoAdjustEnabled(false);
-
-        node.createCache(ccfg());
-
-        int cnt = 100_000;
+        int cnt = 50_000;
 
         int minSize = 0;
         int maxSize = 16384;
@@ -170,155 +165,85 @@ public class FreeListPreloadWithBatchUpdatesTest extends GridCommonAbstractTest 
             srcMap.put(i, obj);
         }
 
-        try (IgniteDataStreamer<Integer, byte[]> streamer = node.dataStreamer(DEF_CACHE_NAME)) {
+        try (IgniteDataStreamer<Integer, byte[]> streamer = node1.dataStreamer(DEF_CACHE_NAME)) {
             streamer.addData(srcMap);
         }
 
         log.info("Data loaded.");
 
         if (persistence)
-            node.cluster().active(false);
+            node1.cluster().active(false);
 
         final IgniteEx node2 = startGrid(1);
 
         if (persistence) {
-            List<BaselineNode> list = new ArrayList<>(node.cluster().currentBaselineTopology());
+            node1.cluster().active(true);
 
-            list.add(node2.localNode());
-
-            node.cluster().active(true);
-
-            node.cluster().setBaselineTopology(list);
+            node1.cluster().setBaselineTopology(node1.cluster().forServers().nodes());
         }
 
         log.info("Await rebalance.");
 
-        awaitRebalance(node2, DEF_CACHE_NAME);
+        awaitPartitionMapExchange();
 
-        node.close();
+        if (persistence)
+            forceCheckpoint(node1);
 
-        validateCacheEntries(node2.cache(DEF_CACHE_NAME), srcMap);
+        node1.close();
 
+        IgniteCache<Object, Object> cache = node2.cache(DEF_CACHE_NAME);
+
+        validateCacheEntries(cache, srcMap);
+
+        // Check WAL rebalance.
         if (persistence) {
-            node2.close();
+            log.info("Updating values on node #1.");
 
-            Ignite ignite = startGrid(1);
+            // Update existing extries.
+            for (int i = 100; i < 5_000; i++) {
+                if (i % 3 == 0) {
+                    cache.remove(i);
 
-            ignite.cluster().active(true);
+                    srcMap.remove(i);
+                }
+                else {
+                    byte[] bytes = new byte[ThreadLocalRandom.current().nextInt(maxSize)];
 
-            log.info("Validate entries after restart");
+                    Arrays.fill(bytes, (byte)1);
 
-            validateCacheEntries(ignite.cache(DEF_CACHE_NAME), srcMap);
-        }
-    }
-
-    /**
-     *
-     */
-    @Test
-    @WithSystemProperty(key = IGNITE_PDS_WAL_REBALANCE_THRESHOLD, value = "100")
-    @WithSystemProperty(key = IGNITE_DATA_STORAGE_BATCH_PAGE_WRITE, value = "true")
-    public void testBatchHistoricalRebalance() throws Exception {
-        if (!persistence)
-            return;
-
-        // TODO https://issues.apache.org/jira/browse/IGNITE-7384
-        // TODO http://apache-ignite-developers.2346864.n4.nabble.com/Historical-rebalance-td38380.html
-        if (cacheAtomicityMode == CacheAtomicityMode.TRANSACTIONAL_SNAPSHOT)
-            return;
-
-        Ignite node = startGrids(2);
-
-        node.cluster().active(true);
-
-        IgniteCache<Integer, byte[]> cache = node.createCache(ccfg());
-
-        int cnt = 10_000;
-
-        log.info("Loading " + cnt + " random entries.");
-
-        Map<Integer, byte[]> srcMap = new HashMap<>();
-
-        for (int i = 0; i < cnt; i++) {
-            byte[] obj = new byte[ThreadLocalRandom.current().nextInt(16384)];
-
-            if (i > 0 && i < 1000 && i % 37 == 0)
-                continue;
-
-            srcMap.put(i, obj);
-        }
-
-        try (IgniteDataStreamer<Integer, byte[]> streamer = node.dataStreamer(DEF_CACHE_NAME)) {
-            streamer.addData(srcMap);
-        }
-
-        forceCheckpoint();
-
-        log.info("Stopping node #2.");
-
-        grid(1).close();
-
-        log.info("Updating values on node #1.");
-
-        for (int i = 100; i < 2000; i++) {
-            if (i % 3 == 0) {
-                cache.remove(i);
-
-                srcMap.remove(i);
+                    srcMap.put(i, bytes);
+                    cache.put(i, bytes);
+                }
             }
-            else {
-                byte[] bytes = new byte[ThreadLocalRandom.current().nextInt(16384)];
 
-                Arrays.fill(bytes, (byte)1);
+            // New entries.
+            for (int i = cnt; i < cnt + 1_000; i++) {
+                byte[] bytes = new byte[ThreadLocalRandom.current().nextInt(maxSize)];
 
                 srcMap.put(i, bytes);
                 cache.put(i, bytes);
             }
+
+            forceCheckpoint(node2);
+
+            log.info("Starting node #1");
+
+            node1 = startGrid(0);
+
+            node1.cluster().active(true);
+
+            node1.cluster().setBaselineTopology(node1.cluster().forServers().nodes());
+
+            log.info("Await rebalance on node #1.");
+
+            awaitPartitionMapExchange();
+
+            log.info("Stop node #2.");
+
+            node2.close();
+
+            validateCacheEntries(node1.cache(DEF_CACHE_NAME), srcMap);
         }
-
-        for (int i = 10_000; i < 11_000; i++) {
-            byte[] bytes = new byte[ThreadLocalRandom.current().nextInt(16384)];
-
-            srcMap.put(i, bytes);
-            cache.put(i, bytes);
-        }
-
-        forceCheckpoint();
-
-        log.info("Starting node #2.");
-
-        IgniteEx node2 = startGrid(1);
-
-        log.info("Await rebalance on node #2.");
-
-        awaitRebalance(node2, DEF_CACHE_NAME);
-
-        log.info("Stop node #1.");
-
-        node.close();
-
-        validateCacheEntries(node2.cache(DEF_CACHE_NAME), srcMap);
-    }
-
-    /**
-     * @param node Ignite node.
-     * @param name Cache name.
-     */
-    private void awaitRebalance(IgniteEx node, String name) throws IgniteInterruptedCheckedException {
-        boolean ok = GridTestUtils.waitForCondition(new PA() {
-            @Override public boolean apply() {
-                for ( GridDhtLocalPartition part : node.context().cache().cache(name).context().group().topology().localPartitions()) {
-                    if (part.state() != GridDhtPartitionState.OWNING)
-                        return false;
-                }
-
-                return true;
-            }
-        }, 60_000);
-
-        U.sleep(3000);
-
-        assertTrue(ok);
     }
 
     /**
@@ -338,22 +263,5 @@ public class FreeListPreloadWithBatchUpdatesTest extends GridCommonAbstractTest 
 
             assertEquals(idx, e.getValue().length, ((byte[])cache.get(e.getKey())).length);
         }
-    }
-
-    /**
-     * @return Cache configuration.
-     */
-    private <K, V> CacheConfiguration<K, V> ccfg() {
-        return ccfg(1, CacheMode.REPLICATED);
-    }
-
-    /**
-     * @return Cache configuration.
-     */
-    private <K, V> CacheConfiguration<K, V> ccfg(int parts, CacheMode mode) {
-        return new CacheConfiguration<K, V>(DEF_CACHE_NAME)
-            .setAffinity(new RendezvousAffinityFunction(false, parts))
-            .setCacheMode(mode)
-            .setAtomicityMode(cacheAtomicityMode);
     }
 }
