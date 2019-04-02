@@ -48,7 +48,6 @@ import org.apache.ignite.internal.util.lang.GridCursor;
 import org.apache.ignite.internal.util.lang.GridIterator;
 import org.apache.ignite.internal.util.lang.IgniteInClosure2X;
 import org.apache.ignite.lang.IgniteBiTuple;
-import org.apache.ignite.lang.IgnitePredicate;
 import org.jetbrains.annotations.Nullable;
 
 /**
@@ -192,16 +191,16 @@ public interface IgniteCacheOffheapManager {
 
     /**
      * @param cctx Cache context.
-     * @param keys Keys.
      * @param part Partition.
-     * @param c Tree batch update closure.
+     * @param entries Entries.
+     * @param sorted Sorted flag.
      * @throws IgniteCheckedException If failed.
      */
-    public void invokeAll(
+    public void updateAll(
         GridCacheContext cctx,
-        Collection<KeyCacheObject> keys,
         GridDhtLocalPartition part,
-        OffheapInvokeAllClosure c
+        Collection<CacheMapEntryInfo> entries,
+        boolean sorted
     ) throws IgniteCheckedException;
 
     /**
@@ -598,13 +597,6 @@ public interface IgniteCacheOffheapManager {
     /**
      *
      */
-    interface OffheapInvokeAllClosure extends IgniteTree.InvokeAllClosure<CacheDataRow> {
-//        boolean preload();
-    }
-
-    /**
-     *
-     */
     interface CacheDataStore {
         /**
          * @return Partition ID.
@@ -740,6 +732,19 @@ public interface IgniteCacheOffheapManager {
             GridCacheVersion ver,
             long expireTime,
             @Nullable CacheDataRow oldRow) throws IgniteCheckedException;
+
+
+        /**
+         * @param cctx Cache context.
+         * @param entries Entries.
+         * @param sorted Sorted flag.
+         * @throws IgniteCheckedException If failed.
+         */
+        public void updateAll(
+            GridCacheContext cctx,
+            Collection<CacheMapEntryInfo> entries,
+            boolean sorted
+        ) throws IgniteCheckedException;
 
         /**
          * @param cctx Cache context.
@@ -883,14 +888,6 @@ public interface IgniteCacheOffheapManager {
          * @throws IgniteCheckedException If failed.
          */
         public void invoke(GridCacheContext cctx, KeyCacheObject key, OffheapInvokeClosure c) throws IgniteCheckedException;
-
-        /**
-         * @param cctx Cache context.
-         * @param keys Keys.
-         * @param c Closure.
-         * @throws IgniteCheckedException If failed.
-         */
-        public void invokeAll(GridCacheContext cctx, Collection<KeyCacheObject> keys, OffheapInvokeAllClosure c) throws IgniteCheckedException;
 
         /**
          *

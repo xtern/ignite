@@ -53,6 +53,7 @@ import org.apache.ignite.internal.pagemem.wal.record.delta.PartitionDestroyRecor
 import org.apache.ignite.internal.processors.affinity.AffinityTopologyVersion;
 import org.apache.ignite.internal.processors.cache.CacheEntryPredicate;
 import org.apache.ignite.internal.processors.cache.CacheGroupContext;
+import org.apache.ignite.internal.processors.cache.CacheMapEntryInfo;
 import org.apache.ignite.internal.processors.cache.CacheObject;
 import org.apache.ignite.internal.processors.cache.GridCacheContext;
 import org.apache.ignite.internal.processors.cache.GridCacheEntryEx;
@@ -2132,13 +2133,16 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
         }
 
         /** {@inheritDoc} */
-        @Override public void invokeAll(GridCacheContext cctx, Collection<KeyCacheObject> keys, OffheapInvokeAllClosure c)
-            throws IgniteCheckedException {
+        @Override public void updateAll(
+            GridCacheContext cctx,
+            Collection<CacheMapEntryInfo> entries,
+            boolean sorted
+        ) throws IgniteCheckedException {
             assert ctx.database().checkpointLockIsHeldByThread();
 
             CacheDataStore delegate = init0(false);
 
-            delegate.invokeAll(cctx, keys, c);
+            delegate.updateAll(cctx, entries, sorted);
         }
 
         /** {@inheritDoc} */
