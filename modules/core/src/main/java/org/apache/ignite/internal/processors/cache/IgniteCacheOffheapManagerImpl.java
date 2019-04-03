@@ -37,7 +37,6 @@ import javax.cache.processor.EntryProcessor;
 import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.IgniteException;
 import org.apache.ignite.IgniteLogger;
-import org.apache.ignite.IgniteSystemProperties;
 import org.apache.ignite.internal.NodeStoppingException;
 import org.apache.ignite.internal.pagemem.FullPageId;
 import org.apache.ignite.internal.pagemem.wal.record.delta.DataPageMvccMarkUpdatedRecord;
@@ -136,6 +135,7 @@ import static org.apache.ignite.internal.processors.cache.persistence.GridCacheO
 import static org.apache.ignite.internal.processors.cache.persistence.tree.io.DataPageIO.MVCC_INFO_SIZE;
 import static org.apache.ignite.internal.util.IgniteTree.OperationType.NOOP;
 import static org.apache.ignite.internal.util.IgniteTree.OperationType.PUT;
+import static org.apache.ignite.internal.util.IgniteTree.OperationType.REMOVE;
 
 /**
  *
@@ -437,13 +437,13 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
     }
 
     /** {@inheritDoc} */
-    @Override public void invokeAll(
+    @Override public void updateAll(
         GridCacheContext cctx,
-        Collection<KeyCacheObject> keys,
         GridDhtLocalPartition part,
-        OffheapInvokeAllClosure c)
-        throws IgniteCheckedException {
-        dataStore(part).invokeAll(cctx, keys, c);
+        Collection<CacheMapEntryInfo> entries,
+        boolean sorted
+    ) throws IgniteCheckedException {
+        dataStore(part).updateAll(cctx, entries, sorted);
     }
 
     /** {@inheritDoc} */
@@ -1621,16 +1621,19 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
 
 
         /** {@inheritDoc} */
-        @Override public void invokeAll(GridCacheContext cctx, Collection<KeyCacheObject> keys, OffheapInvokeAllClosure c)
-            throws IgniteCheckedException {
+        @Override public void updateAll(
+            GridCacheContext cctx,
+            Collection<CacheMapEntryInfo> entries,
+            boolean sorted
+        ) throws IgniteCheckedException {
             int cacheId = grp.sharedGroup() ? cctx.cacheId() : CU.UNDEFINED_CACHE_ID;
 
-            List<CacheSearchRow> searchRows = new ArrayList<>(keys.size());
+            List<CacheSearchRow> searchRows = new ArrayList<>(entries.size());
 
-            for (KeyCacheObject key : keys)
-                searchRows.add(new SearchRow(cacheId, key));
+            for (CacheMapEntryInfo entry : entries)
+                searchRows.add(new SearchRow(cacheId, entry.key()));
 
-            invokeAll0(cctx, searchRows, c);
+            updateAll0(cctx, searchRows, sorted, entries);
         }
 
         /**
@@ -1674,21 +1677,170 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
 
         /**
          * @param cctx Cache context.
-         * @param rows Search rows.
-         * @param c Closure.
+         * @param keys Search rows.
+         * @param sorted Sorted flag.
+         * @param entries Entries.
          * @throws IgniteCheckedException If failed.
          */
-        private void invokeAll0(GridCacheContext cctx, List<CacheSearchRow> rows, OffheapInvokeAllClosure c)
-            throws IgniteCheckedException {
+        private void updateAll0(
+            GridCacheContext cctx,
+            List<CacheSearchRow> keys,
+            boolean sorted,
+            Collection<CacheMapEntryInfo> entries
+        ) throws IgniteCheckedException {
             if (!busyLock.enterBusy())
                 throw new NodeStoppingException("Operation has been cancelled (node is stopping).");
 
             try {
                 assert cctx.shared().database().checkpointLockIsHeldByThread();
 
-                dataTree.invokeAll(rows, CacheDataRowAdapter.RowData.NO_KEY, c);
+                int keysCnt = keys.size();
 
-                for (T3<IgniteTree.OperationType, CacheDataRow, CacheDataRow> finalOp : c.result()) {
+                List<CacheDataRow> rows = new ArrayList<>(keysCnt);
+
+                if (!sorted) {
+                    for (CacheSearchRow row : keys) {
+                        CacheDataRow old = dataTree.findOne(row, null, CacheDataRowAdapter.RowData.NO_KEY);
+
+                        rows.add(old);
+                    }
+                }
+                else {
+                    GridCursor<CacheDataRow> cur =
+                        dataTree.find(keys.get(0), keys.get(keysCnt - 1), CacheDataRowAdapter.RowData.FULL);
+
+                    Iterator<CacheSearchRow> keyItr = keys.iterator();
+
+                    CacheSearchRow lastRow = null;
+                    CacheSearchRow row = null;
+                    KeyCacheObject key = null;
+
+                    CacheDataRow oldRow = null;
+                    KeyCacheObject oldKey = null;
+
+                    while (cur.next()) {
+                        oldRow = cur.get();
+                        oldKey = oldRow.key();
+
+                        while (key == null || key.hashCode() <= oldKey.hashCode()) {
+                            if (key != null && key.hashCode() == oldKey.hashCode()) {
+                                while (key.hashCode() == oldKey.hashCode()) {
+                                    // todo test collision resolution
+                                    rows.add(key.equals(oldKey) ? oldRow : null);
+
+                                    lastRow = null;
+
+                                    if (!keyItr.hasNext())
+                                        break;
+
+                                    lastRow = row = keyItr.next();
+                                    key = row.key();
+                                }
+                            }
+                            else {
+                                if (row != null)
+                                    rows.add(null);
+
+                                lastRow = null;
+
+                                if (keyItr.hasNext()) {
+                                    lastRow = row = keyItr.next();
+                                    key = lastRow.key();
+                                }
+                            }
+
+                            if (!keyItr.hasNext())
+                                break;
+                        }
+                    }
+
+                    if (lastRow != null)
+                        rows.add(key.equals(oldKey) ? oldRow : null);
+
+                    for (; keyItr.hasNext(); keyItr.next())
+                        rows.add(null);
+                }
+
+                List<DataRow> newRows = new ArrayList<>(8);
+
+                int cacheId = cctx.group().storeCacheIdInDataPage() ? cctx.cacheId() : CU.UNDEFINED_CACHE_ID;
+
+                Iterator<CacheDataRow> rowsIter = rows.iterator();
+
+                List<T3<IgniteTree.OperationType, CacheDataRow, CacheDataRow>> finalOps = new ArrayList<>(keys.size());
+
+                for (CacheMapEntryInfo e : entries) {
+                    KeyCacheObject key = e.key();
+                    CacheDataRow oldRow = rowsIter.next();
+
+                    try {
+                        if (e.needUpdate(oldRow)) {
+                            CacheObject val = e.value();
+
+                            if (val != null) {
+                                if (oldRow != null) {
+                                    CacheDataRow newRow = createRow(
+                                        cctx,
+                                        key,
+                                        e.value(),
+                                        e.version(),
+                                        e.expireTime(),
+                                        oldRow);
+
+                                    finalOps.add(new T3<>(oldRow.link() == newRow.link() ? NOOP : PUT, oldRow, newRow));
+                                }
+                                else {
+                                    CacheObjectContext coCtx = cctx.cacheObjectContext();
+
+                                    val.valueBytes(coCtx);
+                                    key.valueBytes(coCtx);
+
+                                    if (key.partition() == -1)
+                                        key.partition(partId);
+
+                                    DataRow newRow = new DataRow(key, val, e.version(), partId, e.expireTime(), cacheId);
+
+                                    newRows.add(newRow);
+
+                                    finalOps.add(new T3<>(PUT, oldRow, newRow));
+                                }
+                            }
+                            else {
+                                // todo   we should pass key somehow to remove old row
+                                // todo   (in particular case oldRow should not contain key)
+                                DataRow newRow = new DataRow(key, null, null, 0, 0, cacheId);
+
+                                finalOps.add(new T3<>(oldRow != null ? REMOVE : NOOP, oldRow, newRow));
+                            }
+                        }
+                    }
+                    catch (GridCacheEntryRemovedException ex) {
+                        e.onRemove();
+                    }
+                }
+
+                if (!newRows.isEmpty()) {
+                    // cctx.shared().database().ensureFreeSpace(cctx.dataRegion());
+
+                    rowStore().addRows(newRows, cctx.group().statisticsHolderData());
+
+                    if (cacheId == CU.UNDEFINED_CACHE_ID) {
+                        // Set cacheId before write keys into tree.
+                        for (DataRow row : newRows)
+                            row.cacheId(cctx.cacheId());
+                    }
+                }
+
+                for (T3<IgniteTree.OperationType, CacheDataRow, CacheDataRow> t3 : finalOps) {
+                    IgniteTree.OperationType oper = t3.get1();
+
+                    if (oper == IgniteTree.OperationType.PUT)
+                        dataTree.putx(t3.get3());
+                    else if (oper == IgniteTree.OperationType.REMOVE)
+                        dataTree.removex(t3.get2()); // old row
+                }
+
+                for (T3<IgniteTree.OperationType, CacheDataRow, CacheDataRow> finalOp : finalOps) {
                     IgniteTree.OperationType opType = finalOp.get1();
                     CacheDataRow oldRow = finalOp.get2();
                     CacheDataRow newRow = finalOp.get3();
