@@ -995,26 +995,19 @@ public abstract class AbstractDataPageIO<T extends Storable> extends PageIO impl
         final int pageSize
     ) throws IgniteCheckedException {
         int maxPayloadSIze = pageSize - MIN_DATA_PAGE_OVERHEAD;
-
-        int regularSizeFlags = SHOW_PAYLOAD_LEN | SHOW_ITEM;
-        int fragmentSizeFlags = regularSizeFlags | SHOW_LINK;
-
         int dataOff = pageSize;
-        int cnt = 0;
-
         int written = 0;
+        int cnt = 0;
 
         for (T row : rows) {
             int size = row.size();
-
+            int payloadSize = size % maxPayloadSIze;
             boolean fragment = size > maxPayloadSIze;
 
-            int payloadSize = size % maxPayloadSIze;
-
-            int fullEntrySize = getPageEntrySize(payloadSize, fragment ? fragmentSizeFlags : regularSizeFlags);
+            int fullEntrySize = getPageEntrySize(payloadSize, fragment ?
+                SHOW_PAYLOAD_LEN | SHOW_ITEM | SHOW_LINK : SHOW_PAYLOAD_LEN | SHOW_ITEM);
 
             written += fullEntrySize;
-
             dataOff -= (fullEntrySize - ITEM_SIZE);
 
             if (fragment) {
@@ -1044,8 +1037,6 @@ public abstract class AbstractDataPageIO<T extends Storable> extends PageIO impl
 
         setFirstEntryOffset(pageAddr, dataOff, pageSize);
 
-        // Update free space. If number of indirect items changed, then we were able to reuse an item slot.
-        // + (getIndirectCount(pageAddr) != indirectCnt ? ITEM_SIZE : 0)
         setRealFreeSpace(pageAddr, getRealFreeSpace(pageAddr) - written, pageSize);
     }
 
