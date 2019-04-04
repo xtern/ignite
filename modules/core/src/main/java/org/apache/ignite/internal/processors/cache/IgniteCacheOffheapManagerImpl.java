@@ -103,7 +103,7 @@ import org.apache.ignite.internal.util.lang.GridCursor;
 import org.apache.ignite.internal.util.lang.GridIterator;
 import org.apache.ignite.internal.util.lang.IgniteInClosure2X;
 import org.apache.ignite.internal.util.typedef.F;
-import org.apache.ignite.internal.util.typedef.T3;
+import org.apache.ignite.internal.util.typedef.T2;
 import org.apache.ignite.internal.util.typedef.X;
 import org.apache.ignite.internal.util.typedef.internal.CU;
 import org.apache.ignite.internal.util.typedef.internal.U;
@@ -135,7 +135,6 @@ import static org.apache.ignite.internal.processors.cache.persistence.GridCacheO
 import static org.apache.ignite.internal.processors.cache.persistence.tree.io.DataPageIO.MVCC_INFO_SIZE;
 import static org.apache.ignite.internal.util.IgniteTree.OperationType.NOOP;
 import static org.apache.ignite.internal.util.IgniteTree.OperationType.PUT;
-import static org.apache.ignite.internal.util.IgniteTree.OperationType.REMOVE;
 
 /**
  *
@@ -1694,183 +1693,155 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
             try {
                 assert cctx.shared().database().checkpointLockIsHeldByThread();
 
-                int keysCnt = keys.size();
-
-                List<CacheDataRow> rows = new ArrayList<>(keysCnt);
-
-                if (!sorted) {
-                    for (CacheSearchRow row : keys) {
-                        CacheDataRow old = dataTree.findOne(row, null, CacheDataRowAdapter.RowData.NO_KEY);
-
-                        rows.add(old);
-                    }
-                }
-                else {
-                    GridCursor<CacheDataRow> cur =
-                        dataTree.find(keys.get(0), keys.get(keysCnt - 1), CacheDataRowAdapter.RowData.FULL);
-
-                    Iterator<CacheSearchRow> keyItr = keys.iterator();
-
-                    CacheSearchRow lastRow = null;
-                    CacheSearchRow row = null;
-                    KeyCacheObject key = null;
-
-                    CacheDataRow oldRow = null;
-                    KeyCacheObject oldKey = null;
-
-                    while (cur.next()) {
-                        oldRow = cur.get();
-                        oldKey = oldRow.key();
-
-                        while (key == null || key.hashCode() <= oldKey.hashCode()) {
-                            if (key != null && key.hashCode() == oldKey.hashCode()) {
-                                while (key.hashCode() == oldKey.hashCode()) {
-                                    // todo test collision resolution
-                                    rows.add(key.equals(oldKey) ? oldRow : null);
-
-                                    lastRow = null;
-
-                                    if (!keyItr.hasNext())
-                                        break;
-
-                                    lastRow = row = keyItr.next();
-                                    key = row.key();
-                                }
-                            }
-                            else {
-                                if (row != null)
-                                    rows.add(null);
-
-                                lastRow = null;
-
-                                if (keyItr.hasNext()) {
-                                    lastRow = row = keyItr.next();
-                                    key = lastRow.key();
-                                }
-                            }
-
-                            if (!keyItr.hasNext())
-                                break;
-                        }
-                    }
-
-                    if (lastRow != null)
-                        rows.add(key.equals(oldKey) ? oldRow : null);
-
-                    for (; keyItr.hasNext(); keyItr.next())
-                        rows.add(null);
-                }
-
-                List<DataRow> newRows = new ArrayList<>(8);
-
                 int cacheId = cctx.group().storeCacheIdInDataPage() ? cctx.cacheId() : CU.UNDEFINED_CACHE_ID;
 
-                Iterator<CacheDataRow> rowsIter = rows.iterator();
+                IoStatisticsHolder statHolder = grp.statisticsHolderData();
 
-                List<T3<IgniteTree.OperationType, CacheDataRow, CacheDataRow>> finalOps = new ArrayList<>(keys.size());
+                List<CacheDataRow> oldRows = findAll(keys, sorted);
 
-                for (CacheMapEntryInfo e : entries) {
-                    KeyCacheObject key = e.key();
-                    CacheDataRow oldRow = rowsIter.next();
+                assert oldRows.size() == keys.size() : "Mismatch: expect=" + keys.size() + ", actual=" + oldRows.size();
+
+                Iterator<CacheDataRow> oldRowsIter = oldRows.iterator();
+
+                // Old to new rows mapping.
+                List<T2<CacheDataRow, DataRow>> resMapping = new ArrayList<>(8);
+
+                for (CacheMapEntryInfo entry : entries) {
+                    CacheDataRow oldRow = oldRowsIter.next();
+
+                    KeyCacheObject key = entry.key();
 
                     try {
-                        if (e.needUpdate(oldRow)) {
-                            CacheObject val = e.value();
+                        if (!entry.needUpdate(oldRow))
+                            continue;
 
-                            if (val != null) {
-                                if (oldRow != null) {
-                                    CacheDataRow newRow = createRow(
-                                        cctx,
-                                        key,
-                                        e.value(),
-                                        e.version(),
-                                        e.expireTime(),
-                                        oldRow);
+                        CacheObject val = entry.value();
 
-                                    finalOps.add(new T3<>(oldRow.link() == newRow.link() ? NOOP : PUT, oldRow, newRow));
-                                }
-                                else {
-                                    CacheObjectContext coCtx = cctx.cacheObjectContext();
+                        if (val == null) {
+                            dataTree.removex(new SearchRow(cacheId, key));
 
-                                    val.valueBytes(coCtx);
-                                    key.valueBytes(coCtx);
+                            finishRemove(cctx, key, oldRow);
 
-                                    if (key.partition() == -1)
-                                        key.partition(partId);
-
-                                    DataRow newRow = new DataRow(key, val, e.version(), partId, e.expireTime(), cacheId);
-
-                                    newRows.add(newRow);
-
-                                    finalOps.add(new T3<>(PUT, oldRow, newRow));
-                                }
-                            }
-                            else {
-                                // todo   we should pass key somehow to remove old row
-                                // todo   (in particular case oldRow should not contain key)
-                                DataRow newRow = new DataRow(key, null, null, 0, 0, cacheId);
-
-                                finalOps.add(new T3<>(oldRow != null ? REMOVE : NOOP, oldRow, newRow));
-                            }
+                            continue;
                         }
+
+                        CacheObjectContext coCtx = cctx.cacheObjectContext();
+
+                        val.valueBytes(coCtx);
+                        key.valueBytes(coCtx);
+
+                        DataRow row = makeDataRow(key, val, entry.version(), entry.expireTime(), cacheId);
+
+                        if (canUpdateOldRow(cctx, oldRow, row) && rowStore().updateRow(oldRow.link(), row, statHolder))
+                            continue;
+
+                        resMapping.add(new T2<>(oldRow, row));
+
                     }
                     catch (GridCacheEntryRemovedException ex) {
-                        e.onRemove();
+                        entry.onRemove();
                     }
                 }
 
-                if (!newRows.isEmpty()) {
-                    // cctx.shared().database().ensureFreeSpace(cctx.dataRegion());
+                if (!resMapping.isEmpty()) {
+                    cctx.shared().database().ensureFreeSpace(cctx.dataRegion());
 
-                    rowStore().addRows(newRows, cctx.group().statisticsHolderData());
+                    Collection<DataRow> newRows = F.viewReadOnly(resMapping, IgniteBiTuple::get2);
+
+                    rowStore().addRows(newRows, statHolder);
 
                     if (cacheId == CU.UNDEFINED_CACHE_ID) {
                         // Set cacheId before write keys into tree.
                         for (DataRow row : newRows)
                             row.cacheId(cctx.cacheId());
                     }
-                }
 
-                for (T3<IgniteTree.OperationType, CacheDataRow, CacheDataRow> t3 : finalOps) {
-                    IgniteTree.OperationType oper = t3.get1();
+                    for (T2<CacheDataRow, DataRow> map : resMapping) {
+                        CacheDataRow oldRow = map.get1();
+                        CacheDataRow newRow = map.get2();
 
-                    if (oper == IgniteTree.OperationType.PUT)
-                        dataTree.putx(t3.get3());
-                    else if (oper == IgniteTree.OperationType.REMOVE)
-                        dataTree.removex(t3.get2()); // old row
-                }
+                        assert newRow != null : map;
 
-                for (T3<IgniteTree.OperationType, CacheDataRow, CacheDataRow> finalOp : finalOps) {
-                    IgniteTree.OperationType opType = finalOp.get1();
-                    CacheDataRow oldRow = finalOp.get2();
-                    CacheDataRow newRow = finalOp.get3();
+                        dataTree.putx(newRow);
 
-                    switch (opType) {
-                        case PUT: {
-                            assert newRow != null : finalOp;
-
-                            finishUpdate(cctx, newRow, oldRow);
-
-                            break;
-                        }
-
-                        case REMOVE: {
-                            finishRemove(cctx, newRow.key(), oldRow);
-
-                            break;
-                        }
-
-                        case NOOP:
-                            break;
-
-                        default:
-                            assert false : opType;
+                        finishUpdate(cctx, newRow, oldRow);
                     }
                 }
             }
             finally {
                 busyLock.leaveBusy();
             }
+        }
+
+        /**
+         * @param keys Keys to search.
+         * @param sorted Sorted flag.
+         * @return List of found (and not found) rows, each value of which corresponds to the input key.
+         * @throws IgniteCheckedException If failed.
+         */
+        private List<CacheDataRow> findAll(List<CacheSearchRow> keys, boolean sorted) throws IgniteCheckedException {
+            List<CacheDataRow> rows = new ArrayList<>(keys.size());
+
+            if (!sorted) {
+                for (CacheSearchRow row : keys)
+                    rows.add(dataTree.findOne(row, null, CacheDataRowAdapter.RowData.NO_KEY));
+
+                return rows;
+            }
+
+            GridCursor<CacheDataRow> cur = dataTree.find(keys.get(0), keys.get(keys.size() - 1));
+            Iterator<CacheSearchRow> keyItr = keys.iterator();
+
+            CacheSearchRow last = null;
+            CacheSearchRow row = null;
+            KeyCacheObject key = null;
+
+            CacheDataRow oldRow = null;
+            KeyCacheObject oldKey = null;
+
+            while (cur.next()) {
+                oldRow = cur.get();
+                oldKey = oldRow.key();
+
+                while (key == null || key.hashCode() <= oldKey.hashCode()) {
+                    if (key != null && key.hashCode() == oldKey.hashCode()) {
+                        while (key.hashCode() == oldKey.hashCode()) {
+                            // todo test collision resolution
+                            rows.add(key.equals(oldKey) ? oldRow : null);
+
+                            last = null;
+
+                            if (!keyItr.hasNext())
+                                break;
+
+                            last = row = keyItr.next();
+                            key = row.key();
+                        }
+                    }
+                    else {
+                        if (row != null)
+                            rows.add(null);
+
+                        last = null;
+
+                        if (keyItr.hasNext()) {
+                            last = row = keyItr.next();
+                            key = last.key();
+                        }
+                    }
+
+                    if (!keyItr.hasNext())
+                        break;
+                }
+            }
+
+            if (last != null)
+                rows.add(key.equals(oldKey) ? oldRow : null);
+
+            for (; keyItr.hasNext(); keyItr.next())
+                rows.add(null);
+
+            return rows;
         }
 
         /** {@inheritDoc} */
