@@ -29,9 +29,6 @@ import org.apache.ignite.internal.processors.dr.GridDrType;
  */
 public class CacheMapEntryInfo {
     /** */
-    private BatchContext ctx;
-
-    /** */
     private final KeyCacheObject key;
 
     /** */
@@ -48,6 +45,9 @@ public class CacheMapEntryInfo {
 
     /** */
     private final GridDrType drType;
+
+    /** */
+    private BatchContext ctx;
 
     /** */
     private GridDhtCacheEntry entry;
@@ -105,6 +105,18 @@ public class CacheMapEntryInfo {
     }
 
     /**
+     * @return Expire time.
+     */
+    public long ttl() {
+        return ttl;
+    }
+
+    /** */
+    public GridDrType drType() {
+        return drType;
+    }
+
+    /**
      *
      */
     public void onRemove() {
@@ -127,16 +139,6 @@ public class CacheMapEntryInfo {
 
         this.ctx = ctx;
         this.entry = entry;
-    }
-
-    /**
-     *
-     */
-    void updateCacheEntry() throws IgniteCheckedException {
-        if (!update)
-            return;
-
-        entry.finishInitialUpdate(val, expireTime, ttl, ver, ctx.topVer(), drType, null, ctx.preload());
     }
 
     /**
@@ -169,5 +171,10 @@ public class CacheMapEntryInfo {
         update = update0;
 
         return update0;
+    }
+
+    /** */
+    boolean needUpdate() {
+        return update;
     }
 }

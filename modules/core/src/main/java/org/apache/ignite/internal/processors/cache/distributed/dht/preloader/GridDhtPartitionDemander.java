@@ -916,7 +916,6 @@ public class GridDhtPartitionDemander {
                 }
             }
 
-
             for (Map.Entry<Integer, List<CacheMapEntryInfo>> e : cctxs.entrySet()) {
                 GridCacheContext cctx = ctx.cacheContext(e.getKey());
 
@@ -1592,4 +1591,3 @@ public class GridDhtPartitionDemander {
         }
     }
 }
-
