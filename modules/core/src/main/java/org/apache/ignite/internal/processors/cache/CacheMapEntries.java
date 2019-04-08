@@ -19,8 +19,8 @@ package org.apache.ignite.internal.processors.cache;
 
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -28,6 +28,10 @@ import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.internal.processors.affinity.AffinityTopologyVersion;
 import org.apache.ignite.internal.processors.cache.distributed.dht.GridDhtCacheEntry;
 import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtLocalPartition;
+import org.apache.ignite.internal.processors.cache.persistence.CacheDataRow;
+import org.apache.ignite.internal.processors.cache.version.GridCacheVersion;
+import org.apache.ignite.internal.processors.dr.GridDrType;
+import org.apache.ignite.lang.IgniteBiPredicate;
 
 import static org.apache.ignite.internal.processors.cache.GridCacheMapEntry.ATOMIC_VER_COMPARATOR;
 
@@ -35,8 +39,63 @@ import static org.apache.ignite.internal.processors.cache.GridCacheMapEntry.ATOM
  * Batch of cache map entries.
  */
 public class CacheMapEntries {
+    /**
+     *
+     */
+    private static class GridCacheEntryInfoEx extends GridCacheEntryInfo {
+        /** */
+        private final GridCacheEntryInfo delegate;
+
+        /** */
+        private GridDhtCacheEntry cacheEntry;
+
+        /** */
+        private boolean update;
+
+        /** */
+        private GridCacheEntryInfoEx(GridCacheEntryInfo info) {
+            delegate = info;
+        }
+
+        /**
+         * @return Key.
+         */
+        @Override public KeyCacheObject key() {
+            return delegate.key();
+        }
+
+        /**
+         * @return Entry value.
+         */
+        @Override public CacheObject value() {
+            return delegate.value();
+        }
+
+        /**
+         * @return Expire time.
+         */
+        @Override public long expireTime() {
+            return delegate.expireTime();
+        }
+
+        /**
+         * @return Time to live.
+         */
+        @Override public long ttl() {
+            return delegate.ttl();
+        }
+
+        /**
+         * @return Time to live.
+         */
+        @Override public GridCacheVersion version() {
+            return delegate.version();
+        }
+    }
+
+
     /** */
-    static class BatchContext {
+    private static class BatchContext {
         /** */
         private final GridCacheContext<?, ?> cctx;
 
@@ -107,53 +166,85 @@ public class CacheMapEntries {
 
     /** */
     public int initialValues(
-        List<CacheMapEntryInfo> infos,
+        List<GridCacheEntryInfo> infos,
         AffinityTopologyVersion topVer,
         GridCacheContext cctx,
         int partId,
-        boolean preload
+        boolean preload,
+        GridDrType drType
     ) throws IgniteCheckedException {
         BatchContext ctx = new BatchContext(cctx, partId, preload, topVer);
 
-        Collection<CacheMapEntryInfo> locked = initialValuesLock(ctx, infos);
+        Collection<GridCacheEntryInfoEx> locked = initialValuesLock(ctx, infos);
 
         try {
-            cctx.offheap().updateAll(ctx.context(), ctx.part(), infos, ctx.sorted());
+            IgniteBiPredicate<CacheDataRow, GridCacheEntryInfo> pred  = new IgniteBiPredicate<CacheDataRow, GridCacheEntryInfo>() {
+                @Override public boolean apply(CacheDataRow row, GridCacheEntryInfo info) {
+                    try {
+                        GridCacheVersion currVer = row != null ? row.version() :
+                            ((GridCacheEntryInfoEx)info).cacheEntry.version();
+
+                        GridCacheContext cctx = ctx.context();
+
+                        boolean isStartVer = cctx.versions().isStartVersion(currVer);
+
+                        boolean update0;
+
+                        if (cctx.group().persistenceEnabled()) {
+                            if (!isStartVer) {
+                                if (cctx.atomic())
+                                    update0 = GridCacheMapEntry.ATOMIC_VER_COMPARATOR.compare(currVer, info.version()) < 0;
+                                else
+                                    update0 = currVer.compareTo(info.version()) < 0;
+                            }
+                            else
+                                update0 = true;
+                        }
+                        else
+                            update0 = (isStartVer && row == null);
+
+                        update0 |= (!ctx.preload() && ((GridCacheEntryInfoEx)info).cacheEntry.deletedUnlocked());
+
+                        ((GridCacheEntryInfoEx)info).update = update0;
+
+                        return update0;
+                    }
+                    catch (GridCacheEntryRemovedException e) {
+                        ctx.markRemoved(info.key());
+                        // todo logging
+                        return false;
+                    }
+                }
+            };
+
+            cctx.offheap().updateAll(ctx.context(), ctx.part(), locked, pred);
         } finally {
-            initialValuesUnlock(ctx, locked);
+            initialValuesUnlock(ctx, locked, drType);
         }
 
         return infos.size() - ctx.skipped.size();
     }
 
     /** */
-    private Collection<CacheMapEntryInfo> initialValuesLock(BatchContext ctx, Collection<CacheMapEntryInfo> infos) {
+    private Collection<GridCacheEntryInfoEx> initialValuesLock(BatchContext ctx, Collection<GridCacheEntryInfo> infos) {
         List<GridDhtCacheEntry> locked = new ArrayList<>(infos.size());
 
-        boolean ordered = true;
-
         while (true) {
-            Map<KeyCacheObject, CacheMapEntryInfo> uniqueEntries = new HashMap<>();
+            Map<KeyCacheObject, GridCacheEntryInfoEx> uniqueEntries = new LinkedHashMap<>();
 
-            KeyCacheObject lastKey = null;
-
-            for (CacheMapEntryInfo e : infos) {
+            for (GridCacheEntryInfo e : infos) {
                 KeyCacheObject key = e.key();
-                CacheMapEntryInfo old = uniqueEntries.put(key, e);
+                GridCacheEntryInfoEx entryEx = new GridCacheEntryInfoEx(e);
+                GridCacheEntryInfoEx old = uniqueEntries.put(key, entryEx);
 
                 assert old == null || ATOMIC_VER_COMPARATOR.compare(old.version(), e.version()) < 0 :
                     "Version order mismatch: prev=" + old.version() + ", current=" + e.version();
-
-                if (ordered && lastKey != null && lastKey.hashCode() >= key.hashCode())
-                    ordered = false;
 
                 GridDhtCacheEntry entry = (GridDhtCacheEntry)ctx.cctx.cache().entryEx(key, ctx.topVer());
 
                 locked.add(entry);
 
-                e.init(ctx, entry);
-
-                lastKey = key;
+                entryEx.cacheEntry = entry;
             }
 
             boolean retry = false;
@@ -183,16 +274,13 @@ public class CacheMapEntries {
                 }
             }
 
-            if (!retry) {
-                ctx.sorted(ordered);
-
+            if (!retry)
                 return uniqueEntries.values();
-            }
         }
     }
 
     /** */
-    private void initialValuesUnlock(BatchContext ctx, Collection<CacheMapEntryInfo> infos) {
+    private void initialValuesUnlock(BatchContext ctx, Collection<GridCacheEntryInfoEx> infos, GridDrType drType) {
         // Process deleted entries before locks release.
         // todo
         assert ctx.cctx.deferredDelete() : this;
@@ -202,31 +290,32 @@ public class CacheMapEntries {
         int size = infos.size();
 
         try {
-            for (CacheMapEntryInfo info : infos) {
+            for (GridCacheEntryInfoEx info : infos) {
                 KeyCacheObject key = info.key();
-                GridCacheMapEntry entry = info.cacheEntry();
+                GridCacheMapEntry entry = info.cacheEntry;
 
                 assert entry != null : key;
 
-                if (!info.needUpdate())
+                if (!info.update)
                     continue;
 
                 if (ctx.skipped(key))
                     continue;
 
                 if (entry.deleted()) {
-                    info.onRemove();
+                    //info.onRemove();
+                    ctx.markRemoved(key);
 
                     continue;
                 }
 
                 try {
                     entry.finishInitialUpdate(info.value(), info.expireTime(), info.ttl(), info.version(), ctx.topVer(),
-                        info.drType(), null, ctx.preload());
+                        drType, null, ctx.preload());
                 } catch (IgniteCheckedException ex) {
                     ctx.context().logger(getClass()).error("Unable to finish initial update, skip " + key, ex);
 
-                    info.onRemove();
+                    ctx.markRemoved(key);
                 }
             }
         }
@@ -234,8 +323,8 @@ public class CacheMapEntries {
             // At least RuntimeException can be thrown by the code above when GridCacheContext is cleaned and there is
             // an attempt to use cleaned resources.
             // That's why releasing locks in the finally block..
-            for (CacheMapEntryInfo info : infos) {
-                GridCacheMapEntry entry = info.cacheEntry();
+            for (GridCacheEntryInfoEx info : infos) {
+                GridCacheMapEntry entry = info.cacheEntry;
 
                 if (entry != null)
                     entry.unlockEntry();
@@ -243,8 +332,8 @@ public class CacheMapEntries {
         }
 
         // Try evict partitions.
-        for (CacheMapEntryInfo info : infos) {
-            GridDhtCacheEntry entry = info.cacheEntry();
+        for (GridCacheEntryInfoEx info : infos) {
+            GridDhtCacheEntry entry = info.cacheEntry;
 
             if (entry != null)
                 entry.onUnlock();
@@ -256,8 +345,8 @@ public class CacheMapEntries {
 
         // Must touch all entries since update may have deleted entries.
         // Eviction manager will remove empty entries.
-        for (CacheMapEntryInfo info : infos) {
-            GridCacheMapEntry entry = info.cacheEntry();
+        for (GridCacheEntryInfoEx info : infos) {
+            GridCacheMapEntry entry = info.cacheEntry;
 
             if (entry != null && !ctx.skipped(entry.key()))
                 entry.touch();
