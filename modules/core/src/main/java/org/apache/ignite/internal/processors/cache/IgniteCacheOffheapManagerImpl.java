@@ -107,6 +107,7 @@ import org.apache.ignite.internal.util.typedef.T2;
 import org.apache.ignite.internal.util.typedef.X;
 import org.apache.ignite.internal.util.typedef.internal.CU;
 import org.apache.ignite.internal.util.typedef.internal.U;
+import org.apache.ignite.lang.IgniteBiPredicate;
 import org.apache.ignite.lang.IgniteBiTuple;
 import org.apache.ignite.lang.IgniteClosure;
 import org.apache.ignite.lang.IgniteInClosure;
@@ -439,10 +440,10 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
     @Override public void updateAll(
         GridCacheContext cctx,
         GridDhtLocalPartition part,
-        Collection<CacheMapEntryInfo> entries,
-        boolean sorted
+        Collection<? extends GridCacheEntryInfo> entries,
+        IgniteBiPredicate<CacheDataRow, GridCacheEntryInfo> pred
     ) throws IgniteCheckedException {
-        dataStore(part).updateAll(cctx, entries, sorted);
+        dataStore(part).updateAll(cctx, entries, pred);
     }
 
     /** {@inheritDoc} */
@@ -1622,17 +1623,25 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
         /** {@inheritDoc} */
         @Override public void updateAll(
             GridCacheContext cctx,
-            Collection<CacheMapEntryInfo> entries,
-            boolean sorted
+            Collection<? extends GridCacheEntryInfo> entries,
+            IgniteBiPredicate<CacheDataRow, GridCacheEntryInfo> pred
         ) throws IgniteCheckedException {
             int cacheId = grp.sharedGroup() ? cctx.cacheId() : CU.UNDEFINED_CACHE_ID;
 
             List<CacheSearchRow> searchRows = new ArrayList<>(entries.size());
 
-            for (CacheMapEntryInfo entry : entries)
+            boolean ordered = true;
+
+            KeyCacheObject lastKey = null;
+
+            for (GridCacheEntryInfo entry : entries) {
                 searchRows.add(new SearchRow(cacheId, entry.key()));
 
-            updateAll0(cctx, searchRows, sorted, entries);
+                if (ordered && lastKey != null && lastKey.hashCode() >= entry.key().hashCode())
+                    ordered = false;
+            }
+
+            updateAll0(cctx, searchRows, entries, pred, ordered);
         }
 
         /**
@@ -1684,8 +1693,9 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
         private void updateAll0(
             GridCacheContext cctx,
             List<CacheSearchRow> keys,
-            boolean sorted,
-            Collection<CacheMapEntryInfo> entries
+            Collection<? extends GridCacheEntryInfo> entries,
+            IgniteBiPredicate<CacheDataRow, GridCacheEntryInfo> pred,
+            boolean sorted
         ) throws IgniteCheckedException {
             if (!busyLock.enterBusy())
                 throw new NodeStoppingException("Operation has been cancelled (node is stopping).");
@@ -1706,41 +1716,41 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
                 // Old to new rows mapping.
                 List<T2<CacheDataRow, DataRow>> resMapping = new ArrayList<>(8);
 
-                for (CacheMapEntryInfo entry : entries) {
+                for (GridCacheEntryInfo entry : entries) {
                     CacheDataRow oldRow = oldRowsIter.next();
 
                     KeyCacheObject key = entry.key();
 
-                    try {
-                        if (!entry.needUpdate(oldRow))
-                            continue;
+//                    try {
+                    if (!pred.apply(oldRow, entry))
+                        continue;
 
-                        CacheObject val = entry.value();
+                    CacheObject val = entry.value();
 
-                        if (val == null) {
-                            dataTree.removex(new SearchRow(cacheId, key));
+                    if (val == null) {
+                        dataTree.removex(new SearchRow(cacheId, key));
 
-                            finishRemove(cctx, key, oldRow);
+                        finishRemove(cctx, key, oldRow);
 
-                            continue;
-                        }
-
-                        CacheObjectContext coCtx = cctx.cacheObjectContext();
-
-                        val.valueBytes(coCtx);
-                        key.valueBytes(coCtx);
-
-                        DataRow row = makeDataRow(key, val, entry.version(), entry.expireTime(), cacheId);
-
-                        if (canUpdateOldRow(cctx, oldRow, row) && rowStore().updateRow(oldRow.link(), row, statHolder))
-                            continue;
-
-                        resMapping.add(new T2<>(oldRow, row));
-
+                        continue;
                     }
-                    catch (GridCacheEntryRemovedException ex) {
-                        entry.onRemove();
-                    }
+
+                    CacheObjectContext coCtx = cctx.cacheObjectContext();
+
+                    val.valueBytes(coCtx);
+                    key.valueBytes(coCtx);
+
+                    DataRow row = makeDataRow(key, val, entry.version(), entry.expireTime(), cacheId);
+
+                    if (canUpdateOldRow(cctx, oldRow, row) && rowStore().updateRow(oldRow.link(), row, statHolder))
+                        continue;
+
+                    resMapping.add(new T2<>(oldRow, row));
+
+//                    }
+//                    catch (GridCacheEntryRemovedException ex) {
+//                        entry.onRemove();
+//                    }
                 }
 
                 if (!resMapping.isEmpty()) {

@@ -47,6 +47,7 @@ import org.apache.ignite.internal.util.lang.GridCloseableIterator;
 import org.apache.ignite.internal.util.lang.GridCursor;
 import org.apache.ignite.internal.util.lang.GridIterator;
 import org.apache.ignite.internal.util.lang.IgniteInClosure2X;
+import org.apache.ignite.lang.IgniteBiPredicate;
 import org.apache.ignite.lang.IgniteBiTuple;
 import org.jetbrains.annotations.Nullable;
 
@@ -190,17 +191,17 @@ public interface IgniteCacheOffheapManager {
         throws IgniteCheckedException;
 
     /**
+     * @param sorted Sorted flag.
      * @param cctx Cache context.
      * @param part Partition.
      * @param entries Entries.
-     * @param sorted Sorted flag.
      * @throws IgniteCheckedException If failed.
      */
     public void updateAll(
         GridCacheContext cctx,
         GridDhtLocalPartition part,
-        Collection<CacheMapEntryInfo> entries,
-        boolean sorted
+        Collection<? extends GridCacheEntryInfo> entries,
+        IgniteBiPredicate<CacheDataRow, GridCacheEntryInfo> pred
     ) throws IgniteCheckedException;
 
     /**
@@ -737,13 +738,13 @@ public interface IgniteCacheOffheapManager {
         /**
          * @param cctx Cache context.
          * @param entries Entries.
-         * @param sorted Sorted flag.
+         * @param pred Sorted flag.
          * @throws IgniteCheckedException If failed.
          */
         public void updateAll(
             GridCacheContext cctx,
-            Collection<CacheMapEntryInfo> entries,
-            boolean sorted
+            Collection<? extends GridCacheEntryInfo> entries,
+            IgniteBiPredicate<CacheDataRow, GridCacheEntryInfo> pred
         ) throws IgniteCheckedException;
 
         /**
