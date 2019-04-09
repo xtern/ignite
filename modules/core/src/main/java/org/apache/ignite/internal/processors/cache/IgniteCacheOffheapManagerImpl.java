@@ -1785,21 +1785,20 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
          * @throws IgniteCheckedException If failed.
          */
         private List<CacheDataRow> findAll(List<CacheSearchRow> keys, boolean sorted) throws IgniteCheckedException {
-            List<CacheDataRow> rows = new ArrayList<>(keys.size());
+            List<CacheDataRow> res = new ArrayList<>(keys.size());
 
             if (!sorted) {
                 for (CacheSearchRow row : keys)
-                    rows.add(dataTree.findOne(row, null, CacheDataRowAdapter.RowData.NO_KEY));
+                    res.add(dataTree.findOne(row, null, CacheDataRowAdapter.RowData.NO_KEY));
 
-                return rows;
+                return res;
             }
 
             GridCursor<CacheDataRow> cur = dataTree.find(keys.get(0), keys.get(keys.size() - 1));
-            Iterator<CacheSearchRow> keyItr = keys.iterator();
+            Iterator<CacheSearchRow> itr = keys.iterator();
 
-            CacheSearchRow last = null;
-            CacheSearchRow row = null;
-            KeyCacheObject key = null;
+            CacheSearchRow newRow = null;
+            KeyCacheObject newKey = null;
 
             CacheDataRow oldRow = null;
             KeyCacheObject oldKey = null;
@@ -1808,45 +1807,35 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
                 oldRow = cur.get();
                 oldKey = oldRow.key();
 
-                while (key == null || key.hashCode() <= oldKey.hashCode()) {
-                    if (key != null && key.hashCode() == oldKey.hashCode()) {
-                        while (key.hashCode() == oldKey.hashCode()) {
-                            // todo test collision resolution
-                            rows.add(key.equals(oldKey) ? oldRow : null);
+                while (itr.hasNext() && (newKey == null || newKey.hashCode() <= oldKey.hashCode())) {
+                    if (newKey != null) {
+                        boolean keyFound = false;
 
-                            last = null;
+                        if (newKey.hashCode() == oldKey.hashCode()) {
+                            while (!(keyFound = newKey.equals(oldKey)) && cur.next()) {
+                                oldRow = cur.get();
+                                oldKey = oldRow.key();
 
-                            if (!keyItr.hasNext())
-                                break;
-
-                            last = row = keyItr.next();
-                            key = row.key();
+                                if (newKey.hashCode() != oldKey.hashCode())
+                                    break;
+                            }
                         }
-                    }
-                    else {
-                        if (row != null)
-                            rows.add(null);
 
-                        last = null;
-
-                        if (keyItr.hasNext()) {
-                            last = row = keyItr.next();
-                            key = last.key();
-                        }
+                        res.add(keyFound ? oldRow : null);
                     }
 
-                    if (!keyItr.hasNext())
-                        break;
+                    newRow = itr.next();
+                    newKey = newRow.key();
                 }
             }
 
-            if (last != null)
-                rows.add(key.equals(oldKey) ? oldRow : null);
+            if (newRow != null)
+                res.add(newKey.equals(oldKey) ? oldRow : null);
 
-            for (; keyItr.hasNext(); keyItr.next())
-                rows.add(null);
+            for (; itr.hasNext(); itr.next())
+                res.add(null);
 
-            return rows;
+            return res;
         }
 
         /** {@inheritDoc} */
