@@ -889,7 +889,7 @@ public class GridDhtPartitionDemander {
         try {
             Map<Integer, List<GridCacheEntryInfo>> cctxs = new HashMap<>();
 
-            // Map by context.
+            // Map by cache id.
             for (GridCacheEntryInfo e : infos) {
                 try {
                     GridCacheContext cctx0 = grp.sharedGroup() ? ctx.cacheContext(e.cacheId()) : grp.singleCacheContext();
