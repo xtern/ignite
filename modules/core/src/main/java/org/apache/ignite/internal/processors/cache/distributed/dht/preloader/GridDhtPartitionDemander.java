@@ -47,13 +47,11 @@ import org.apache.ignite.internal.processors.affinity.AffinityTopologyVersion;
 import org.apache.ignite.internal.processors.cache.CacheEntryInfoCollection;
 import org.apache.ignite.internal.processors.cache.CacheGroupContext;
 import org.apache.ignite.internal.processors.cache.CacheMapEntries;
-import org.apache.ignite.internal.processors.cache.CacheMapEntryInfo;
 import org.apache.ignite.internal.processors.cache.CacheMetricsImpl;
 import org.apache.ignite.internal.processors.cache.GridCacheContext;
 import org.apache.ignite.internal.processors.cache.GridCacheEntryEx;
 import org.apache.ignite.internal.processors.cache.GridCacheEntryInfo;
 import org.apache.ignite.internal.processors.cache.GridCacheEntryRemovedException;
-import org.apache.ignite.internal.processors.cache.GridCacheMapEntry;
 import org.apache.ignite.internal.processors.cache.GridCacheMvccEntryInfo;
 import org.apache.ignite.internal.processors.cache.GridCachePartitionExchangeManager;
 import org.apache.ignite.internal.processors.cache.GridCacheSharedContext;
@@ -874,7 +872,7 @@ public class GridDhtPartitionDemander {
     /**
      * @param from Node which sent entry.
      * @param p Partition id.
-     * @param entries Preloaded entries.
+     * @param infos Preloaded entries.
      * @param topVer Topology version.
      * @throws IgniteCheckedException If failed.
      */
@@ -889,7 +887,7 @@ public class GridDhtPartitionDemander {
         grp.listenerLock().readLock().lock();
 
         try {
-            Map<Integer, List<CacheMapEntryInfo>> cctxs = new HashMap<>();
+            Map<Integer, List<GridCacheEntryInfo>> cctxs = new HashMap<>();
 
             // Map by context.
             for (GridCacheEntryInfo e : infos) {
@@ -902,13 +900,10 @@ public class GridDhtPartitionDemander {
                     if (cctx0.isNear())
                         cctx0 = cctx0.dhtCache().context();
 
-                    final GridCacheContext cctx = cctx0;
-
                     if (log.isTraceEnabled())
                         log.trace("Rebalancing key [key=" + e.key() + ", part=" + p + ", node=" + from.id() + ']');
 
-                    cctxs.computeIfAbsent(cctx.cacheId(), v -> new ArrayList<>()).add(
-                        new CacheMapEntryInfo(e.key(), e.value(), e.expireTime(), e.ttl(), e.version(), DR_PRELOAD));
+                    cctxs.computeIfAbsent(cctx0.cacheId(), v -> new ArrayList<>(8)).add(e);
                 }
                 catch (GridDhtInvalidPartitionException ignored) {
                     if (log.isDebugEnabled())
@@ -916,16 +911,17 @@ public class GridDhtPartitionDemander {
                 }
             }
 
-            for (Map.Entry<Integer, List<CacheMapEntryInfo>> e : cctxs.entrySet()) {
+            for (Map.Entry<Integer, List<GridCacheEntryInfo>> e : cctxs.entrySet()) {
                 GridCacheContext cctx = ctx.cacheContext(e.getKey());
 
                 CacheMapEntries entries = new CacheMapEntries();
 
-                int initialized = entries.initialValues(e.getValue(), topVer, cctx, p, true);
+                entries.initialValues(e.getValue(), topVer, cctx, p, true, DR_PRELOAD);
 
+                //TODO: IGNITE-11330: Update metrics for touched cache only.
                 for (GridCacheContext cctx0 : grp.caches()) {
                     if (cctx0.statisticsEnabled())
-                        cctx0.cache().metrics0().onRebalanceKeysReceived(initialized);
+                        cctx0.cache().metrics0().onRebalanceKeysReceived(e.getValue().size());
                 }
             }
         } finally {
