@@ -1785,6 +1785,8 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
          * @throws IgniteCheckedException If failed.
          */
         private List<CacheDataRow> findAll(List<CacheSearchRow> keys, boolean sorted) throws IgniteCheckedException {
+            assert keys != null && !keys.isEmpty();
+
             List<CacheDataRow> res = new ArrayList<>(keys.size());
 
             if (!sorted) {
@@ -1797,40 +1799,30 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
             GridCursor<CacheDataRow> cur = dataTree.find(keys.get(0), keys.get(keys.size() - 1));
             Iterator<CacheSearchRow> itr = keys.iterator();
 
-            CacheSearchRow newRow = null;
-            KeyCacheObject newKey = null;
+            CacheDataRow foundRow = null;
+            KeyCacheObject foundKey = null;
 
-            CacheDataRow oldRow = null;
-            KeyCacheObject oldKey = null;
+            KeyCacheObject key = itr.next().key();
 
             while (cur.next()) {
-                oldRow = cur.get();
-                oldKey = oldRow.key();
+                foundRow = cur.get();
+                foundKey = foundRow.key();
 
-                while (itr.hasNext() && (newKey == null || newKey.hashCode() <= oldKey.hashCode())) {
-                    if (newKey != null) {
-                        boolean keyFound = false;
+                while (itr.hasNext() && key.hashCode() <= foundKey.hashCode()) {
+                    boolean keyFound = false;
 
-                        if (newKey.hashCode() == oldKey.hashCode()) {
-                            while (!(keyFound = newKey.equals(oldKey)) && cur.next()) {
-                                oldRow = cur.get();
-                                oldKey = oldRow.key();
-
-                                if (newKey.hashCode() != oldKey.hashCode())
-                                    break;
-                            }
-                        }
-
-                        res.add(keyFound ? oldRow : null);
+                    while (key.hashCode() == foundKey.hashCode() && !(keyFound = key.equals(foundKey)) && cur.next()) {
+                        foundRow = cur.get();
+                        foundKey = foundRow.key();
                     }
 
-                    newRow = itr.next();
-                    newKey = newRow.key();
+                    res.add(keyFound ? foundRow : null);
+
+                    key = itr.next().key();
                 }
             }
 
-            if (newRow != null)
-                res.add(newKey.equals(oldKey) ? oldRow : null);
+            res.add(key.equals(foundKey) ? foundRow : null);
 
             for (; itr.hasNext(); itr.next())
                 res.add(null);

@@ -118,12 +118,11 @@ public class CacheMapEntries {
         private boolean sorted;
 
         /** */
-        BatchContext(GridCacheContext<?, ?> cctx, int partId, boolean preload, AffinityTopologyVersion topVer) {
+        BatchContext(GridCacheContext<?, ?> cctx, GridDhtLocalPartition part, boolean preload, AffinityTopologyVersion topVer) {
             this.cctx = cctx;
             this.preload = preload;
             this.topVer = topVer;
-
-            part = cctx.topology().localPartition(partId, topVer, true, true);
+            this.part = part;
         }
 
         /** */
@@ -176,12 +175,15 @@ public class CacheMapEntries {
         boolean preload,
         GridDrType drType
     ) throws IgniteCheckedException {
-        BatchContext ctx = new BatchContext(cctx, partId, preload, topVer);
+        GridDhtLocalPartition part = cctx.topology().localPartition(partId, topVer, true, true);
+
+        BatchContext ctx = new BatchContext(cctx, part, preload, topVer);
 
         Collection<GridCacheEntryInfoEx> locked = initialValuesLock(ctx, infos);
 
         try {
-            IgniteBiPredicate<CacheDataRow, GridCacheEntryInfo> pred  = new IgniteBiPredicate<CacheDataRow, GridCacheEntryInfo>() {
+            IgniteBiPredicate<CacheDataRow, GridCacheEntryInfo> pred  =
+                new IgniteBiPredicate<CacheDataRow, GridCacheEntryInfo>() {
                 @Override public boolean apply(CacheDataRow row, GridCacheEntryInfo info) {
                     try {
                         GridCacheVersion currVer = row != null ? row.version() :
@@ -220,7 +222,7 @@ public class CacheMapEntries {
                 }
             };
 
-            cctx.offheap().updateAll(cctx, ctx.part(), locked, pred);
+            cctx.offheap().updateAll(cctx, part, locked, pred);
         } finally {
             initialValuesUnlock(ctx, locked, drType);
         }
@@ -237,7 +239,9 @@ public class CacheMapEntries {
 
             for (GridCacheEntryInfo e : infos) {
                 KeyCacheObject key = e.key();
+
                 GridCacheEntryInfoEx entryEx = new GridCacheEntryInfoEx(e);
+
                 GridCacheEntryInfoEx old = uniqueEntries.put(key, entryEx);
 
                 assert old == null || ATOMIC_VER_COMPARATOR.compare(old.version(), e.version()) < 0 :
