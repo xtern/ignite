@@ -44,6 +44,9 @@ public class CacheMapEntries {
      */
     private static class GridCacheEntryInfoEx extends GridCacheEntryInfo {
         /** */
+        private static final long serialVersionUID = 0L;
+
+        /** */
         private final GridCacheEntryInfo delegate;
 
         /** */
