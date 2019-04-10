@@ -26,11 +26,12 @@ import java.util.Map;
 import java.util.Set;
 import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.internal.processors.affinity.AffinityTopologyVersion;
-import org.apache.ignite.internal.processors.cache.distributed.dht.GridDhtCacheEntry;
 import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtLocalPartition;
 import org.apache.ignite.internal.processors.cache.persistence.CacheDataRow;
 import org.apache.ignite.internal.processors.cache.version.GridCacheVersion;
 import org.apache.ignite.internal.processors.dr.GridDrType;
+import org.apache.ignite.internal.util.typedef.F;
+import org.apache.ignite.internal.util.typedef.T2;
 import org.apache.ignite.lang.IgniteBiPredicate;
 
 import static org.apache.ignite.internal.processors.cache.GridCacheMapEntry.ATOMIC_VER_COMPARATOR;
@@ -50,7 +51,7 @@ public class CacheMapEntries {
         private final GridCacheEntryInfo delegate;
 
         /** */
-        private GridDhtCacheEntry cacheEntry;
+        private GridCacheMapEntry cacheEntry;
 
         /** */
         private boolean update;
@@ -97,7 +98,7 @@ public class CacheMapEntries {
     }
 
     /** */
-    public int initialValues(
+    public Collection<Map.Entry<GridCacheEntryInfo, GridCacheMapEntry>> initialValues(
         List<GridCacheEntryInfo> infos,
         AffinityTopologyVersion topVer,
         GridCacheContext cctx,
@@ -107,9 +108,9 @@ public class CacheMapEntries {
     ) throws IgniteCheckedException {
         GridDhtLocalPartition part = cctx.topology().localPartition(partId, topVer, true, true);
 
-        Set<KeyCacheObject> skippedKeys = new HashSet<>();
+        Set<KeyCacheObject> skipped = new HashSet<>();
 
-        Collection<GridCacheEntryInfoEx> locked = initialValuesLock(cctx, topVer, infos);
+        Collection<GridCacheEntryInfoEx> locked = lockEntries(cctx, topVer, infos);
 
         try {
             IgniteBiPredicate<CacheDataRow, GridCacheEntryInfo> pred  =
@@ -143,7 +144,7 @@ public class CacheMapEntries {
                         return update0;
                     }
                     catch (GridCacheEntryRemovedException e) {
-                        skippedKeys.add(info.key());
+                        skipped.add(info.key());
 
                         return false;
                     }
@@ -152,19 +153,19 @@ public class CacheMapEntries {
 
             cctx.offheap().updateAll(cctx, part, locked, pred);
         } finally {
-            initialValuesUnlock(cctx, topVer, preload, drType, locked, skippedKeys);
+            unlockEntries(cctx, topVer, preload, drType, locked, skipped);
         }
 
-        return infos.size() - skippedKeys.size();
+        return F.viewReadOnly(locked, v -> new T2<>(v, v.cacheEntry), v -> !skipped.contains(v.key()));
     }
 
     /** */
-    private Collection<GridCacheEntryInfoEx> initialValuesLock(
+    private Collection<GridCacheEntryInfoEx> lockEntries(
         GridCacheContext cctx,
         AffinityTopologyVersion topVer,
         Collection<GridCacheEntryInfo> infos
     ) {
-        List<GridDhtCacheEntry> locked = new ArrayList<>(infos.size());
+        List<GridCacheMapEntry> locked = new ArrayList<>(infos.size());
 
         while (true) {
             Map<KeyCacheObject, GridCacheEntryInfoEx> uniqueEntries = new LinkedHashMap<>();
@@ -179,7 +180,7 @@ public class CacheMapEntries {
                 assert old == null || ATOMIC_VER_COMPARATOR.compare(old.version(), e.version()) < 0 :
                     "Version order mismatch: prev=" + old.version() + ", current=" + e.version();
 
-                GridDhtCacheEntry entry = (GridDhtCacheEntry)cctx.cache().entryEx(key, topVer);
+                GridCacheMapEntry entry = (GridCacheMapEntry)cctx.cache().entryEx(key, topVer);
 
                 locked.add(entry);
 
@@ -219,7 +220,7 @@ public class CacheMapEntries {
     }
 
     /** */
-    private void initialValuesUnlock(
+    private void unlockEntries(
         GridCacheContext<?, ?> cctx,
         AffinityTopologyVersion topVer,
         boolean preload,
@@ -227,10 +228,6 @@ public class CacheMapEntries {
         Collection<GridCacheEntryInfoEx> infos,
         Set<KeyCacheObject> skippedKeys
     ) {
-        // Process deleted entries before locks release.
-        // todo
-        assert cctx.deferredDelete() : this;
-
         try {
             for (GridCacheEntryInfoEx info : infos) {
                 KeyCacheObject key = info.key();
@@ -274,23 +271,10 @@ public class CacheMapEntries {
 
         // Try evict partitions.
         for (GridCacheEntryInfoEx info : infos) {
-            GridDhtCacheEntry entry = info.cacheEntry;
+            GridCacheMapEntry entry = info.cacheEntry;
 
             if (entry != null)
                 entry.onUnlock();
-        }
-
-        if (skippedKeys.size() == infos.size())
-            // Optimization.
-            return;
-
-        // Must touch all entries since update may have deleted entries.
-        // Eviction manager will remove empty entries.
-        for (GridCacheEntryInfoEx info : infos) {
-            GridCacheMapEntry entry = info.cacheEntry;
-
-            if (entry != null && !skippedKeys.contains(entry.key()))
-                entry.touch();
         }
     }
 }

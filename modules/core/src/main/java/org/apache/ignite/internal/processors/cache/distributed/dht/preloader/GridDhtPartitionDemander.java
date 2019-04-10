@@ -52,6 +52,7 @@ import org.apache.ignite.internal.processors.cache.GridCacheContext;
 import org.apache.ignite.internal.processors.cache.GridCacheEntryEx;
 import org.apache.ignite.internal.processors.cache.GridCacheEntryInfo;
 import org.apache.ignite.internal.processors.cache.GridCacheEntryRemovedException;
+import org.apache.ignite.internal.processors.cache.GridCacheMapEntry;
 import org.apache.ignite.internal.processors.cache.GridCacheMvccEntryInfo;
 import org.apache.ignite.internal.processors.cache.GridCachePartitionExchangeManager;
 import org.apache.ignite.internal.processors.cache.GridCacheSharedContext;
@@ -66,10 +67,12 @@ import org.apache.ignite.internal.processors.timeout.GridTimeoutObjectAdapter;
 import org.apache.ignite.internal.util.future.GridCompoundFuture;
 import org.apache.ignite.internal.util.future.GridFinishedFuture;
 import org.apache.ignite.internal.util.future.GridFutureAdapter;
+import org.apache.ignite.internal.util.lang.IgniteInClosure2X;
 import org.apache.ignite.internal.util.lang.IgniteInClosureX;
 import org.apache.ignite.internal.util.tostring.GridToStringExclude;
 import org.apache.ignite.internal.util.tostring.GridToStringInclude;
 import org.apache.ignite.internal.util.typedef.CI1;
+import org.apache.ignite.internal.util.typedef.T2;
 import org.apache.ignite.internal.util.typedef.internal.CU;
 import org.apache.ignite.internal.util.typedef.internal.LT;
 import org.apache.ignite.internal.util.typedef.internal.S;
@@ -911,17 +914,34 @@ public class GridDhtPartitionDemander {
                 }
             }
 
-            for (Map.Entry<Integer, List<GridCacheEntryInfo>> e : cctxs.entrySet()) {
-                GridCacheContext cctx = ctx.cacheContext(e.getKey());
+            CacheMapEntries cacheEntries = new CacheMapEntries();
 
-                CacheMapEntries entries = new CacheMapEntries();
+            for (Map.Entry<Integer, List<GridCacheEntryInfo>> cctxEntry : cctxs.entrySet()) {
+                GridCacheContext cctx = ctx.cacheContext(cctxEntry.getKey());
+                List<GridCacheEntryInfo> cctxInfos = cctxEntry.getValue();
 
-                entries.initialValues(e.getValue(), topVer, cctx, p, true, DR_PRELOAD);
+                try {
+                    Iterable<Map.Entry<GridCacheEntryInfo, GridCacheMapEntry>> cachedEntries =
+                        cacheEntries.initialValues(cctxInfos, topVer, cctx, p, true, DR_PRELOAD);
 
-                //TODO: IGNITE-11330: Update metrics for touched cache only.
-                for (GridCacheContext cctx0 : grp.caches()) {
-                    if (cctx0.statisticsEnabled())
-                        cctx0.cache().metrics0().onRebalanceKeysReceived(e.getValue().size());
+                    for (Map.Entry<GridCacheEntryInfo, GridCacheMapEntry> e : cachedEntries) {
+                        GridCacheMapEntry cached = e.getValue();
+
+                        cached.touch();
+
+                        if (!cctx.events().isRecordable(EVT_CACHE_REBALANCE_OBJECT_LOADED) || cached.isInternal())
+                            continue;
+
+                        cctx.events().addEvent(p, cached.key(), cctx.localNodeId(), null, null, null,
+                            EVT_CACHE_REBALANCE_OBJECT_LOADED, e.getKey().value(), true, null,
+                            false, null, null, null, true);
+                    }
+                } finally {
+                    //TODO: IGNITE-11330: Update metrics for touched cache only.
+                    for (GridCacheContext cctx0 : grp.caches()) {
+                        if (cctx0.statisticsEnabled())
+                            cctx0.cache().metrics0().onRebalanceKeysReceived(cctxInfos.size());
+                    }
                 }
             }
         } finally {
