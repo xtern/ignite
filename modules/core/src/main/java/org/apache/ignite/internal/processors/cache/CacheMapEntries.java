@@ -96,76 +96,6 @@ public class CacheMapEntries {
         }
     }
 
-
-    /** */
-    private static class BatchContext {
-        /** */
-        private final GridCacheContext<?, ?> cctx;
-
-        /** */
-        private final GridDhtLocalPartition part;
-
-        /** */
-        private final boolean preload;
-
-        /** */
-        private final AffinityTopologyVersion topVer;
-
-        /** */
-        private final Set<KeyCacheObject> skipped = new HashSet<>();
-
-        /** */
-        private boolean sorted;
-
-        /** */
-        BatchContext(GridCacheContext<?, ?> cctx, GridDhtLocalPartition part, boolean preload, AffinityTopologyVersion topVer) {
-            this.cctx = cctx;
-            this.preload = preload;
-            this.topVer = topVer;
-            this.part = part;
-        }
-
-        /** */
-        void markRemoved(KeyCacheObject key) {
-            skipped.add(key);
-        }
-
-        /** */
-        boolean preload() {
-            return preload;
-        }
-
-        /** */
-        boolean sorted() {
-            return sorted;
-        }
-
-        /** */
-        AffinityTopologyVersion topVer() {
-            return topVer;
-        }
-
-        /** */
-        GridDhtLocalPartition part() {
-            return part;
-        }
-
-        /** */
-        GridCacheContext<?, ?> context() {
-            return cctx;
-        }
-
-        /** */
-        boolean skipped(KeyCacheObject key) {
-            return skipped.contains(key);
-        }
-
-        /** */
-        void sorted(boolean sorted) {
-            this.sorted = sorted;
-        }
-    }
-
     /** */
     public int initialValues(
         List<GridCacheEntryInfo> infos,
@@ -177,9 +107,9 @@ public class CacheMapEntries {
     ) throws IgniteCheckedException {
         GridDhtLocalPartition part = cctx.topology().localPartition(partId, topVer, true, true);
 
-        BatchContext ctx = new BatchContext(cctx, part, preload, topVer);
+        Set<KeyCacheObject> skippedKeys = new HashSet<>();
 
-        Collection<GridCacheEntryInfoEx> locked = initialValuesLock(ctx, infos);
+        Collection<GridCacheEntryInfoEx> locked = initialValuesLock(cctx, topVer, infos);
 
         try {
             IgniteBiPredicate<CacheDataRow, GridCacheEntryInfo> pred  =
@@ -188,8 +118,6 @@ public class CacheMapEntries {
                     try {
                         GridCacheVersion currVer = row != null ? row.version() :
                             ((GridCacheEntryInfoEx)info).cacheEntry.version();
-
-                        GridCacheContext cctx = ctx.context();
 
                         boolean isStartVer = cctx.versions().isStartVersion(currVer);
 
@@ -208,14 +136,14 @@ public class CacheMapEntries {
                         else
                             update0 = (isStartVer && row == null);
 
-                        update0 |= (!ctx.preload() && ((GridCacheEntryInfoEx)info).cacheEntry.deletedUnlocked());
+                        update0 |= (!preload && ((GridCacheEntryInfoEx)info).cacheEntry.deletedUnlocked());
 
                         ((GridCacheEntryInfoEx)info).update = update0;
 
                         return update0;
                     }
                     catch (GridCacheEntryRemovedException e) {
-                        ctx.markRemoved(info.key());
+                        skippedKeys.add(info.key());
 
                         return false;
                     }
@@ -224,14 +152,18 @@ public class CacheMapEntries {
 
             cctx.offheap().updateAll(cctx, part, locked, pred);
         } finally {
-            initialValuesUnlock(ctx, locked, drType);
+            initialValuesUnlock(cctx, topVer, preload, drType, locked, skippedKeys);
         }
 
-        return infos.size() - ctx.skipped.size();
+        return infos.size() - skippedKeys.size();
     }
 
     /** */
-    private Collection<GridCacheEntryInfoEx> initialValuesLock(BatchContext ctx, Collection<GridCacheEntryInfo> infos) {
+    private Collection<GridCacheEntryInfoEx> initialValuesLock(
+        GridCacheContext cctx,
+        AffinityTopologyVersion topVer,
+        Collection<GridCacheEntryInfo> infos
+    ) {
         List<GridDhtCacheEntry> locked = new ArrayList<>(infos.size());
 
         while (true) {
@@ -247,7 +179,7 @@ public class CacheMapEntries {
                 assert old == null || ATOMIC_VER_COMPARATOR.compare(old.version(), e.version()) < 0 :
                     "Version order mismatch: prev=" + old.version() + ", current=" + e.version();
 
-                GridDhtCacheEntry entry = (GridDhtCacheEntry)ctx.cctx.cache().entryEx(key, ctx.topVer());
+                GridDhtCacheEntry entry = (GridDhtCacheEntry)cctx.cache().entryEx(key, topVer);
 
                 locked.add(entry);
 
@@ -287,14 +219,17 @@ public class CacheMapEntries {
     }
 
     /** */
-    private void initialValuesUnlock(BatchContext ctx, Collection<GridCacheEntryInfoEx> infos, GridDrType drType) {
+    private void initialValuesUnlock(
+        GridCacheContext<?, ?> cctx,
+        AffinityTopologyVersion topVer,
+        boolean preload,
+        GridDrType drType,
+        Collection<GridCacheEntryInfoEx> infos,
+        Set<KeyCacheObject> skippedKeys
+    ) {
         // Process deleted entries before locks release.
         // todo
-        assert ctx.cctx.deferredDelete() : this;
-
-        // Entries to skip eviction manager notification for.
-        // Enqueue entries while holding locks.
-        int size = infos.size();
+        assert cctx.deferredDelete() : this;
 
         try {
             for (GridCacheEntryInfoEx info : infos) {
@@ -306,22 +241,22 @@ public class CacheMapEntries {
                 if (!info.update)
                     continue;
 
-                if (ctx.skipped(key))
+                if (skippedKeys.contains(key))
                     continue;
 
                 if (entry.deleted()) {
-                    ctx.markRemoved(key);
+                    skippedKeys.add(key);
 
                     continue;
                 }
 
                 try {
-                    entry.finishInitialUpdate(info.value(), info.expireTime(), info.ttl(), info.version(), ctx.topVer(),
-                        drType, null, ctx.preload());
+                    entry.finishInitialUpdate(info.value(), info.expireTime(), info.ttl(), info.version(), topVer,
+                        drType, null, preload);
                 } catch (IgniteCheckedException ex) {
-                    ctx.context().logger(getClass()).error("Unable to finish initial update, skip " + key, ex);
+                    cctx.logger(getClass()).error("Unable to finish initial update, skip " + key, ex);
 
-                    ctx.markRemoved(key);
+                    skippedKeys.add(key);
                 }
             }
         }
@@ -345,7 +280,7 @@ public class CacheMapEntries {
                 entry.onUnlock();
         }
 
-        if (ctx.skipped.size() == size)
+        if (skippedKeys.size() == infos.size())
             // Optimization.
             return;
 
@@ -354,7 +289,7 @@ public class CacheMapEntries {
         for (GridCacheEntryInfoEx info : infos) {
             GridCacheMapEntry entry = info.cacheEntry;
 
-            if (entry != null && !ctx.skipped(entry.key()))
+            if (entry != null && !skippedKeys.contains(entry.key()))
                 entry.touch();
         }
     }
