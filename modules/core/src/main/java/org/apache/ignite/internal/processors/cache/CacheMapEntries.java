@@ -121,7 +121,7 @@ public class CacheMapEntries {
                     GridCacheEntryInfoEx infoEx = (GridCacheEntryInfoEx)info;
 
                     IgnitePredicate<CacheDataRow> p =
-                        new GridCacheMapEntry.InitialValuePredicate(infoEx.cacheEntry, info.version(), preload);
+                        new GridCacheEntryProcessor.InitialValuePredicate(infoEx.cacheEntry, info.version(), preload);
 
                     return infoEx.update = p.apply(row);
                 }

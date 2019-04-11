@@ -97,7 +97,7 @@ public class GridDhtPartitionDemander {
 
     /** */
     private static final boolean BATCH_PAGE_WRITE_ENABLED =
-        IgniteSystemProperties.getBoolean(IgniteSystemProperties.IGNITE_DATA_STORAGE_BATCH_PAGE_WRITE, true);
+        IgniteSystemProperties.getBoolean(IgniteSystemProperties.IGNITE_DATA_STORAGE_BATCH_PAGE_WRITE, false);
 
     /** */
     private final GridCacheSharedContext<?, ?> ctx;
