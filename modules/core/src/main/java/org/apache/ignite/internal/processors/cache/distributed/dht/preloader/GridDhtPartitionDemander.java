@@ -892,33 +892,26 @@ public class GridDhtPartitionDemander {
         try {
             Map<Integer, List<GridCacheEntryInfo>> cctxs = new HashMap<>();
 
-            // Map by cache id.
+            // Group by cache id.
             for (GridCacheEntryInfo e : infos) {
-                try {
-                    GridCacheContext cctx0 = grp.sharedGroup() ? ctx.cacheContext(e.cacheId()) : grp.singleCacheContext();
+                if (log.isTraceEnabled())
+                    log.trace("Rebalancing key [key=" + e.key() + ", part=" + p + ", node=" + from.id() + ']');
 
-                    if (cctx0 == null)
-                        return;
-
-                    if (cctx0.isNear())
-                        cctx0 = cctx0.dhtCache().context();
-
-                    if (log.isTraceEnabled())
-                        log.trace("Rebalancing key [key=" + e.key() + ", part=" + p + ", node=" + from.id() + ']');
-
-                    cctxs.computeIfAbsent(cctx0.cacheId(), v -> new ArrayList<>(8)).add(e);
-                }
-                catch (GridDhtInvalidPartitionException ignored) {
-                    if (log.isDebugEnabled())
-                        log.debug("Partition became invalid during rebalancing (will ignore): " + p);
-                }
+                cctxs.computeIfAbsent(e.cacheId(), v -> new ArrayList<>(8)).add(e);
             }
 
             CacheMapEntries cacheEntries = new CacheMapEntries();
 
             for (Map.Entry<Integer, List<GridCacheEntryInfo>> cctxEntry : cctxs.entrySet()) {
-                GridCacheContext cctx = ctx.cacheContext(cctxEntry.getKey());
+                GridCacheContext cctx = grp.sharedGroup() ? ctx.cacheContext(cctxEntry.getKey()) : grp.singleCacheContext();
+
+                if (cctx == null)
+                    return;
+
                 List<GridCacheEntryInfo> cctxInfos = cctxEntry.getValue();
+
+                if (cctx.isNear())
+                    cctx = cctx.dhtCache().context();
 
                 try {
                     Iterable<Map.Entry<GridCacheEntryInfo, GridCacheMapEntry>> cachedEntries =
@@ -936,7 +929,12 @@ public class GridDhtPartitionDemander {
                             EVT_CACHE_REBALANCE_OBJECT_LOADED, e.getKey().value(), true, null,
                             false, null, null, null, true);
                     }
-                } finally {
+                }
+                catch (GridDhtInvalidPartitionException ignored) {
+                    if (log.isDebugEnabled())
+                        log.debug("Partition became invalid during rebalancing (will ignore): " + p);
+                }
+                finally {
                     //TODO: IGNITE-11330: Update metrics for touched cache only.
                     for (GridCacheContext cctx0 : grp.caches()) {
                         if (cctx0.statisticsEnabled())
@@ -944,7 +942,8 @@ public class GridDhtPartitionDemander {
                     }
                 }
             }
-        } finally {
+        }
+        finally {
             grp.listenerLock().readLock().unlock();
         }
     }
