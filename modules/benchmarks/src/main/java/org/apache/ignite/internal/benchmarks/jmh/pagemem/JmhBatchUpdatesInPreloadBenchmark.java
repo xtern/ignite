@@ -78,14 +78,14 @@ import org.openjdk.jmh.runner.options.OptionsBuilder;
  */
 @BenchmarkMode(Mode.AverageTime)
 @Fork(value = 1, jvmArgsAppend = {"-Xms3g", "-Xmx3g", "-server", "-XX:+AggressiveOpts", "-XX:MaxMetaspaceSize=256m"})
-@Measurement(iterations = 11)
+@Measurement(iterations = 5)
 @OutputTimeUnit(TimeUnit.MICROSECONDS)
 @State(Scope.Benchmark)
 @Threads(1)
-@Warmup(iterations = 15)
-public class JmhBatchUpdatesBenchmark {
+@Warmup(iterations = 10)
+public class JmhBatchUpdatesInPreloadBenchmark {
     /** */
-    private static final long DEF_REG_SIZE = 3 * 1024 * 1024 * 1024L;
+    private static final long DEF_REG_SIZE = 20 * 1024 * 1024 * 1024L;
 
     /** */
     private static final int BATCH_SIZE = 500;
@@ -325,7 +325,7 @@ public class JmhBatchUpdatesBenchmark {
         /**
          * Prepare collection.
          */
-        @Setup(Level.Iteration)
+        @Setup(Level.Invocation)
         public void prepare() {
             int iter = iteration++;
             int off = iter * BATCH_SIZE;
@@ -536,7 +536,7 @@ public class JmhBatchUpdatesBenchmark {
      */
     public static void main(String[] args) throws RunnerException {
         final Options options = new OptionsBuilder()
-            .include(JmhBatchUpdatesBenchmark.class.getSimpleName())
+            .include(JmhBatchUpdatesInPreloadBenchmark.class.getSimpleName())
             .build();
 
         new Runner(options).run();
