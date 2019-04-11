@@ -3307,6 +3307,53 @@ public abstract class GridCacheMapEntry extends GridMetadataAwareAdapter impleme
         }
     }
 
+    /** */
+    protected static class InitialValuePredicate implements IgnitePredicate<CacheDataRow> {
+        /** */
+        private final GridCacheMapEntry entry;;
+
+        /** */
+        private final boolean preload;
+
+        /** */
+        private final GridCacheVersion newVer;
+
+        /** */
+        InitialValuePredicate(GridCacheMapEntry entry, GridCacheVersion newVer, boolean preload) {
+            this.entry = entry;
+            this.preload = preload;
+            this.newVer = newVer;
+        }
+
+        /** {@inheritDoc} */
+        @Override public boolean apply(@Nullable CacheDataRow row) {
+            boolean update0;
+
+            GridCacheVersion currentVer = row != null ? row.version() : entry.ver;
+
+            GridCacheContext cctx = entry.cctx;
+
+            boolean isStartVer = cctx.shared().versions().isStartVersion(currentVer);
+
+            if (cctx.group().persistenceEnabled()) {
+                if (!isStartVer) {
+                    if (cctx.atomic())
+                        update0 = ATOMIC_VER_COMPARATOR.compare(currentVer, newVer) < 0;
+                    else
+                        update0 = currentVer.compareTo(newVer) < 0;
+                }
+                else
+                    update0 = true;
+            }
+            else
+                update0 = isStartVer;
+
+            update0 |= (!preload && entry.deletedUnlocked());
+
+            return update0;
+        }
+    };
+
     /** {@inheritDoc} */
     @Override public boolean initialValue(
         CacheObject val,
@@ -3345,32 +3392,7 @@ public abstract class GridCacheMapEntry extends GridMetadataAwareAdapter impleme
 
             boolean update;
 
-            IgnitePredicate<CacheDataRow> p = new IgnitePredicate<CacheDataRow>() {
-                @Override public boolean apply(@Nullable CacheDataRow row) {
-                    boolean update0;
-
-                    GridCacheVersion currentVer = row != null ? row.version() : GridCacheMapEntry.this.ver;
-
-                    boolean isStartVer = cctx.shared().versions().isStartVersion(currentVer);
-
-                    if (cctx.group().persistenceEnabled()) {
-                        if (!isStartVer) {
-                            if (cctx.atomic())
-                                update0 = ATOMIC_VER_COMPARATOR.compare(currentVer, ver) < 0;
-                            else
-                                update0 = currentVer.compareTo(ver) < 0;
-                        }
-                        else
-                            update0 = true;
-                    }
-                    else
-                        update0 = isStartVer;
-
-                    update0 |= (!preload && deletedUnlocked());
-
-                    return update0;
-                }
-            };
+            IgnitePredicate<CacheDataRow> p = new InitialValuePredicate(this, ver, preload);
 
             if (unswapped) {
                 update = p.apply(null);

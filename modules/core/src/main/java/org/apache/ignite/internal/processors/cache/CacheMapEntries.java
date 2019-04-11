@@ -34,6 +34,7 @@ import org.apache.ignite.internal.processors.dr.GridDrType;
 import org.apache.ignite.internal.util.typedef.F;
 import org.apache.ignite.internal.util.typedef.T2;
 import org.apache.ignite.lang.IgniteBiPredicate;
+import org.apache.ignite.lang.IgnitePredicate;
 
 import static org.apache.ignite.internal.processors.cache.GridCacheMapEntry.ATOMIC_VER_COMPARATOR;
 
@@ -117,38 +118,12 @@ public class CacheMapEntries {
             IgniteBiPredicate<CacheDataRow, GridCacheEntryInfo> pred  =
                 new IgniteBiPredicate<CacheDataRow, GridCacheEntryInfo>() {
                 @Override public boolean apply(CacheDataRow row, GridCacheEntryInfo info) {
-                    try {
-                        GridCacheVersion currVer = row != null ? row.version() :
-                            ((GridCacheEntryInfoEx)info).cacheEntry.version();
+                    GridCacheEntryInfoEx infoEx = (GridCacheEntryInfoEx)info;
 
-                        boolean isStartVer = cctx.versions().isStartVersion(currVer);
+                    IgnitePredicate<CacheDataRow> p =
+                        new GridCacheMapEntry.InitialValuePredicate(infoEx.cacheEntry, info.version(), preload);
 
-                        boolean update0;
-
-                        if (cctx.group().persistenceEnabled()) {
-                            if (!isStartVer) {
-                                if (cctx.atomic())
-                                    update0 = ATOMIC_VER_COMPARATOR.compare(currVer, info.version()) < 0;
-                                else
-                                    update0 = currVer.compareTo(info.version()) < 0;
-                            }
-                            else
-                                update0 = true;
-                        }
-                        else
-                            update0 = (isStartVer && row == null);
-
-                        update0 |= (!preload && ((GridCacheEntryInfoEx)info).cacheEntry.deletedUnlocked());
-
-                        ((GridCacheEntryInfoEx)info).update = update0;
-
-                        return update0;
-                    }
-                    catch (GridCacheEntryRemovedException e) {
-                        skipped.add(info.key());
-
-                        return false;
-                    }
+                    return infoEx.update = p.apply(row);
                 }
             };
 
