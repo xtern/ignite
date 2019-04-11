@@ -26,6 +26,7 @@ import java.util.Map;
 import java.util.Set;
 import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.internal.processors.affinity.AffinityTopologyVersion;
+import org.apache.ignite.internal.processors.cache.distributed.dht.GridDhtCacheEntry;
 import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtLocalPartition;
 import org.apache.ignite.internal.processors.cache.persistence.CacheDataRow;
 import org.apache.ignite.internal.processors.cache.version.GridCacheVersion;
@@ -51,7 +52,7 @@ public class CacheMapEntries {
         private final GridCacheEntryInfo delegate;
 
         /** */
-        private GridCacheMapEntry cacheEntry;
+        private GridDhtCacheEntry cacheEntry;
 
         /** */
         private boolean update;
@@ -163,9 +164,9 @@ public class CacheMapEntries {
     private Collection<GridCacheEntryInfoEx> lockEntries(
         GridCacheContext cctx,
         AffinityTopologyVersion topVer,
-        Collection<GridCacheEntryInfo> infos
+        List<GridCacheEntryInfo> infos
     ) {
-        List<GridCacheMapEntry> locked = new ArrayList<>(infos.size());
+        List<GridCacheEntryEx> locked = new ArrayList<>(infos.size());
 
         while (true) {
             Map<KeyCacheObject, GridCacheEntryInfoEx> uniqueEntries = new LinkedHashMap<>();
@@ -180,22 +181,28 @@ public class CacheMapEntries {
                 assert old == null || ATOMIC_VER_COMPARATOR.compare(old.version(), e.version()) < 0 :
                     "Version order mismatch: prev=" + old.version() + ", current=" + e.version();
 
-                GridCacheMapEntry entry = (GridCacheMapEntry)cctx.cache().entryEx(key, topVer);
+                GridCacheEntryEx entry = cctx.cache().entryEx(key, topVer);
 
                 locked.add(entry);
 
-                entryEx.cacheEntry = entry;
+                assert entry instanceof GridDhtCacheEntry;
+
+                entryEx.cacheEntry = (GridDhtCacheEntry)entry;
             }
 
             boolean retry = false;
 
             for (int i = 0; i < locked.size(); i++) {
-                GridCacheMapEntry entry = locked.get(i);
+                GridCacheEntryEx entry = locked.get(i);
 
                 if (entry == null)
                     continue;
 
                 entry.lockEntry();
+
+                GridCacheEntryInfo info = infos.get(i);
+
+                info.value(cctx.kernalContext().cacheObjects().prepareForCache(info.value(), cctx));
 
                 if (entry.obsolete()) {
                     // Unlock all locked.
@@ -228,6 +235,10 @@ public class CacheMapEntries {
         Collection<GridCacheEntryInfoEx> infos,
         Set<KeyCacheObject> skippedKeys
     ) {
+        // Process deleted entries before locks release.
+        // todo
+        assert cctx.deferredDelete() : this;
+
         try {
             for (GridCacheEntryInfoEx info : infos) {
                 KeyCacheObject key = info.key();
