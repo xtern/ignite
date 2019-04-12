@@ -35,7 +35,6 @@ import org.apache.ignite.internal.processors.cache.version.GridCacheVersion;
 import org.apache.ignite.internal.processors.dr.GridDrType;
 import org.apache.ignite.internal.util.typedef.internal.CU;
 import org.apache.ignite.internal.util.typedef.internal.U;
-import org.apache.ignite.lang.IgniteBiPredicate;
 import org.apache.ignite.lang.IgnitePredicate;
 import org.jetbrains.annotations.Nullable;
 
@@ -62,12 +61,14 @@ public class CacheEntryInitialValuesBatch {
     /** */
     private List<InitialValue> initialValues = new ArrayList<>(1);
 
-    class InitialValue extends GridCacheMvccEntryInfo {
+    /** */
+    class InitialValue extends GridCacheEntryInfo {
         private final GridCacheMapEntry entry;
 //        private CacheObject val;
 //        private final GridCacheVersion ver;
-//        private final MvccVersion mvccVer;
-//        private final MvccVersion newMvccVer;
+        // todo unable to use version aware
+        private final MvccVersion mvccVer;
+        private final MvccVersion newMvccVer;
 //        private final long ttl;
 //        private final long expireTime;
         private final boolean preload;
@@ -102,11 +103,9 @@ public class CacheEntryInitialValuesBatch {
             ttl(ttl);
             expireTime(expireTime);
 
-            if (mvccVer != null)
-                mvccVersion(mvccVer);
+            this.mvccVer = mvccVer;
 
-            if (newMvccVer != null)
-                newMvccVersion(newMvccVer);
+            this.newMvccVer = newMvccVer;
 
             this.preload = preload;
             this.topVer = topVer;
@@ -152,15 +151,15 @@ public class CacheEntryInitialValuesBatch {
 
         cctx.group().listenerLock().readLock().lock();
 
-//        lockEntries();
-
         boolean mvcc = cctx.mvccEnabled();
 
         try {
             Set<KeyCacheObject> skipped = new HashSet<>();
 
             // lock stage
-            for (InitialValue v : initialValues) {
+            for (int i = 0; i < initialValues.size(); i++) {
+                InitialValue v = initialValues.get(i);
+
                 v.entry.lockEntry();
 
                 v.expTime = v.expireTime() < 0 ? CU.toExpireTime(v.ttl()) : v.expireTime();
@@ -168,11 +167,11 @@ public class CacheEntryInitialValuesBatch {
                 try {
                     if (!(v.update = prepareInitialValue(v)))
                         v.p = new InitialValuePredicate(v.entry, v.version(), v.preload);
-
+                    else
                     if (mvcc) {
                         assert !v.preload;
 
-                        cctx.offheap().mvccInitialValue(v.entry, v.value(), v.version(), v.expTime, v.mvccVersion(), v.newMvccVersion());
+                        cctx.offheap().mvccInitialValue(v.entry, v.value(), v.version(), v.expTime, v.mvccVer, v.newMvccVer);
                     }
                 }
                 catch (GridCacheEntryRemovedException e) {
@@ -181,76 +180,52 @@ public class CacheEntryInitialValuesBatch {
             }
 
             if (!mvcc) {
-                List<GridCacheEntryInfo> infos = new ArrayList<>(initialValues.size());
+                if (initialValues.size() == 1) {
+                    InitialValue v = initialValues.get(0);
 
-                for (InitialValue v : initialValues) {
-//                    GridCacheEntryInfo info = new GridCacheEntryInfo();
-//
-//                    info.version(v.ver);
-//                    info.value(v.val);
-//                    info.key(v.entry.key);
-//                    info.ttl(v.ttl);
-//                    info.expireTime(v.expTime);
-                    if (!skipped.contains(v.entry.key))
-                        infos.add(v);
+                    boolean update0 = v.entry.storeValue(v.value(), v.expTime, v.version(), v.p);
+
+                    if (update0 && v.p != null)
+                        v.update = update0;
                 }
+                else {
+                    List<GridCacheEntryInfo> infos = new ArrayList<>(initialValues.size());
 
-//                IgniteBiPredicate<CacheDataRow, GridCacheEntryInfo> pred  = update ?
-//                    new IgniteBiPredicate<CacheDataRow, GridCacheEntryInfo>() {
-//                        @Override public boolean apply(CacheDataRow row, GridCacheEntryInfo info) {
-//                            InitialValue infoEx = (InitialValue)info;
-//
-//                            IgnitePredicate<CacheDataRow> p =
-//                                new InitialValuePredicate(infoEx.entry, info.version(), infoEx.preload);
-//
-//                            return infoEx.update = p.apply(row);
-//                        }
-//                    };
+                    for (int i = 0; i < initialValues.size(); i++) {
+                        InitialValue v = initialValues.get(i);
 
-                cctx.offheap().updateAll(cctx, part, infos, (r, i) -> {
-                    InitialValue iv = ((InitialValue)i);
+                        if (!skipped.contains(v.entry.key))
+                            infos.add(v);
+                    }
 
-                    if (iv.p != null)
-                        iv.update = iv.p.apply(r);
+                    cctx.offheap().updateAll(cctx, part, infos, (r, i) -> {
+                        InitialValue iv = ((InitialValue)i);
 
-                    return iv.p == null || iv.update; });
+                        if (iv.p != null)
+                            iv.update = iv.p.apply(r);
+
+                        return iv.p == null || iv.update;
+                    });
+                }
 
             }
 
-            for (InitialValue v : initialValues) {
+            for (int i = 0; i < initialValues.size(); i++) {
+                InitialValue v = initialValues.get(i);
+
                 if (v.update) {
-                    finishInitialUpdate(v.entry, v.value(), v.expireTime(), v.ttl(), v.version(), v.topVer, v.drType, v.mvccVersion(), v.preload, v.fromStore);
+                    finishInitialUpdate(v.entry, v.value(), v.expireTime(), v.ttl(), v.version(), v.topVer, v.drType, v.mvccVer, v.preload, v.fromStore);
 
                     ++initCnt;
                 }
             }
-
-
-
-//                try {
-//                    boolean update = prepareInitialValue(v);
-//
-//                    IgnitePredicate<CacheDataRow> p = update ? null : new InitialValuePredicate(v.entry, v.ver, v.preload);
-//
-//
-//                    if (!mvcc) { // !cctx.mvccEnabled() && (!unswapped  || (unswapped && p == null))
-//                        boolean update0 = v.entry.storeValue(v.val, expTime, v.ver, p);
-//
-//                        if (p != null)
-//                            update = update0;
-//                    }
-//
-//                    if (update) {
-//                        finishInitialUpdate(v.entry, v.val, v.expireTime, v.ttl, v.ver, v.topVer, v.drType, v.mvccVer, v.preload, v.fromStore);
-//
-//                        ++initCnt;
-//                    }
-//                } finally {
-//                    v.entry.unlockEntry();
-//                }
-//            }
         } finally {
-            unlockEntries();
+            for (InitialValue val : initialValues) {
+                val.entry.unlockEntry();
+
+                if (val.unlockCb != null)
+                    val.unlockCb.run();
+            }
 
             cctx.group().listenerLock().readLock().unlock();
         }
@@ -259,89 +234,48 @@ public class CacheEntryInitialValuesBatch {
     }
 
     /** */
-    private void unlockEntries() {
-        for (InitialValue val : initialValues) {
-            val.entry.unlockEntry();
-
-            if (val.unlockCb != null)
-                val.unlockCb.run();
-        }
-    }
-
-    /** */
-//    private void lockEntries() {
-//        // todo improve by copy-pasting from atomic cache
-//        for (InitialValue val : initialValues)
-//            val.entry.lockEntry();
-//    }
-
     private boolean prepareInitialValue(InitialValue iv) throws IgniteCheckedException, GridCacheEntryRemovedException {
         GridCacheMapEntry entry = iv.entry;
         CacheObject val = iv.value();
         GridCacheVersion ver = iv.version();
         boolean preload = iv.preload;
 
-//        entry.ensureFreeSpace();
+        entry.checkObsolete();
 
-//        boolean deferred = false;
-//        boolean obsolete = false;
+        iv.value(cctx.kernalContext().cacheObjects().prepareForCache(val, cctx));
 
-//        GridCacheVersion oldVer = null;
+        final boolean unswapped = ((entry.flags & IS_UNSWAPPED_MASK) != 0);
 
-//        entry.lockListenerReadLock();
-//        entry.lockEntry();
+        boolean update = false;
 
-//        try {
-            entry.checkObsolete();
+        if (unswapped || cctx.mvccEnabled()) {
+            if (!unswapped)
+                entry.unswap(false);
 
+            if (update = new InitialValuePredicate(entry, ver, preload).apply(null)) {
+                // If entry is already unswapped and we are modifying it, we must run deletion callbacks for old value.
+                long oldExpTime = entry.expireTimeUnlocked();
 
+                if (oldExpTime > 0 && oldExpTime < U.currentTimeMillis()) {
+                    if (entry.onExpired(entry.val, null)) {
+                        if (cctx.deferredDelete()) {
+                            final GridCacheVersion oldVer = entry.ver;
 
-            iv.value(cctx.kernalContext().cacheObjects().prepareForCache(val, cctx));
+                            iv.unlockCb = () -> cctx.onDeferredDelete(entry, oldVer);
+                        }
+                        else if (val == null) {
+                            iv.unlockCb = () -> {
+                                entry.onMarkedObsolete();
 
-            final boolean unswapped = ((entry.flags & IS_UNSWAPPED_MASK) != 0);
-
-            boolean update = false;
-
-            if (unswapped || cctx.mvccEnabled()) {
-                if (!unswapped)
-                    entry.unswap(false);
-
-                if (update = new InitialValuePredicate(entry, ver, preload).apply(null)) {
-                    // If entry is already unswapped and we are modifying it, we must run deletion callbacks for old value.
-                    long oldExpTime = entry.expireTimeUnlocked();
-
-                    if (oldExpTime > 0 && oldExpTime < U.currentTimeMillis()) {
-                        if (entry.onExpired(entry.val, null)) {
-                            if (cctx.deferredDelete()) {
-                                final GridCacheVersion oldVer = entry.ver;
-
-                                iv.unlockCb = () -> cctx.onDeferredDelete(entry, oldVer);
-                            }
-                            else if (val == null) {
-                                iv.unlockCb = () -> {
-                                    entry.onMarkedObsolete();
-
-                                    cctx.cache().removeEntry(entry);
-                                };
-                            }
+                                cctx.cache().removeEntry(entry);
+                            };
                         }
                     }
-
-//                    if (!cctx.mvccEnabled())
-//                    p = null;
                 }
             }
+        }
 
-
-
-            return update;
-//        }
-//        finally {
-//            entry.unlockEntry();
-//            entry.unlockListenerReadLock();
-
-
-//        }
+        return update;
     }
 
     /**

@@ -45,8 +45,8 @@ import org.apache.ignite.internal.cluster.ClusterTopologyCheckedException;
 import org.apache.ignite.internal.processors.affinity.AffinityAssignment;
 import org.apache.ignite.internal.processors.affinity.AffinityTopologyVersion;
 import org.apache.ignite.internal.processors.cache.CacheEntryInfoCollection;
+import org.apache.ignite.internal.processors.cache.CacheEntryInitialValuesBatch;
 import org.apache.ignite.internal.processors.cache.CacheGroupContext;
-import org.apache.ignite.internal.processors.cache.CacheMapEntries;
 import org.apache.ignite.internal.processors.cache.CacheMetricsImpl;
 import org.apache.ignite.internal.processors.cache.GridCacheContext;
 import org.apache.ignite.internal.processors.cache.GridCacheEntryEx;
@@ -70,6 +70,7 @@ import org.apache.ignite.internal.util.lang.IgniteInClosureX;
 import org.apache.ignite.internal.util.tostring.GridToStringExclude;
 import org.apache.ignite.internal.util.tostring.GridToStringInclude;
 import org.apache.ignite.internal.util.typedef.CI1;
+import org.apache.ignite.internal.util.typedef.T2;
 import org.apache.ignite.internal.util.typedef.internal.CU;
 import org.apache.ignite.internal.util.typedef.internal.LT;
 import org.apache.ignite.internal.util.typedef.internal.S;
@@ -95,8 +96,8 @@ public class GridDhtPartitionDemander {
     private static final int CHECKPOINT_THRESHOLD = 100;
 
     /** */
-    private static final boolean BATCH_PAGE_WRITE_ENABLED = false;
-        //IgniteSystemProperties.getBoolean(IgniteSystemProperties.IGNITE_DATA_STORAGE_BATCH_PAGE_WRITE, true);
+    private static final boolean BATCH_PAGE_WRITE_ENABLED =
+        IgniteSystemProperties.getBoolean(IgniteSystemProperties.IGNITE_DATA_STORAGE_BATCH_PAGE_WRITE, true);
 
     /** */
     private final GridCacheSharedContext<?, ?> ctx;
@@ -897,7 +898,8 @@ public class GridDhtPartitionDemander {
                 cctxs.computeIfAbsent(e.cacheId(), v -> new ArrayList<>(8)).add(e);
             }
 
-            CacheMapEntries cacheEntries = new CacheMapEntries();
+            //CacheMapEntries cacheEntries = new CacheMapEntries();
+
 
             for (Map.Entry<Integer, List<GridCacheEntryInfo>> cctxEntry : cctxs.entrySet()) {
                 GridCacheContext cctx = grp.sharedGroup() ? ctx.cacheContext(cctxEntry.getKey()) : grp.singleCacheContext();
@@ -910,12 +912,25 @@ public class GridDhtPartitionDemander {
                 if (cctx.isNear())
                     cctx = cctx.dhtCache().context();
 
-                try {
-                    Iterable<Map.Entry<GridCacheEntryInfo, GridCacheMapEntry>> cachedEntries =
-                        cacheEntries.initialValues(cctxInfos, topVer, cctx, p, true, DR_PRELOAD);
+                CacheEntryInitialValuesBatch cacheEntries = new CacheEntryInitialValuesBatch(cctx, p);
 
-                    for (Map.Entry<GridCacheEntryInfo, GridCacheMapEntry> e : cachedEntries) {
-                        GridCacheMapEntry cached = e.getValue();
+                List<T2<GridCacheMapEntry, GridCacheEntryInfo>> res = new ArrayList<>(cctxInfos.size());
+
+                for (GridCacheEntryInfo info : cctxInfos) {
+                    GridCacheMapEntry cached = (GridCacheMapEntry)cctx.cache().entryEx(info.key(), topVer);
+
+                    cacheEntries.add(cached, info.value(), info.version(), null, null, info.ttl(), info.expireTime(), true, topVer, DR_PRELOAD, false);
+
+                    res.add(new T2<>(cached, info));
+                }
+
+                try {
+//                    Iterable<Map.Entry<GridCacheEntryInfo, GridCacheMapEntry>> cachedEntries =
+//                        cacheEntries.initialValues(cctxInfos, topVer, cctx, p, true, DR_PRELOAD);
+                    cacheEntries.initValues();
+
+                    for (Map.Entry<GridCacheMapEntry, GridCacheEntryInfo> e : res) {
+                        GridCacheMapEntry cached = e.getKey();
 
                         cached.touch();
 
@@ -923,7 +938,7 @@ public class GridDhtPartitionDemander {
                             continue;
 
                         cctx.events().addEvent(p, cached.key(), cctx.localNodeId(), null, null, null,
-                            EVT_CACHE_REBALANCE_OBJECT_LOADED, e.getKey().value(), true, null,
+                            EVT_CACHE_REBALANCE_OBJECT_LOADED, e.getValue().value(), true, null,
                             false, null, null, null, true);
                     }
                 }
