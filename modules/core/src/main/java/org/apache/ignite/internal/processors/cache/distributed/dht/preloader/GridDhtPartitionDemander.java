@@ -61,7 +61,6 @@ import org.apache.ignite.internal.processors.cache.distributed.dht.topology.Grid
 import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtPartitionTopology;
 import org.apache.ignite.internal.processors.cache.mvcc.MvccUpdateVersionAware;
 import org.apache.ignite.internal.processors.cache.mvcc.MvccVersionAware;
-import org.apache.ignite.internal.processors.cache.mvcc.txlog.TxState;
 import org.apache.ignite.internal.processors.timeout.GridTimeoutObject;
 import org.apache.ignite.internal.processors.timeout.GridTimeoutObjectAdapter;
 import org.apache.ignite.internal.util.future.GridCompoundFuture;
@@ -1135,8 +1134,6 @@ public class GridDhtPartitionDemander {
                         entry.version(),
                         cctx.mvccEnabled() ? ((MvccVersionAware)entry).mvccVersion() : null,
                         cctx.mvccEnabled() ? ((MvccUpdateVersionAware)entry).newMvccVersion() : null,
-                        cctx.mvccEnabled() ? ((MvccVersionAware)entry).mvccTxState() : TxState.NA,
-                        cctx.mvccEnabled() ? ((MvccUpdateVersionAware)entry).newMvccTxState() : TxState.NA,
                         entry.ttl(),
                         entry.expireTime(),
                         true,

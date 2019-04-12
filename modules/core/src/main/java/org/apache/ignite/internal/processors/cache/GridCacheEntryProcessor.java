@@ -62,8 +62,6 @@ public class GridCacheEntryProcessor {
         GridCacheVersion ver,
         MvccVersion mvccVer,
         MvccVersion newMvccVer,
-        byte mvccTxState,
-        byte newMvccTxState,
         long ttl,
         long expireTime,
         boolean preload,
@@ -90,14 +88,15 @@ public class GridCacheEntryProcessor {
 
             final boolean unswapped = ((entry.flags & IS_UNSWAPPED_MASK) != 0);
 
-            boolean update;
+            boolean update = false;
 
             IgnitePredicate<CacheDataRow> p = new InitialValuePredicate(entry, ver, preload);
 
-            if (unswapped) {
-                update = p.apply(null);
+            if (unswapped || cctx.mvccEnabled()) {
+                if (!unswapped)
+                    entry.unswap(false);
 
-                if (update) {
+                if (update = p.apply(null)) {
                     // If entry is already unswapped and we are modifying it, we must run deletion callbacks for old value.
                     long oldExpTime = entry.expireTimeUnlocked();
 
@@ -118,42 +117,19 @@ public class GridCacheEntryProcessor {
                         cctx.offheap().mvccInitialValue(entry, val, ver, expTime, mvccVer, newMvccVer);
                     }
                     else
-                        storeValue(entry, val, expTime, ver, null);
+                        p = null;
                 }
             }
-            else {
-                if (cctx.mvccEnabled()) {
-                    // cannot identify whether the entry is exist on the fly
-                    entry.unswap(false);
 
-                    if (update = p.apply(null)) {
-                        // If entry is already unswapped and we are modifying it, we must run deletion callbacks for old value.
-                        long oldExpTime = entry.expireTimeUnlocked();
-                        long delta = (oldExpTime == 0 ? 0 : oldExpTime - U.currentTimeMillis());
+            if (!cctx.mvccEnabled() && (!unswapped  || (unswapped && p == null))) {
+                boolean update0 = storeValue(entry, val, expTime, ver, p);
 
-                        if (delta < 0) {
-                            if (onExpired(entry, entry.val, null)) {
-                                if (cctx.deferredDelete()) {
-                                    deferred = true;
-                                    oldVer = entry.ver;
-                                }
-                                else if (val == null)
-                                    obsolete = true;
-                            }
-                        }
-
-                        assert !preload;
-
-                        cctx.offheap().mvccInitialValue(entry, val, ver, expTime, mvccVer, newMvccVer);
-                    }
-                }
-                else
-                    // Optimization to access storage only once.
-                    update = storeValue(entry, val, expTime, ver, p);
+                if (p != null)
+                    update = update0;
             }
 
             if (update) {
-                finishInitialUpdate(entry, val, expireTime, ttl, ver, topVer, drType, mvccVer, preload);
+                finishInitialUpdate(entry, val, expireTime, ttl, ver, topVer, drType, mvccVer, preload, fromStore);
 
                 return true;
             }
@@ -201,9 +177,9 @@ public class GridCacheEntryProcessor {
         AffinityTopologyVersion topVer,
         GridDrType drType,
         MvccVersion mvccVer,
-        boolean preload
+        boolean preload,
+        boolean fromStore
     ) throws IgniteCheckedException {
-        boolean fromStore = false;
         boolean walEnabled = !cctx.isNear() && cctx.group().persistenceEnabled() && cctx.group().walEnabled();
 
         entry.update(val, expireTime, ttl, ver, true);

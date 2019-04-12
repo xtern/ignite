@@ -44,7 +44,6 @@ import org.apache.ignite.internal.processors.cache.distributed.dht.topology.Grid
 import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtPartitionTopology;
 import org.apache.ignite.internal.processors.cache.mvcc.MvccUpdateVersionAware;
 import org.apache.ignite.internal.processors.cache.mvcc.MvccVersionAware;
-import org.apache.ignite.internal.processors.cache.mvcc.txlog.TxState;
 import org.apache.ignite.internal.util.F0;
 import org.apache.ignite.internal.util.GridLeanSet;
 import org.apache.ignite.internal.util.future.GridCompoundFuture;
@@ -542,8 +541,6 @@ public final class GridDhtForceKeysFuture<K, V> extends GridCompoundFuture<Objec
                             info.version(),
                             cctx.mvccEnabled() ? ((MvccVersionAware)info).mvccVersion() : null,
                             cctx.mvccEnabled() ? ((MvccUpdateVersionAware)info).newMvccVersion() : null,
-                            cctx.mvccEnabled() ? ((MvccVersionAware)entry).mvccTxState() : TxState.NA,
-                            cctx.mvccEnabled() ? ((MvccUpdateVersionAware)entry).newMvccTxState() : TxState.NA,
                             info.ttl(),
                             info.expireTime(),
                             true,
