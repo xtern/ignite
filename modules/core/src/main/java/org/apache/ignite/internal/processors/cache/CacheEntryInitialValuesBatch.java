@@ -98,8 +98,8 @@ public class CacheEntryInitialValuesBatch {
         boolean preload,
         AffinityTopologyVersion topVer,
         GridDrType drType,
-        boolean fromStore) {
-
+        boolean fromStore
+    ) {
         initialValues.add(new InitialValue(entry,
             val,
             ver,
@@ -180,7 +180,7 @@ public class CacheEntryInitialValuesBatch {
 //        boolean deferred = false;
 //        boolean obsolete = false;
 
-        GridCacheVersion oldVer = null;
+//        GridCacheVersion oldVer = null;
 
 //        entry.lockListenerReadLock();
 //        entry.lockEntry();
@@ -209,31 +209,31 @@ public class CacheEntryInitialValuesBatch {
                     if (oldExpTime > 0 && oldExpTime < U.currentTimeMillis()) {
                         if (entry.onExpired(entry.val, null)) {
                             if (cctx.deferredDelete()) {
-                                iv.unlockCb = () -> {
-                                    iv.entry.onMarkedObsolete();
+                                final GridCacheVersion oldVer = entry.ver;
 
-                                    cctx.cache().removeEntry(iv.entry);
-                                };
+                                iv.unlockCb = () -> cctx.onDeferredDelete(entry, oldVer);
                             }
                             else if (val == null) {
-                                assert oldVer != null;
+                                iv.unlockCb = () -> {
+                                    entry.onMarkedObsolete();
 
-                                iv.unlockCb = () -> cctx.onDeferredDelete(iv.entry, oldVer);
+                                    cctx.cache().removeEntry(entry);
+                                };
                             }
                         }
                     }
 
-                    if (cctx.mvccEnabled()) {
-                        assert !preload;
-
-                        cctx.offheap().mvccInitialValue(entry, val, ver, expTime, mvccVer, newMvccVer);
-                    }
-                    else
-                        p = null;
+//                    if (!cctx.mvccEnabled())
+                    p = null;
                 }
             }
 
-            if (!cctx.mvccEnabled() && (!unswapped  || (unswapped && p == null))) {
+            if (cctx.mvccEnabled()) {
+                assert !preload;
+
+                cctx.offheap().mvccInitialValue(entry, val, ver, expTime, mvccVer, newMvccVer);
+            }
+            else { // !cctx.mvccEnabled() && (!unswapped  || (unswapped && p == null))
                 boolean update0 = entry.storeValue(val, expTime, ver, p);
 
                 if (p != null)
