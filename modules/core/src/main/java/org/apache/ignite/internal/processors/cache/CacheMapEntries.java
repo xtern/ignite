@@ -121,7 +121,7 @@ public class CacheMapEntries {
                     GridCacheEntryInfoEx infoEx = (GridCacheEntryInfoEx)info;
 
                     IgnitePredicate<CacheDataRow> p =
-                        new GridCacheEntryProcessor.InitialValuePredicate(infoEx.cacheEntry, info.version(), preload);
+                        new CacheEntryInitialValuesBatch.InitialValuePredicate(infoEx.cacheEntry, info.version(), preload);
 
                     return infoEx.update = p.apply(row);
                 }
@@ -232,15 +232,15 @@ public class CacheMapEntries {
 
                     continue;
                 }
-
-                try {
-                    entry.proc.finishInitialUpdate(entry, info.value(), info.expireTime(), info.ttl(), info.version(), topVer,
-                        drType, null, preload, false);
-                } catch (IgniteCheckedException ex) {
-                    cctx.logger(getClass()).error("Unable to finish initial update, skip " + key, ex);
-
-                    skippedKeys.add(key);
-                }
+// todo
+//                try {
+//                    entry.proc.finishInitialUpdate(entry, info.value(), info.expireTime(), info.ttl(), info.version(), topVer,
+//                        drType, null, preload, false);
+//                } catch (IgniteCheckedException ex) {
+//                    cctx.logger(getClass()).error("Unable to finish initial update, skip " + key, ex);
+//
+//                    skippedKeys.add(key);
+//                }
             }
         }
         finally {

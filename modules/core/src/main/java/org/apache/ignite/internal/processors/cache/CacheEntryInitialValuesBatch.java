@@ -17,46 +17,74 @@
 
 package org.apache.ignite.internal.processors.cache;
 
+import java.util.ArrayList;
+import java.util.List;
 import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.internal.pagemem.wal.record.DataEntry;
 import org.apache.ignite.internal.pagemem.wal.record.DataRecord;
 import org.apache.ignite.internal.pagemem.wal.record.MvccDataEntry;
 import org.apache.ignite.internal.pagemem.wal.record.MvccDataRecord;
 import org.apache.ignite.internal.processors.affinity.AffinityTopologyVersion;
-import org.apache.ignite.internal.processors.cache.CacheObject;
-import org.apache.ignite.internal.processors.cache.GridCacheContext;
-import org.apache.ignite.internal.processors.cache.GridCacheEntryRemovedException;
-import org.apache.ignite.internal.processors.cache.GridCacheMapEntry;
 import org.apache.ignite.internal.processors.cache.mvcc.MvccUtils;
 import org.apache.ignite.internal.processors.cache.mvcc.MvccVersion;
 import org.apache.ignite.internal.processors.cache.persistence.CacheDataRow;
-import org.apache.ignite.internal.processors.cache.persistence.DataRegion;
 import org.apache.ignite.internal.processors.cache.version.GridCacheVersion;
 import org.apache.ignite.internal.processors.dr.GridDrType;
-import org.apache.ignite.internal.util.IgniteTree;
 import org.apache.ignite.internal.util.typedef.internal.CU;
 import org.apache.ignite.internal.util.typedef.internal.U;
 import org.apache.ignite.lang.IgnitePredicate;
 import org.jetbrains.annotations.Nullable;
 
-import static org.apache.ignite.events.EventType.EVT_CACHE_OBJECT_EXPIRED;
 import static org.apache.ignite.internal.processors.cache.GridCacheMapEntry.ATOMIC_VER_COMPARATOR;
 import static org.apache.ignite.internal.processors.cache.GridCacheMapEntry.IS_UNSWAPPED_MASK;
 import static org.apache.ignite.internal.processors.cache.GridCacheOperation.DELETE;
-import static org.apache.ignite.internal.processors.dr.GridDrType.DR_NONE;
 
 /** */
-public class GridCacheEntryProcessor {
+public class CacheEntryInitialValuesBatch {
     /** */
     private final GridCacheContext cctx;
 
     /** */
-    GridCacheEntryProcessor(GridCacheContext cctx) {
+    public CacheEntryInitialValuesBatch(GridCacheContext cctx) {
         this.cctx = cctx;
     }
 
-    /** {@inheritDoc} */
-    public boolean initialValue(
+    /** */
+    private List<InitialValue> initialValues = new ArrayList<>(1);
+
+    class InitialValue {
+        private final GridCacheMapEntry entry;
+        private final CacheObject val;
+        private final GridCacheVersion ver;
+        private final MvccVersion mvccVer;
+        private final MvccVersion newMvccVer;
+        private final long ttl;
+        private final long expireTime;
+        private final boolean preload;
+        private final AffinityTopologyVersion topVer;
+        private final GridDrType drType;
+        private final boolean fromStore;
+
+        public InitialValue(GridCacheMapEntry entry, CacheObject val,
+            GridCacheVersion ver, MvccVersion mvccVer, MvccVersion newMvccVer, long ttl, long expireTime,
+            boolean preload,
+            AffinityTopologyVersion topVer, GridDrType drType, boolean fromStore) {
+            this.entry = entry;
+            this.val = val;
+            this.ver = ver;
+            this.mvccVer = mvccVer;
+            this.newMvccVer = newMvccVer;
+            this.ttl = ttl;
+            this.expireTime = expireTime;
+            this.preload = preload;
+            this.topVer = topVer;
+            this.drType = drType;
+            this.fromStore = fromStore;
+        }
+    }
+
+    /** */
+    public CacheEntryInitialValuesBatch add(
         GridCacheMapEntry entry,
         CacheObject val,
         GridCacheVersion ver,
@@ -67,9 +95,49 @@ public class GridCacheEntryProcessor {
         boolean preload,
         AffinityTopologyVersion topVer,
         GridDrType drType,
-        boolean fromStore
-    ) throws IgniteCheckedException, GridCacheEntryRemovedException {
-        ensureFreeSpace(entry);
+        boolean fromStore) {
+
+        initialValues.add(new InitialValue(entry,
+            val,
+            ver,
+            mvccVer,
+            newMvccVer,
+            ttl,
+            expireTime,
+            preload,
+            topVer,
+            drType,
+            fromStore));
+
+        return this;
+    }
+
+    /** */
+    public int initValues() throws IgniteCheckedException, GridCacheEntryRemovedException {
+        int initCnt = 0;
+
+        for (InitialValue val : initialValues) {
+            if (initialValue(val))
+                ++initCnt;
+        }
+
+        return initCnt;
+    }
+
+    private boolean initialValue(InitialValue iv) throws IgniteCheckedException, GridCacheEntryRemovedException {
+        GridCacheMapEntry entry = iv.entry;
+        CacheObject val = iv.val;
+        GridCacheVersion ver = iv.ver;
+        MvccVersion mvccVer = iv.mvccVer;
+        MvccVersion newMvccVer = iv.newMvccVer;
+        long ttl = iv.ttl;
+        long expireTime = iv.expireTime;
+        boolean preload = iv.preload;
+        AffinityTopologyVersion topVer = iv.topVer;
+        GridDrType drType = iv.drType;
+        boolean fromStore = iv.fromStore;
+        
+        entry.ensureFreeSpace();
 
         boolean deferred = false;
         boolean obsolete = false;
@@ -101,7 +169,7 @@ public class GridCacheEntryProcessor {
                     long oldExpTime = entry.expireTimeUnlocked();
 
                     if (oldExpTime > 0 && oldExpTime < U.currentTimeMillis()) {
-                        if (onExpired(entry, entry.val, null)) {
+                        if (entry.onExpired(entry.val, null)) {
                             if (cctx.deferredDelete()) {
                                 deferred = true;
                                 oldVer = entry.ver;
@@ -122,7 +190,7 @@ public class GridCacheEntryProcessor {
             }
 
             if (!cctx.mvccEnabled() && (!unswapped  || (unswapped && p == null))) {
-                boolean update0 = storeValue(entry, val, expTime, ver, p);
+                boolean update0 = entry.storeValue(val, expTime, ver, p);
 
                 if (p != null)
                     update = update0;
@@ -230,7 +298,7 @@ public class GridCacheEntryProcessor {
             }
         }
 
-        drReplicate(entry, drType, val, ver, topVer);
+        entry.drReplicate(drType, val, ver, topVer);
 
         if (!skipQryNtf) {
             cctx.continuousQueries().onEntryUpdated(
@@ -254,133 +322,6 @@ public class GridCacheEntryProcessor {
         }
     }
 
-    /**
-     * Stores value in off-heap.
-     *
-     * @param val Value.
-     * @param expireTime Expire time.
-     * @param ver New entry version.
-     * @param predicate Optional predicate.
-     * @return {@code True} if storage was modified.
-     * @throws IgniteCheckedException If update failed.
-     */
-    protected boolean storeValue(
-        GridCacheMapEntry entry,
-        @Nullable CacheObject val,
-        long expireTime,
-        GridCacheVersion ver,
-        @Nullable IgnitePredicate<CacheDataRow> predicate) throws IgniteCheckedException {
-        assert entry.lock.isHeldByCurrentThread();
-
-        GridCacheMapEntry.UpdateClosure closure = new GridCacheMapEntry.UpdateClosure(entry, val, ver, expireTime, predicate);
-
-        cctx.offheap().invoke(cctx, entry.key(), entry.localPartition(), closure);
-
-        return closure.treeOp != IgniteTree.OperationType.NOOP;
-    }
-
-    /**
-     * Perform DR if needed.
-     *
-     * @param drType DR type.
-     * @param val Value.
-     * @param ver Version.
-     * @param topVer Topology version.
-     * @throws IgniteCheckedException In case of exception.
-     */
-    private void drReplicate(GridCacheMapEntry entry, GridDrType drType, @Nullable CacheObject val, GridCacheVersion ver, AffinityTopologyVersion topVer)
-        throws IgniteCheckedException {
-        if (cctx.isDrEnabled() && drType != DR_NONE && !entry.isInternal())
-            cctx.dr().replicate(entry.key, val, entry.rawTtl(), entry.rawExpireTime(), ver.conflictVersion(), drType, topVer);
-    }
-
-    /**
-     * Evicts necessary number of data pages if per-page eviction is configured in current {@link DataRegion}.
-     */
-    private void ensureFreeSpace(GridCacheMapEntry entry) throws IgniteCheckedException {
-        // Deadlock alert: evicting data page causes removing (and locking) all entries on the page one by one.
-        assert !entry.lock.isHeldByCurrentThread();
-
-        cctx.shared().database().ensureFreeSpace(cctx.dataRegion());
-    }
-
-    /**
-     * @param expiredVal Expired value.
-     * @param obsoleteVer Version.
-     * @return {@code True} if entry was marked as removed.
-     * @throws IgniteCheckedException If failed.
-     */
-    private boolean onExpired(GridCacheMapEntry entry, CacheObject expiredVal, GridCacheVersion obsoleteVer) throws IgniteCheckedException {
-        assert expiredVal != null;
-
-        boolean rmvd = false;
-
-        if (entry.mvccExtras() != null)
-            return false;
-
-        if (cctx.deferredDelete() && !entry.detached() && !entry.isInternal()) {
-            if (!entry.deletedUnlocked() && !entry.isStartVersion()) {
-                entry.update(null, 0L, 0L, entry.ver, true);
-
-                entry.deletedUnlocked(true);
-
-                rmvd = true;
-            }
-        }
-        else {
-            if (obsoleteVer == null)
-                obsoleteVer = cctx.versions().next(entry.ver);
-
-            if (entry.markObsolete0(obsoleteVer, true, null))
-                rmvd = true;
-        }
-
-//        if (log.isTraceEnabled())
-//            log.trace("onExpired clear [key=" + key + ", entry=" + System.identityHashCode(this) + ']');
-
-        cctx.shared().database().checkpointReadLock();
-
-        try {
-            if (cctx.mvccEnabled())
-                cctx.offheap().mvccRemoveAll(entry);
-            else
-                removeValue(entry);
-        }
-        finally {
-            cctx.shared().database().checkpointReadUnlock();
-        }
-
-        if (cctx.events().isRecordable(EVT_CACHE_OBJECT_EXPIRED)) {
-            cctx.events().addEvent(entry.partition(),
-                entry.key,
-                cctx.localNodeId(),
-                null,
-                EVT_CACHE_OBJECT_EXPIRED,
-                null,
-                false,
-                expiredVal,
-                expiredVal != null,
-                null,
-                null,
-                null,
-                true);
-        }
-
-        cctx.continuousQueries().onEntryExpired(entry, entry.key, expiredVal);
-
-        return rmvd;
-    }
-
-    /**
-     * Removes value from offheap.
-     *
-     * @throws IgniteCheckedException If failed.
-     */
-    protected void removeValue(GridCacheMapEntry entry) throws IgniteCheckedException {
-        assert entry.lock.isHeldByCurrentThread();
-
-        cctx.offheap().remove(cctx, entry.key, entry.partition(), entry.localPartition());
-    }
 
     /** */
     protected static class InitialValuePredicate implements IgnitePredicate<CacheDataRow> {

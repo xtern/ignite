@@ -231,8 +231,6 @@ public abstract class GridCacheMapEntry extends GridMetadataAwareAdapter impleme
     @GridToStringExclude
     private final ReadWriteLock listenerLock;
 
-    protected final GridCacheEntryProcessor proc;
-
     /**
      * Flags:
      * <ul>
@@ -255,8 +253,6 @@ public abstract class GridCacheMapEntry extends GridMetadataAwareAdapter impleme
             log = U.logger(cctx.kernalContext(), logRef, GridCacheMapEntry.class);
 
         key = (KeyCacheObject)cctx.kernalContext().cacheObjects().prepareForCache(key, cctx);
-
-        proc = new GridCacheEntryProcessor(cctx);
 
         assert key != null;
 
@@ -2627,7 +2623,7 @@ public abstract class GridCacheMapEntry extends GridMetadataAwareAdapter impleme
      * @param topVer Topology version.
      * @throws IgniteCheckedException In case of exception.
      */
-    private void drReplicate(GridDrType drType, @Nullable CacheObject val, GridCacheVersion ver, AffinityTopologyVersion topVer)
+    protected void drReplicate(GridDrType drType, @Nullable CacheObject val, GridCacheVersion ver, AffinityTopologyVersion topVer)
         throws IgniteCheckedException {
         if (cctx.isDrEnabled() && drType != DR_NONE && !isInternal())
             cctx.dr().replicate(key, val, rawTtl(), rawExpireTime(), ver.conflictVersion(), drType, topVer);
@@ -3324,7 +3320,8 @@ public abstract class GridCacheMapEntry extends GridMetadataAwareAdapter impleme
         GridDrType drType,
         boolean fromStore
     ) throws IgniteCheckedException, GridCacheEntryRemovedException {
-        return proc.initialValue(this, val,
+
+        return new CacheEntryInitialValuesBatch(cctx).add(this, val,
             ver,
             mvccVer,
             newMvccVer,
@@ -3333,7 +3330,7 @@ public abstract class GridCacheMapEntry extends GridMetadataAwareAdapter impleme
             preload,
             topVer,
             drType,
-            fromStore);
+            fromStore).initValues() == 1;
     }
 
     /**
@@ -3864,7 +3861,7 @@ public abstract class GridCacheMapEntry extends GridMetadataAwareAdapter impleme
      * @return {@code True} if entry was marked as removed.
      * @throws IgniteCheckedException If failed.
      */
-    private boolean onExpired(CacheObject expiredVal, GridCacheVersion obsoleteVer) throws IgniteCheckedException {
+    protected boolean onExpired(CacheObject expiredVal, GridCacheVersion obsoleteVer) throws IgniteCheckedException {
         assert expiredVal != null;
 
         boolean rmvd = false;
@@ -4312,7 +4309,7 @@ public abstract class GridCacheMapEntry extends GridMetadataAwareAdapter impleme
     /**
      * Evicts necessary number of data pages if per-page eviction is configured in current {@link DataRegion}.
      */
-    private void ensureFreeSpace() throws IgniteCheckedException {
+    protected void ensureFreeSpace() throws IgniteCheckedException {
         // Deadlock alert: evicting data page causes removing (and locking) all entries on the page one by one.
         assert !lock.isHeldByCurrentThread();
 
