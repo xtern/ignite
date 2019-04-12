@@ -95,8 +95,8 @@ public class GridDhtPartitionDemander {
     private static final int CHECKPOINT_THRESHOLD = 100;
 
     /** */
-    private static final boolean BATCH_PAGE_WRITE_ENABLED =
-        IgniteSystemProperties.getBoolean(IgniteSystemProperties.IGNITE_DATA_STORAGE_BATCH_PAGE_WRITE, false);
+    private static final boolean BATCH_PAGE_WRITE_ENABLED = false;
+        //IgniteSystemProperties.getBoolean(IgniteSystemProperties.IGNITE_DATA_STORAGE_BATCH_PAGE_WRITE, true);
 
     /** */
     private final GridCacheSharedContext<?, ?> ctx;

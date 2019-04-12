@@ -3321,7 +3321,7 @@ public abstract class GridCacheMapEntry extends GridMetadataAwareAdapter impleme
         boolean fromStore
     ) throws IgniteCheckedException, GridCacheEntryRemovedException {
 
-        return new CacheEntryInitialValuesBatch(cctx).add(this, val,
+        return new CacheEntryInitialValuesBatch(cctx, partition()).add(this, val,
             ver,
             mvccVer,
             newMvccVer,
