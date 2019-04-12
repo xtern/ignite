@@ -3453,7 +3453,7 @@ public abstract class GridCacheMapEntry extends GridMetadataAwareAdapter impleme
             }
 
             if (update) {
-                finishInitialUpdate(val, expireTime, ttl, ver, topVer, drType, mvccVer, preload);
+                finishInitialUpdate(val, expireTime, ttl, ver, topVer, drType, mvccVer, preload, fromStore);
 
                 return true;
             }
@@ -3500,9 +3500,9 @@ public abstract class GridCacheMapEntry extends GridMetadataAwareAdapter impleme
         AffinityTopologyVersion topVer,
         GridDrType drType,
         MvccVersion mvccVer,
-        boolean preload
+        boolean preload,
+        boolean fromStore
     ) throws IgniteCheckedException {
-        boolean fromStore = false;
         boolean walEnabled = !cctx.isNear() && cctx.group().persistenceEnabled() && cctx.group().walEnabled();
 
         update(val, expireTime, ttl, ver, true);
