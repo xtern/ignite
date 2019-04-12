@@ -704,8 +704,6 @@ public class GridCacheTestEntryEx extends GridMetadataAwareAdapter implements Gr
         GridCacheVersion ver,
         MvccVersion mvccVer,
         MvccVersion newMvccVer,
-        byte mvccTxState,
-        byte newMvccTxState,
         long ttl,
         long expireTime,
         boolean preload,

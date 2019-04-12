@@ -17,6 +17,7 @@
 
 package org.apache.ignite.internal.processors.cache;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import javax.cache.Cache;
@@ -46,6 +47,7 @@ import org.apache.ignite.internal.util.lang.GridCloseableIterator;
 import org.apache.ignite.internal.util.lang.GridCursor;
 import org.apache.ignite.internal.util.lang.GridIterator;
 import org.apache.ignite.internal.util.lang.IgniteInClosure2X;
+import org.apache.ignite.lang.IgniteBiPredicate;
 import org.apache.ignite.lang.IgniteBiTuple;
 import org.jetbrains.annotations.Nullable;
 
@@ -187,6 +189,20 @@ public interface IgniteCacheOffheapManager {
      */
     public void invoke(GridCacheContext cctx, KeyCacheObject key, GridDhtLocalPartition part, OffheapInvokeClosure c)
         throws IgniteCheckedException;
+
+    /**
+     * @param cctx Cache context.
+     * @param part Partition.
+     * @param entries Entries.
+     * @param pred Entry update predicate.
+     * @throws IgniteCheckedException If failed.
+     */
+    public void updateAll(
+        GridCacheContext cctx,
+        GridDhtLocalPartition part,
+        Collection<? extends GridCacheEntryInfo> entries,
+        IgniteBiPredicate<CacheDataRow, GridCacheEntryInfo> pred
+    ) throws IgniteCheckedException;
 
     /**
      * @param cctx Cache context.
@@ -717,6 +733,19 @@ public interface IgniteCacheOffheapManager {
             GridCacheVersion ver,
             long expireTime,
             @Nullable CacheDataRow oldRow) throws IgniteCheckedException;
+
+
+        /**
+         * @param cctx Cache context.
+         * @param entries Entries.
+         * @param pred Entry update predicate.
+         * @throws IgniteCheckedException If failed.
+         */
+        public void updateAll(
+            GridCacheContext cctx,
+            Collection<? extends GridCacheEntryInfo> entries,
+            IgniteBiPredicate<CacheDataRow, GridCacheEntryInfo> pred
+        ) throws IgniteCheckedException;
 
         /**
          * @param cctx Cache context.

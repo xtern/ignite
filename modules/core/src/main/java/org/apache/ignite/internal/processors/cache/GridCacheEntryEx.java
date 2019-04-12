@@ -33,7 +33,6 @@ import org.apache.ignite.internal.processors.cache.distributed.dht.atomic.GridDh
 import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtLocalPartition;
 import org.apache.ignite.internal.processors.cache.mvcc.MvccSnapshot;
 import org.apache.ignite.internal.processors.cache.mvcc.MvccVersion;
-import org.apache.ignite.internal.processors.cache.mvcc.txlog.TxState;
 import org.apache.ignite.internal.processors.cache.persistence.CacheDataRow;
 import org.apache.ignite.internal.processors.cache.transactions.IgniteInternalTx;
 import org.apache.ignite.internal.processors.cache.transactions.IgniteTxKey;
@@ -769,8 +768,7 @@ public interface GridCacheEntryEx {
         AffinityTopologyVersion topVer,
         GridDrType drType,
         boolean fromStore) throws IgniteCheckedException, GridCacheEntryRemovedException {
-        return initialValue(val, ver, null, null, TxState.NA, TxState.NA,
-            ttl, expireTime, preload, topVer, drType, fromStore);
+        return initialValue(val, ver, null, null, ttl, expireTime, preload, topVer, drType, fromStore);
     }
 
     /**
@@ -780,8 +778,6 @@ public interface GridCacheEntryEx {
      * @param ver Version to use.
      * @param mvccVer Mvcc version.
      * @param newMvccVer New mvcc version.
-     * @param mvccTxState Tx state hint for mvcc version.
-     * @param newMvccTxState Tx state hint for new mvcc version.
      * @param ttl Time to live.
      * @param expireTime Expiration time.
      * @param preload Flag indicating whether entry is being preloaded.
@@ -796,8 +792,6 @@ public interface GridCacheEntryEx {
         GridCacheVersion ver,
         @Nullable MvccVersion mvccVer,
         @Nullable MvccVersion newMvccVer,
-        byte mvccTxState,
-        byte newMvccTxState,
         long ttl,
         long expireTime,
         boolean preload,
