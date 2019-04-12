@@ -235,7 +235,7 @@ public class CacheMapEntries {
 
                 try {
                     entry.finishInitialUpdate(info.value(), info.expireTime(), info.ttl(), info.version(), topVer,
-                        drType, null, preload);
+                        drType, null, preload, false);
                 } catch (IgniteCheckedException ex) {
                     cctx.logger(getClass()).error("Unable to finish initial update, skip " + key, ex);
 
