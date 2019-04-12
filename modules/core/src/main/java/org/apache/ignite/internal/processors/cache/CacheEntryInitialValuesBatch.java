@@ -65,6 +65,9 @@ public class CacheEntryInitialValuesBatch {
         private final GridDrType drType;
         private final boolean fromStore;
 
+        private Runnable unlockCb;
+//        private boolean obsolete;
+
         public InitialValue(GridCacheMapEntry entry, CacheObject val,
             GridCacheVersion ver, MvccVersion mvccVer, MvccVersion newMvccVer, long ttl, long expireTime,
             boolean preload,
@@ -116,12 +119,47 @@ public class CacheEntryInitialValuesBatch {
     public int initValues() throws IgniteCheckedException, GridCacheEntryRemovedException {
         int initCnt = 0;
 
-        for (InitialValue val : initialValues) {
-            if (initialValue(val))
-                ++initCnt;
+        cctx.shared().database().ensureFreeSpace(cctx.dataRegion());
+
+        cctx.group().listenerLock().readLock().lock();
+
+        lockEntries();
+
+        try {
+            for (InitialValue val : initialValues) {
+                 val.entry.lockEntry();
+
+                try {
+                    if (initialValue(val))
+                        ++initCnt;
+                } finally {
+                    val.entry.unlockEntry();
+                }
+            }
+        } finally {
+            unlockEntries();
+
+            cctx.group().listenerLock().readLock().unlock();
         }
 
         return initCnt;
+    }
+
+    /** */
+    private void unlockEntries() {
+        for (InitialValue val : initialValues) {
+            val.entry.unlockEntry();
+
+            if (val.unlockCb != null)
+                val.unlockCb.run();
+        }
+    }
+
+    /** */
+    private void lockEntries() {
+        // todo improve by copy-pasting from atomic cache
+        for (InitialValue val : initialValues)
+            val.entry.lockEntry();
     }
 
     private boolean initialValue(InitialValue iv) throws IgniteCheckedException, GridCacheEntryRemovedException {
@@ -136,18 +174,18 @@ public class CacheEntryInitialValuesBatch {
         AffinityTopologyVersion topVer = iv.topVer;
         GridDrType drType = iv.drType;
         boolean fromStore = iv.fromStore;
-        
-        entry.ensureFreeSpace();
 
-        boolean deferred = false;
-        boolean obsolete = false;
+//        entry.ensureFreeSpace();
+
+//        boolean deferred = false;
+//        boolean obsolete = false;
 
         GridCacheVersion oldVer = null;
 
-        entry.lockListenerReadLock();
-        entry.lockEntry();
+//        entry.lockListenerReadLock();
+//        entry.lockEntry();
 
-        try {
+//        try {
             entry.checkObsolete();
 
             long expTime = expireTime < 0 ? CU.toExpireTime(ttl) : expireTime;
@@ -171,11 +209,17 @@ public class CacheEntryInitialValuesBatch {
                     if (oldExpTime > 0 && oldExpTime < U.currentTimeMillis()) {
                         if (entry.onExpired(entry.val, null)) {
                             if (cctx.deferredDelete()) {
-                                deferred = true;
-                                oldVer = entry.ver;
+                                iv.unlockCb = () -> {
+                                    iv.entry.onMarkedObsolete();
+
+                                    cctx.cache().removeEntry(iv.entry);
+                                };
                             }
-                            else if (val == null)
-                                obsolete = true;
+                            else if (val == null) {
+                                assert oldVer != null;
+
+                                iv.unlockCb = () -> cctx.onDeferredDelete(iv.entry, oldVer);
+                            }
                         }
                     }
 
@@ -203,25 +247,13 @@ public class CacheEntryInitialValuesBatch {
             }
 
             return false;
-        }
-        finally {
-            entry.unlockEntry();
-            entry.unlockListenerReadLock();
+//        }
+//        finally {
+//            entry.unlockEntry();
+//            entry.unlockListenerReadLock();
 
-            // It is necessary to execute these callbacks outside of lock to avoid deadlocks.
 
-            if (obsolete) {
-                entry.onMarkedObsolete();
-
-                cctx.cache().removeEntry(entry);
-            }
-
-            if (deferred) {
-                assert oldVer != null;
-
-                cctx.onDeferredDelete(entry, oldVer);
-            }
-        }
+//        }
     }
 
     /**
