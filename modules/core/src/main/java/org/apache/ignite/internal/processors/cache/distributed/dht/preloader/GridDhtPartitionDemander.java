@@ -46,13 +46,11 @@ import org.apache.ignite.internal.processors.affinity.AffinityAssignment;
 import org.apache.ignite.internal.processors.affinity.AffinityTopologyVersion;
 import org.apache.ignite.internal.processors.cache.CacheEntryInfoCollection;
 import org.apache.ignite.internal.processors.cache.CacheGroupContext;
-import org.apache.ignite.internal.processors.cache.CacheMapEntries;
 import org.apache.ignite.internal.processors.cache.CacheMetricsImpl;
 import org.apache.ignite.internal.processors.cache.GridCacheContext;
 import org.apache.ignite.internal.processors.cache.GridCacheEntryEx;
 import org.apache.ignite.internal.processors.cache.GridCacheEntryInfo;
 import org.apache.ignite.internal.processors.cache.GridCacheEntryRemovedException;
-import org.apache.ignite.internal.processors.cache.GridCacheMapEntry;
 import org.apache.ignite.internal.processors.cache.GridCacheMvccEntryInfo;
 import org.apache.ignite.internal.processors.cache.GridCachePartitionExchangeManager;
 import org.apache.ignite.internal.processors.cache.GridCacheSharedContext;
@@ -62,6 +60,7 @@ import org.apache.ignite.internal.processors.cache.distributed.dht.topology.Grid
 import org.apache.ignite.internal.processors.cache.mvcc.MvccUpdateVersionAware;
 import org.apache.ignite.internal.processors.cache.mvcc.MvccVersionAware;
 import org.apache.ignite.internal.processors.cache.mvcc.txlog.TxState;
+import org.apache.ignite.internal.processors.cache.persistence.CacheDataRow;
 import org.apache.ignite.internal.processors.timeout.GridTimeoutObject;
 import org.apache.ignite.internal.processors.timeout.GridTimeoutObjectAdapter;
 import org.apache.ignite.internal.util.future.GridCompoundFuture;
@@ -890,7 +889,7 @@ public class GridDhtPartitionDemander {
         try {
             Map<Integer, List<GridCacheEntryInfo>> cctxs = new HashMap<>();
 
-            // Group by cache id.
+            // Groupping by cache id, since we cannot place entries from different caches on one page.
             for (GridCacheEntryInfo e : infos) {
                 if (log.isTraceEnabled())
                     log.trace("Rebalancing key [key=" + e.key() + ", part=" + p + ", node=" + from.id() + ']');
@@ -898,34 +897,70 @@ public class GridDhtPartitionDemander {
                 cctxs.computeIfAbsent(e.cacheId(), v -> new ArrayList<>(8)).add(e);
             }
 
-            CacheMapEntries cacheEntries = new CacheMapEntries();
-
             for (Map.Entry<Integer, List<GridCacheEntryInfo>> cctxEntry : cctxs.entrySet()) {
                 GridCacheContext cctx = grp.sharedGroup() ? ctx.cacheContext(cctxEntry.getKey()) : grp.singleCacheContext();
 
                 if (cctx == null)
                     return;
 
-                List<GridCacheEntryInfo> cctxInfos = cctxEntry.getValue();
-
                 if (cctx.isNear())
                     cctx = cctx.dhtCache().context();
 
+                List<GridCacheEntryInfo> cctxInfos = cctxEntry.getValue();
+
                 try {
-                    Iterable<Map.Entry<GridCacheEntryInfo, GridCacheMapEntry>> cachedEntries =
-                        cacheEntries.initialValues(cctxInfos, topVer, cctx, p, true, DR_PRELOAD);
+                    GridDhtLocalPartition part = cctx.topology().localPartition(p);
 
-                    for (Map.Entry<GridCacheEntryInfo, GridCacheMapEntry> e : cachedEntries) {
-                        GridCacheMapEntry cached = e.getValue();
+                    List<CacheDataRow> rows = cctx.offheap().storeAll(cctx, part, cctxInfos);
 
-                        cached.touch();
+                    Iterator<CacheDataRow> rowsItr = rows.iterator();
+                    Iterator<GridCacheEntryInfo> infoItr = cctxInfos.iterator();
 
-                        if (!cctx.events().isRecordable(EVT_CACHE_REBALANCE_OBJECT_LOADED) || cached.isInternal())
-                            continue;
+                    assert rows.size() == cctxInfos.size();
 
-                        cctx.events().addEvent(p, cached.key(), cctx.localNodeId(), null, null, null,
-                            EVT_CACHE_REBALANCE_OBJECT_LOADED, e.getKey().value(), true, null,
-                            false, null, null, null, true);
+                    while (rowsItr.hasNext() && infoItr.hasNext()) {
+                        CacheDataRow row = rowsItr.next();
+                        GridCacheEntryInfo info = infoItr.next();
+
+                        GridCacheEntryEx cached = cctx.cache().entryEx(info.key(), topVer);
+
+                        try {
+                            if (cached.initialValue(
+                                info.value(),
+                                info.version(),
+                                null,
+                                null,
+                                TxState.NA,
+                                TxState.NA,
+                                info.ttl(),
+                                info.expireTime(),
+                                true,
+                                topVer,
+                                cctx.isDrEnabled() ? DR_PRELOAD : DR_NONE,
+                                false,
+                                row
+                            )) {
+                                cached.touch(); // Start tracking.
+
+                                if (cctx.events().isRecordable(EVT_CACHE_REBALANCE_OBJECT_LOADED) && !cached.isInternal())
+                                    cctx.events().addEvent(cached.partition(), cached.key(), cctx.localNodeId(), null,
+                                        null, null, EVT_CACHE_REBALANCE_OBJECT_LOADED, info.value(), true, null,
+                                        false, null, null, null, true);
+                            }
+                            else {
+                                cached.touch(); // Start tracking.
+
+                                if (log.isTraceEnabled())
+                                    log.trace("Rebalancing entry is already in cache (will ignore) [key=" + cached.key() +
+                                        ", part=" + p + ']');
+                            }
+                        } catch (GridCacheEntryRemovedException e) {
+                            cctx.offheap().dataStore(part).rowStore().removeRow(row.link(), grp.statisticsHolderData());
+
+                            if (log.isTraceEnabled())
+                                log.trace("Entry has been concurrently removed while rebalancing (will ignore) [key=" +
+                                    cached.key() + ", part=" + p + ']');
+                        }
                     }
                 }
                 catch (GridDhtInvalidPartitionException ignored) {
@@ -1062,6 +1097,12 @@ public class GridDhtPartitionDemander {
 
                     GridCacheEntryInfo entry = infos.next();
 
+                    if (preloadPred != null && !preloadPred.apply(entry)) {
+                        log.trace("Rebalance predicate evaluated to false for entry (will ignore): " + entry);
+
+                        continue;
+                    }
+
                     if (batchWriteEnabled)
                         infosBatch.add(entry);
                     else {
@@ -1129,38 +1170,34 @@ public class GridDhtPartitionDemander {
                 if (log.isTraceEnabled())
                     log.trace("Rebalancing key [key=" + entry.key() + ", part=" + p + ", node=" + from.id() + ']');
 
-                if (preloadPred == null || preloadPred.apply(entry)) {
-                    if (cached.initialValue(
-                        entry.value(),
-                        entry.version(),
-                        cctx.mvccEnabled() ? ((MvccVersionAware)entry).mvccVersion() : null,
-                        cctx.mvccEnabled() ? ((MvccUpdateVersionAware)entry).newMvccVersion() : null,
-                        cctx.mvccEnabled() ? ((MvccVersionAware)entry).mvccTxState() : TxState.NA,
-                        cctx.mvccEnabled() ? ((MvccUpdateVersionAware)entry).newMvccTxState() : TxState.NA,
-                        entry.ttl(),
-                        entry.expireTime(),
-                        true,
-                        topVer,
-                        cctx.isDrEnabled() ? DR_PRELOAD : DR_NONE,
-                        false
-                    )) {
-                        cached.touch(); // Start tracking.
+                if (cached.initialValue(
+                    entry.value(),
+                    entry.version(),
+                    cctx.mvccEnabled() ? ((MvccVersionAware)entry).mvccVersion() : null,
+                    cctx.mvccEnabled() ? ((MvccUpdateVersionAware)entry).newMvccVersion() : null,
+                    cctx.mvccEnabled() ? ((MvccVersionAware)entry).mvccTxState() : TxState.NA,
+                    cctx.mvccEnabled() ? ((MvccUpdateVersionAware)entry).newMvccTxState() : TxState.NA,
+                    entry.ttl(),
+                    entry.expireTime(),
+                    true,
+                    topVer,
+                    cctx.isDrEnabled() ? DR_PRELOAD : DR_NONE,
+                    false
+                )) {
+                    cached.touch(); // Start tracking.
 
-                        if (cctx.events().isRecordable(EVT_CACHE_REBALANCE_OBJECT_LOADED) && !cached.isInternal())
-                            cctx.events().addEvent(cached.partition(), cached.key(), cctx.localNodeId(), null,
-                                null, null, EVT_CACHE_REBALANCE_OBJECT_LOADED, entry.value(), true, null,
-                                false, null, null, null, true);
-                    }
-                    else {
-                        cached.touch(); // Start tracking.
-
-                        if (log.isTraceEnabled())
-                            log.trace("Rebalancing entry is already in cache (will ignore) [key=" + cached.key() +
-                                ", part=" + p + ']');
-                    }
+                    if (cctx.events().isRecordable(EVT_CACHE_REBALANCE_OBJECT_LOADED) && !cached.isInternal())
+                        cctx.events().addEvent(cached.partition(), cached.key(), cctx.localNodeId(), null,
+                            null, null, EVT_CACHE_REBALANCE_OBJECT_LOADED, entry.value(), true, null,
+                            false, null, null, null, true);
                 }
-                else if (log.isTraceEnabled())
-                    log.trace("Rebalance predicate evaluated to false for entry (will ignore): " + entry);
+                else {
+                    cached.touch(); // Start tracking.
+
+                    if (log.isTraceEnabled())
+                        log.trace("Rebalancing entry is already in cache (will ignore) [key=" + cached.key() +
+                            ", part=" + p + ']');
+                }
             }
             catch (GridCacheEntryRemovedException ignored) {
                 if (log.isTraceEnabled())

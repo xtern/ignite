@@ -98,7 +98,6 @@ import org.apache.ignite.internal.util.tostring.GridToStringInclude;
 import org.apache.ignite.internal.util.typedef.internal.CU;
 import org.apache.ignite.internal.util.typedef.internal.S;
 import org.apache.ignite.internal.util.typedef.internal.U;
-import org.apache.ignite.lang.IgniteBiPredicate;
 import org.apache.ignite.lang.IgniteBiTuple;
 import org.jetbrains.annotations.Nullable;
 
@@ -2134,16 +2133,15 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
         }
 
         /** {@inheritDoc} */
-        @Override public void updateAll(
+        @Override public List<CacheDataRow> storeAll(
             GridCacheContext cctx,
-            Collection<? extends GridCacheEntryInfo> entries,
-            IgniteBiPredicate<CacheDataRow, GridCacheEntryInfo> pred
+            Collection<? extends GridCacheEntryInfo> entries
         ) throws IgniteCheckedException {
             assert ctx.database().checkpointLockIsHeldByThread();
 
             CacheDataStore delegate = init0(false);
 
-            delegate.updateAll(cctx, entries, pred);
+            return delegate.storeAll(cctx, entries);
         }
 
         /** {@inheritDoc} */
