@@ -658,6 +658,8 @@ public abstract class AbstractFreeList<T extends Storable> extends PagesList imp
         List<T> regularRows = new ArrayList<>(8);
 
         for (T dataRow : rows) {
+            assert dataRow != null;
+
             int size = dataRow.size();
 
             if (size < MIN_SIZE_FOR_DATA_PAGE)
