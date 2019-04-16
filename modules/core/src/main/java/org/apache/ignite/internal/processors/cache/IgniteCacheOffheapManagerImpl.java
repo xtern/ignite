@@ -18,6 +18,7 @@
 package org.apache.ignite.internal.processors.cache;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -36,7 +37,6 @@ import javax.cache.processor.EntryProcessor;
 import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.IgniteException;
 import org.apache.ignite.IgniteLogger;
-import org.apache.ignite.IgniteSystemProperties;
 import org.apache.ignite.internal.NodeStoppingException;
 import org.apache.ignite.internal.pagemem.FullPageId;
 import org.apache.ignite.internal.pagemem.wal.record.delta.DataPageMvccMarkUpdatedRecord;
@@ -432,6 +432,15 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
         OffheapInvokeClosure c)
         throws IgniteCheckedException {
         dataStore(part).invoke(cctx, key, c);
+    }
+
+    /** {@inheritDoc} */
+    @Override public List<CacheDataRow> storeAll(
+        GridCacheContext cctx,
+        GridDhtLocalPartition part,
+        Collection<? extends GridCacheEntryInfo> entries
+    ) throws IgniteCheckedException {
+        return dataStore(part).storeAll(cctx, entries);
     }
 
     /** {@inheritDoc} */
@@ -1617,6 +1626,8 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
             throws IgniteCheckedException {
             assert cctx.shared().database().checkpointLockIsHeldByThread();
 
+            boolean preCreated = c.newRow() != null;
+
             dataTree.invoke(row, CacheDataRowAdapter.RowData.NO_KEY, c);
 
             switch (c.operationType()) {
@@ -1639,11 +1650,110 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
                 }
 
                 case NOOP:
+                    // Remove pre created row (preloading fallback).
+                    if (preCreated)
+                        rowStore.removeRow(c.newRow().link(), grp.statisticsHolderData());
+
                     break;
 
                 default:
                     assert false : c.operationType();
             }
+        }
+
+        /** {@inheritDoc} */
+        @Override public List<CacheDataRow> storeAll(
+            GridCacheContext cctx,
+            Collection<? extends GridCacheEntryInfo> infos
+        ) throws IgniteCheckedException {
+            if (!busyLock.enterBusy())
+                throw new NodeStoppingException("Operation has been cancelled (node is stopping).");
+
+            List<CacheDataRow> rows = new ArrayList<>(infos.size());
+
+            try {
+                assert cctx.shared().database().checkpointLockIsHeldByThread();
+
+                assert !cctx.mvccEnabled();
+
+                int cacheId = cctx.group().storeCacheIdInDataPage() ? cctx.cacheId() : CU.UNDEFINED_CACHE_ID;
+
+                IoStatisticsHolder statHolder = grp.statisticsHolderData();
+
+                for (GridCacheEntryInfo info : infos) {
+                    KeyCacheObject key = info.key();
+
+                    CacheObject val = info.value();
+
+                    CacheObjectContext coCtx = cctx.cacheObjectContext();
+
+                    val.valueBytes(coCtx);
+                    key.valueBytes(coCtx);
+
+                    DataRow row = makeDataRow(key, val, info.version(), info.expireTime(), cacheId);
+
+                    rows.add(row);
+                }
+
+                rowStore().addRows(rows, statHolder);
+            }
+            finally {
+                busyLock.leaveBusy();
+            }
+
+            return rows;
+        }
+
+        /**
+         * @param keys Keys to search.
+         * @param sorted Sorted flag.
+         * @return List of found (and not found) rows, each value of which corresponds to the input key.
+         * @throws IgniteCheckedException If failed.
+         */
+        private List<CacheDataRow> findAll(List<CacheSearchRow> keys, boolean sorted) throws IgniteCheckedException {
+            assert keys != null && !keys.isEmpty();
+
+            List<CacheDataRow> res = new ArrayList<>(keys.size());
+
+            if (!sorted) {
+                for (CacheSearchRow row : keys)
+                    res.add(dataTree.findOne(row, null, CacheDataRowAdapter.RowData.NO_KEY));
+
+                return res;
+            }
+
+            GridCursor<CacheDataRow> cur = dataTree.find(keys.get(0), keys.get(keys.size() - 1));
+            Iterator<CacheSearchRow> itr = keys.iterator();
+
+            CacheDataRow foundRow = null;
+            KeyCacheObject foundKey = null;
+
+            KeyCacheObject key = itr.next().key();
+
+            while (cur.next()) {
+                foundRow = cur.get();
+                foundKey = foundRow.key();
+
+                while (itr.hasNext() && key.hashCode() <= foundKey.hashCode()) {
+                    boolean keyFound = false;
+
+                    while (key.hashCode() == foundKey.hashCode() && !(keyFound = key.equals(foundKey)) && cur.next()) {
+                        foundRow = cur.get();
+                        foundKey = foundRow.key();
+                    }
+
+                    res.add(keyFound ? foundRow : null);
+
+                    key = itr.next().key();
+                }
+            }
+
+            res.add(key.equals(foundKey) ? foundRow : null);
+
+            for (; itr.hasNext(); itr.next())
+                res.add(null);
+
+            return res;
         }
 
         /** {@inheritDoc} */
