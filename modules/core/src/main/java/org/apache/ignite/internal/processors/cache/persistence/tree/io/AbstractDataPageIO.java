@@ -1175,7 +1175,6 @@ public abstract class AbstractDataPageIO<T extends Storable> extends PageIO impl
         setItem(pageAddr, directCnt, directItemFromOffset(dataOff));
 
         setDirectCount(pageAddr, directCnt + 1);
-
         assert getDirectCount(pageAddr) == directCnt + 1;
 
         return directCnt; // Previous directCnt will be our itemId.
