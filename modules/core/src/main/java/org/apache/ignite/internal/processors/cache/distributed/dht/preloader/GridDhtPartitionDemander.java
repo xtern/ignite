@@ -42,6 +42,7 @@ import org.apache.ignite.internal.IgniteInternalFuture;
 import org.apache.ignite.internal.IgniteInterruptedCheckedException;
 import org.apache.ignite.internal.IgniteNodeAttributes;
 import org.apache.ignite.internal.cluster.ClusterTopologyCheckedException;
+import org.apache.ignite.internal.managers.discovery.IgniteDiscoverySpi;
 import org.apache.ignite.internal.processors.affinity.AffinityAssignment;
 import org.apache.ignite.internal.processors.affinity.AffinityTopologyVersion;
 import org.apache.ignite.internal.processors.cache.CacheEntryInfoCollection;
@@ -79,6 +80,7 @@ import org.apache.ignite.internal.util.typedef.internal.U;
 import org.apache.ignite.lang.IgniteInClosure;
 import org.apache.ignite.lang.IgnitePredicate;
 import org.apache.ignite.spi.IgniteSpiException;
+import org.apache.ignite.spi.discovery.tcp.TcpDiscoverySpi;
 import org.jetbrains.annotations.Nullable;
 
 import static org.apache.ignite.events.EventType.EVT_CACHE_REBALANCE_OBJECT_LOADED;
@@ -922,9 +924,22 @@ public class GridDhtPartitionDemander {
                     for (GridCacheEntryInfo info : cctxInfos) {
                         CacheDataRow row = info.value() == null ? null : rowsItr.next();
 
+                        System.out.println("rebalancing key " + info.key().value(cctx.cacheObjectContext(), false));
+
                         // Link created cache entry in BPlusTree.
                         if (!preloadEntry(from, p, info, topVer, cctx, row))
                             return false;
+
+//                        if (Integer.valueOf(5_000).equals(info.key().value(cctx.cacheObjectContext(), false))) {
+//                            System.out.println("Yep - crashing server");
+//
+//                            ((IgniteDiscoverySpi)cctx.kernalContext().config().getDiscoverySpi()).simulateNodeFailure();
+//
+//                            System.exit(-1);
+//
+//                            System.out.println("server alive");
+//                        }
+
 
                         //TODO: IGNITE-11330: Update metrics for touched cache only.
                         for (GridCacheContext cctx0 : grp.caches()) {

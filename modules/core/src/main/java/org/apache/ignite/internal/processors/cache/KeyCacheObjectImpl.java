@@ -74,8 +74,13 @@ public class KeyCacheObjectImpl extends CacheObjectAdapter implements KeyCacheOb
 
     /** {@inheritDoc} */
     @Override public byte[] valueBytes(CacheObjectValueContext ctx) throws IgniteCheckedException {
+        assert ctx != null;
+
         if (valBytes == null)
-            valBytes = ctx.kernalContext().cacheObjects().marshal(ctx, val);
+            valBytes = ctx.
+                kernalContext().
+                cacheObjects().
+                marshal(ctx, val);
 
         return valBytes;
     }
