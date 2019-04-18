@@ -332,7 +332,7 @@ public abstract class AbstractFreeList<T extends Storable> extends PagesList imp
             int remainSpace = iox.getFreeSpace(pageAddr);
             int remainItems = MAX_DATA_ROWS_PER_PAGE - iox.getRowsCount(pageAddr);
 
-            boolean pageIsEmpty = remainItems == MAX_DATA_ROWS_PER_PAGE;
+            boolean pageIsEmpty = remainItems == MAX_DATA_ROWS_PER_PAGE && !needWalDeltaRecord(pageId, page, walPlc);
 
             List<T> rows0 = pageIsEmpty ? new ArrayList<>(8) : null;
 

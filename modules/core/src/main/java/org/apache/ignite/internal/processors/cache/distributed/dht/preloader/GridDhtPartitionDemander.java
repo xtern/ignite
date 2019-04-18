@@ -1179,8 +1179,6 @@ public class GridDhtPartitionDemander {
                                 false, null, null, null, true);
                     }
                     else {
-                        cleanupRow(cctx, row);
-
                         cached.touch(); // Start tracking.
 
                         if (log.isTraceEnabled())
