@@ -36,12 +36,14 @@ import org.apache.ignite.cache.CacheRebalanceMode;
 import org.apache.ignite.cluster.ClusterNode;
 import org.apache.ignite.configuration.CacheConfiguration;
 import org.apache.ignite.configuration.DataPageEvictionMode;
+import org.apache.ignite.configuration.DataRegionConfiguration;
 import org.apache.ignite.configuration.IgniteConfiguration;
 import org.apache.ignite.events.DiscoveryEvent;
 import org.apache.ignite.internal.IgniteInternalFuture;
 import org.apache.ignite.internal.IgniteInterruptedCheckedException;
 import org.apache.ignite.internal.IgniteNodeAttributes;
 import org.apache.ignite.internal.cluster.ClusterTopologyCheckedException;
+import org.apache.ignite.internal.pagemem.PageMemory;
 import org.apache.ignite.internal.processors.affinity.AffinityAssignment;
 import org.apache.ignite.internal.processors.affinity.AffinityTopologyVersion;
 import org.apache.ignite.internal.processors.cache.CacheEntryInfoCollection;
@@ -61,6 +63,7 @@ import org.apache.ignite.internal.processors.cache.mvcc.MvccUpdateVersionAware;
 import org.apache.ignite.internal.processors.cache.mvcc.MvccVersionAware;
 import org.apache.ignite.internal.processors.cache.mvcc.txlog.TxState;
 import org.apache.ignite.internal.processors.cache.persistence.CacheDataRow;
+import org.apache.ignite.internal.processors.cache.persistence.DataRegion;
 import org.apache.ignite.internal.processors.cache.persistence.RowStore;
 import org.apache.ignite.internal.processors.timeout.GridTimeoutObject;
 import org.apache.ignite.internal.processors.timeout.GridTimeoutObjectAdapter;
@@ -777,6 +780,9 @@ public class GridDhtPartitionDemander {
 
                     boolean last = supplyMsg.last().containsKey(p);
 
+                    boolean batchPageWrite = BATCH_PAGE_WRITE_ENABLED &&
+                        evictionsAllowsBatch(grp.dataRegion(), supplyMsg.messageSize());
+
                     if (part.state() == MOVING) {
                         boolean reserved = part.reserve();
 
@@ -791,7 +797,7 @@ public class GridDhtPartitionDemander {
                             if (grp.mvccEnabled())
                                 mvccPreloadEntries(topVer, node, p, infos);
                             else
-                                preloadEntries(topVer, node, p, infos);
+                                preloadEntries(topVer, node, p, infos, batchPageWrite);
 
                             // If message was last for this partition,
                             // then we take ownership.
@@ -872,82 +878,106 @@ public class GridDhtPartitionDemander {
     }
 
     /**
+     * @param region Memory region.
+     * @param msgSize Rebalance message size.
+     * @return {@code True} if entries could processed in batch.
+     */
+    private boolean evictionsAllowsBatch(DataRegion region, int msgSize) {
+        DataRegionConfiguration plc = region.config();
+
+        if (plc.isPersistenceEnabled() || plc.getPageEvictionMode() == DataPageEvictionMode.DISABLED)
+            return true;
+
+        PageMemory pageMem = region.pageMemory();
+
+        int sysPageSize = pageMem.systemPageSize();
+
+        int pagesRequired = (msgSize / sysPageSize) * 2;
+
+        long maxPages = plc.getMaxSize() / sysPageSize;
+
+        // There are enough pages left.
+        if (pagesRequired < maxPages - pageMem.loadedPages())
+            return true;
+
+        // Empty pages pool size restricted.
+        if (pagesRequired > plc.getEmptyPagesPoolSize())
+            return false;
+
+        return pagesRequired < maxPages * (1.0d - plc.getEvictionThreshold());
+    }
+
+    /**
      * @param from Node which sent entry.
      * @param p Partition id.
      * @param infos Preloaded entries.
      * @param topVer Topology version.
+     * @param batchSize Batch size.
      * @throws IgniteCheckedException If failed.
      */
     private boolean preloadEntriesBatched(
+        AffinityTopologyVersion topVer,
         ClusterNode from,
         int p,
-        Collection<GridCacheEntryInfo> infos,
-        AffinityTopologyVersion topVer
+        Iterator<GridCacheEntryInfo> infos,
+        int batchSize
     ) throws IgniteCheckedException {
-        if (infos.isEmpty())
-            return true;
+        Map<Integer, List<GridCacheEntryInfo>> cctxs = new HashMap<>();
 
-        grp.listenerLock().readLock().lock();
+        // Groupping by cache id, since we cannot place entries from different caches on the same page.
+        for (GridCacheEntryInfo e; infos.hasNext() && batchSize-- > 0;
+            e = infos.next(), cctxs.computeIfAbsent(e.cacheId(), v -> new ArrayList<>(8)).add(e));
 
-        try {
-            Map<Integer, List<GridCacheEntryInfo>> cctxs = new HashMap<>();
+        for (Map.Entry<Integer, List<GridCacheEntryInfo>> cctxEntry : cctxs.entrySet()) {
+            GridCacheContext cctx =
+                grp.sharedGroup() ? ctx.cacheContext(cctxEntry.getKey()) : grp.singleCacheContext();
 
-            // Groupping by cache id, since we cannot place entries from different caches on the same page.
-            for (GridCacheEntryInfo e : infos)
-                cctxs.computeIfAbsent(e.cacheId(), v -> new ArrayList<>(8)).add(e);
+            if (cctx == null)
+                continue;
 
-            for (Map.Entry<Integer, List<GridCacheEntryInfo>> cctxEntry : cctxs.entrySet()) {
-                GridCacheContext cctx =
-                    grp.sharedGroup() ? ctx.cacheContext(cctxEntry.getKey()) : grp.singleCacheContext();
+            if (cctx.isNear())
+                cctx = cctx.dhtCache().context();
 
-                if (cctx == null)
-                    continue;
+            List<GridCacheEntryInfo> cctxInfos = cctxEntry.getValue();
 
-                if (cctx.isNear())
-                    cctx = cctx.dhtCache().context();
+            Iterator<CacheDataRow> rowsItr = null;
 
-                List<GridCacheEntryInfo> cctxInfos = cctxEntry.getValue();
+            try {
+                GridDhtLocalPartition part = cctx.topology().localPartition(p);
 
-                Iterator<CacheDataRow> rowsItr = null;
+                // Filter NULL values (it means that we should remove entry from cache).
+                Collection<GridCacheEntryInfo> hasValues = F.view(cctxInfos, info -> info.value() != null);
 
-                try {
-                    GridDhtLocalPartition part = cctx.topology().localPartition(p);
+                cctx.shared().database().ensureFreeSpace(cctx.dataRegion());
 
-                    // Filter NULL values (it means that we should remove entry from cache).
-                    Collection<GridCacheEntryInfo> hasValues = F.view(cctxInfos, info -> info.value() != null);
+                // Store all cache entries to data store before get locks.
+                rowsItr = cctx.offheap().storeAll(cctx, part, hasValues).iterator();
 
-                    // Store all cache entries to data store before get locks.
-                    rowsItr = cctx.offheap().storeAll(cctx, part, hasValues).iterator();
+                for (GridCacheEntryInfo info : cctxInfos) {
+                    CacheDataRow row = info.value() == null ? null : rowsItr.next();
 
-                    for (GridCacheEntryInfo info : cctxInfos) {
-                        CacheDataRow row = info.value() == null ? null : rowsItr.next();
+                    // Link created cache entry in BPlusTree.
+                    if (!preloadEntry(from, p, info, topVer, cctx, row))
+                        return false;
 
-                        // Link created cache entry in BPlusTree.
-                        if (!preloadEntry(from, p, info, topVer, cctx, row))
-                            return false;
-
-                        //TODO: IGNITE-11330: Update metrics for touched cache only.
-                        for (GridCacheContext cctx0 : grp.caches()) {
-                            if (cctx0.statisticsEnabled())
-                                cctx0.cache().metrics0().onRebalanceKeyReceived();
-                        }
+                    //TODO: IGNITE-11330: Update metrics for touched cache only.
+                    for (GridCacheContext cctx0 : grp.caches()) {
+                        if (cctx0.statisticsEnabled())
+                            cctx0.cache().metrics0().onRebalanceKeyReceived();
                     }
                 }
-                catch (GridDhtInvalidPartitionException ignored) {
-                    if (log.isDebugEnabled())
-                        log.debug("Partition became invalid during rebalancing (will ignore): " + p);
-
-                    return false;
-                }
-                finally {
-                    // Remove all unprocessed rows on error.
-                    while (rowsItr != null && rowsItr.hasNext())
-                        cleanupRow(cctx, rowsItr.next());
-                }
             }
-        }
-        finally {
-            grp.listenerLock().readLock().unlock();
+            catch (GridDhtInvalidPartitionException ignored) {
+                if (log.isDebugEnabled())
+                    log.debug("Partition became invalid during rebalancing (will ignore): " + p);
+
+                return false;
+            }
+            finally {
+                // Remove all unprocessed rows on error.
+                while (rowsItr != null && rowsItr.hasNext())
+                    cleanupRow(cctx, rowsItr.next());
+            }
         }
 
         return true;
@@ -1060,33 +1090,35 @@ public class GridDhtPartitionDemander {
      * @param p Partition id.
      * @param infos Entries info for preload.
      * @param topVer Topology version.
+     * @param batched Preload entries in batch mode.
      * @throws IgniteInterruptedCheckedException If interrupted.
      */
     private void preloadEntries(AffinityTopologyVersion topVer, ClusterNode node, int p,
-        Iterator<GridCacheEntryInfo> infos) throws IgniteCheckedException {
+        Iterator<GridCacheEntryInfo> infos, boolean batched) throws IgniteCheckedException {
         GridCacheContext cctx = null;
-
-        boolean batchWriteEnabled = BATCH_PAGE_WRITE_ENABLED && (grp.dataRegion().config().isPersistenceEnabled() ||
-            grp.dataRegion().config().getPageEvictionMode() == DataPageEvictionMode.DISABLED);
 
         // Loop through all received entries and try to preload them.
         while (infos.hasNext()) {
             ctx.database().checkpointReadLock();
 
             try {
-                List<GridCacheEntryInfo> infosBatch = batchWriteEnabled ? new ArrayList<>(CHECKPOINT_THRESHOLD) : null;
+                if (batched) {
+                    if (!preloadEntriesBatched(topVer, node, p, infos, CHECKPOINT_THRESHOLD)) {
+                        if (log.isTraceEnabled())
+                            log.trace("Got entries for invalid partition during " +
+                                "preloading (will skip) [p=" + p + ']');
+
+                        return;
+                    }
+
+                    continue;
+                }
 
                 for (int i = 0; i < CHECKPOINT_THRESHOLD; i++) {
                     if (!infos.hasNext())
                         break;
 
                     GridCacheEntryInfo entry = infos.next();
-
-                    if (batchWriteEnabled) {
-                        infosBatch.add(entry);
-
-                        continue;
-                    }
 
                     if (cctx == null || (grp.sharedGroup() && entry.cacheId() != cctx.cacheId())) {
                         cctx = grp.sharedGroup() ? grp.shared().cacheContext(entry.cacheId()) : grp.singleCacheContext();
@@ -1110,12 +1142,6 @@ public class GridDhtPartitionDemander {
                         if (ctx.statisticsEnabled())
                             ctx.cache().metrics0().onRebalanceKeyReceived();
                     }
-                }
-
-                if (batchWriteEnabled && !preloadEntriesBatched(node, p, infosBatch, topVer)) {
-                    if (log.isTraceEnabled())
-                        log.trace("Got entries for invalid partition during " +
-                            "preloading (will skip) [p=" + p + ']');
                 }
             }
             finally {

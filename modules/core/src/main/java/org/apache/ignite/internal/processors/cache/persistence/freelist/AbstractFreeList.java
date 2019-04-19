@@ -651,32 +651,24 @@ public abstract class AbstractFreeList<T extends Storable> extends PagesList imp
 
     /** {@inheritDoc} */
     @Override public void insertDataRows(Collection<T> rows, IoStatisticsHolder statHolder) throws IgniteCheckedException {
-        // Objects that don't fit into a single data page.
-        List<T> largeRows = new ArrayList<>();
-
         // Ordinary objects and the remaining parts of large objects.
         List<T> regularRows = new ArrayList<>(8);
 
         for (T dataRow : rows) {
-            assert dataRow != null;
-
             int size = dataRow.size();
 
-            if (size < MIN_SIZE_FOR_DATA_PAGE)
+            if (size < MIN_SIZE_FOR_DATA_PAGE) {
                 regularRows.add(dataRow);
-            else {
-                largeRows.add(dataRow);
 
-                if (size % MIN_SIZE_FOR_DATA_PAGE > 0)
-                    regularRows.add(dataRow);
+                continue;
             }
-        }
 
-        for (T row : largeRows) {
-            int size = row.size();
+            if (size % MIN_SIZE_FOR_DATA_PAGE > 0)
+                regularRows.add(dataRow);
 
             int written = 0;
 
+            // Write large row fragments.
             do {
                 int remaining = size - written;
 
@@ -688,16 +680,16 @@ public abstract class AbstractFreeList<T extends Storable> extends PagesList imp
                 AbstractDataPageIO<T> initIo = null;
 
                 if (pageId == 0L) {
-                    pageId = allocateDataPage(row.partition());
+                    pageId = allocateDataPage(dataRow.partition());
 
                     initIo = ioVersions().latest();
                 }
                 else if (PageIdUtils.tag(pageId) != PageIdAllocator.FLAG_DATA)
-                    pageId = initReusedPage(pageId, row.partition(), statHolder);
+                    pageId = initReusedPage(pageId, dataRow.partition(), statHolder);
                 else
-                    pageId = PageIdUtils.changePartitionId(pageId, (row.partition()));
+                    pageId = PageIdUtils.changePartitionId(pageId, (dataRow.partition()));
 
-                written = write(pageId, writeRow, initIo, row, written, FAIL_I, statHolder);
+                written = write(pageId, writeRow, initIo, dataRow, written, FAIL_I, statHolder);
 
                 assert written != FAIL_I; // We can't fail here.
 

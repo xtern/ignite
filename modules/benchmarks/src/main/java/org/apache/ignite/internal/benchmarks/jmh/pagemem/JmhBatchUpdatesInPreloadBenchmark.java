@@ -110,35 +110,35 @@ public class JmhBatchUpdatesInPreloadBenchmark {
 
     /** */
     public enum OBJECT_SIZE_RANGE {
-        /** */
-        r0_4(0, 4),
-
-        /** */
-        r4_16(4, 16),
-
-        /** */
-        r16_64(16, 64),
-
-        /** */
-        r100_200(100, 200),
-
-        /** */
-        r200_500(200, 500),
-
-        /** */
-        r500_800(500, 800),
-
-        /** */
-        r800_1200(800, 1200),
-
-        /** */
-        r2000_3000(2_000, 3_000),
-
-        /** */
-        r1000_8000(1_000, 8_000),
-
-        /** Large objects only. */
-        r4000_16000(4_000, 16_000),
+//        /** */
+//        r0_4(0, 4),
+//
+//        /** */
+//        r4_16(4, 16),
+//
+//        /** */
+//        r16_64(16, 64),
+//
+//        /** */
+//        r100_200(100, 200),
+//
+//        /** */
+//        r200_500(200, 500),
+//
+//        /** */
+//        r500_800(500, 800),
+//
+//        /** */
+//        r800_1200(800, 1200),
+//
+//        /** */
+//        r2000_3000(2_000, 3_000),
+//
+//        /** */
+//        r1000_8000(1_000, 8_000),
+//
+//        /** Large objects only. */
+//        r4000_16000(4_000, 16_000),
 
         /** Mixed objects, mostly large objects. */
         r100_32000(100, 32_000);
@@ -352,8 +352,10 @@ public class JmhBatchUpdatesInPreloadBenchmark {
 
             int delta = maxObjSize - minObjSize;
 
+            int step = delta > batchSize ? delta / batchSize : 0;
+
             for (int i = 0; i < batchSize; i++) {
-                int size = sizes[i] = minObjSize + (delta > 0 ? ThreadLocalRandom.current().nextInt(delta) : 0);
+                int size = sizes[i] = minObjSize + (step > 0 ? (i * step) : (delta > 0 ? ThreadLocalRandom.current().nextInt(delta) : 0));
 
                 if (size < minSize)
                     minSize = size;
