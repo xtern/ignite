@@ -652,7 +652,7 @@ public abstract class AbstractFreeList<T extends Storable> extends PagesList imp
     /** {@inheritDoc} */
     @Override public void insertDataRows(Collection<T> rows, IoStatisticsHolder statHolder) throws IgniteCheckedException {
         // Ordinary objects and the remaining parts of large objects.
-        List<T> regularRows = new ArrayList<>(8);
+        List<T> regularRows = new ArrayList<>(rows.size());
 
         for (T dataRow : rows) {
             int size = dataRow.size();
@@ -663,18 +663,10 @@ public abstract class AbstractFreeList<T extends Storable> extends PagesList imp
                 continue;
             }
 
-            if (size % MIN_SIZE_FOR_DATA_PAGE > 0)
-                regularRows.add(dataRow);
-
             int written = 0;
 
             // Write large row fragments.
             do {
-                int remaining = size - written;
-
-                if (remaining < MIN_SIZE_FOR_DATA_PAGE)
-                    break;
-
                 long pageId = takeEmptyPage(REUSE_BUCKET, ioVersions(), statHolder);
 
                 AbstractDataPageIO<T> initIo = null;
@@ -695,7 +687,11 @@ public abstract class AbstractFreeList<T extends Storable> extends PagesList imp
 
                 memMetrics.incrementLargeEntriesPages();
             }
-            while (written != COMPLETE);
+            while (written != COMPLETE && (size - written) >= MIN_SIZE_FOR_DATA_PAGE);
+
+            // Store the rest of the row, if it has not been fully written.
+            if (written != COMPLETE)
+                regularRows.add(dataRow);
         }
 
         for (int writtenCnt = 0; writtenCnt < regularRows.size(); ) {
