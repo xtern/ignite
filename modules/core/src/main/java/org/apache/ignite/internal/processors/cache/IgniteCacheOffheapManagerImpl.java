@@ -1626,8 +1626,6 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
             throws IgniteCheckedException {
             assert cctx.shared().database().checkpointLockIsHeldByThread();
 
-            boolean preCreated = c.newRow() != null;
-
             dataTree.invoke(row, CacheDataRowAdapter.RowData.NO_KEY, c);
 
             switch (c.operationType()) {
@@ -1650,10 +1648,6 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
                 }
 
                 case NOOP:
-                    // Remove pre created row (preloading fallback).
-                    if (preCreated)
-                        rowStore.removeRow(c.newRow().link(), grp.statisticsHolderData());
-
                     break;
 
                 default:

@@ -17,19 +17,11 @@
 
 package org.apache.ignite.internal.benchmarks.jmh.pagemem;
 
-import java.lang.reflect.Constructor;
-import java.lang.reflect.Field;
-import java.lang.reflect.InvocationTargetException;
-import java.lang.reflect.Modifier;
 import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
-import org.apache.ignite.IgniteException;
-import org.apache.ignite.IgniteSystemProperties;
+import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.Ignition;
 import org.apache.ignite.cache.CacheAtomicityMode;
 import org.apache.ignite.cache.CacheMode;
@@ -39,16 +31,11 @@ import org.apache.ignite.configuration.DataRegionConfiguration;
 import org.apache.ignite.configuration.DataStorageConfiguration;
 import org.apache.ignite.configuration.IgniteConfiguration;
 import org.apache.ignite.internal.IgniteEx;
-import org.apache.ignite.internal.processors.affinity.AffinityTopologyVersion;
-import org.apache.ignite.internal.processors.cache.CacheEntryInfoCollection;
 import org.apache.ignite.internal.processors.cache.CacheObject;
 import org.apache.ignite.internal.processors.cache.GridCacheContext;
 import org.apache.ignite.internal.processors.cache.GridCacheEntryInfo;
-import org.apache.ignite.internal.processors.cache.GridCacheGroupIdMessage;
+import org.apache.ignite.internal.processors.cache.IgniteCacheOffheapManager;
 import org.apache.ignite.internal.processors.cache.KeyCacheObject;
-import org.apache.ignite.internal.processors.cache.distributed.dht.preloader.GridDhtPartitionDemander;
-import org.apache.ignite.internal.processors.cache.distributed.dht.preloader.GridDhtPartitionSupplyMessage;
-import org.apache.ignite.internal.processors.cache.distributed.dht.preloader.GridDhtPreloader;
 import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtLocalPartition;
 import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtPartitionState;
 import org.apache.ignite.logger.NullLogger;
@@ -83,9 +70,9 @@ import static java.util.concurrent.TimeUnit.MILLISECONDS;
 @OutputTimeUnit(TimeUnit.MICROSECONDS)
 @State(Scope.Benchmark)
 @Threads(1)
-@Warmup(iterations = 10, time = 300, timeUnit = MILLISECONDS)
-@Measurement(iterations = 8, time = 300, timeUnit = MILLISECONDS)
-public class JmhBatchUpdatesInPreloadBenchmark {
+@Warmup(iterations = 10, time = 200, timeUnit = MILLISECONDS)
+@Measurement(iterations = 8, time = 200, timeUnit = MILLISECONDS)
+public class JmhBatchUpdatesBenchmark {
     /** */
     private static final long DEF_REG_SIZE = 8 * 1024 * 1024 * 1024L;
 
@@ -206,24 +193,23 @@ public class JmhBatchUpdatesInPreloadBenchmark {
      * Test single updates.
      *
      * @param data Data that will be preloaded.
-     * @param preloader Data preloader.
+     * @param benchCtx Data preloader.
      */
     @Benchmark
-    @Fork(jvmArgsAppend = "-D" + IgniteSystemProperties.IGNITE_DATA_STORAGE_BATCH_PAGE_WRITE + "=false")
-    public void checkSingle(Data data, Preloader preloader) {
-        preloader.demanderSingle.handleSupplyMessage(0, data.node.localNode().id(), data.singleData);
+    public void checkSingle(Data data, BenchContext benchCtx) throws IgniteCheckedException {
+        for (GridCacheEntryInfo info : data.singleData)
+            benchCtx.cacheDataStoreSingle.update(data.cctxSingle, info.key(), info.value(), info.version(), info.expireTime(), null);
     }
 
     /**
      * Test batch updates.
      *
      * @param data Data that will be preloaded.
-     * @param preloader Data preloader.
+     * @param benchCtx Data preloader.
      */
     @Benchmark
-    @Fork(jvmArgsAppend = "-D" + IgniteSystemProperties.IGNITE_DATA_STORAGE_BATCH_PAGE_WRITE + "=true")
-    public void checkBatch(Data data, Preloader preloader) {
-        preloader.demanderBatch.handleSupplyMessage(0, data.node.localNode().id(), data.batchData);
+    public void checkBatch(Data data, BenchContext benchCtx) throws IgniteCheckedException {
+        benchCtx.cacheDataStoreBatch.storeAll(data.cctxBatch, data.batchData);
     }
 
     /**
@@ -255,36 +241,18 @@ public class JmhBatchUpdatesInPreloadBenchmark {
      * Create streamer on client cache.
      */
     @State(Scope.Benchmark)
-    public static class Preloader {
+    public static class BenchContext {
         /** */
-        final GridDhtPartitionDemander demanderBatch = demander(CACHE_BATCH);
-
-        /** */
-        final GridDhtPartitionDemander demanderSingle = demander(CACHE_SINGLE);
+        final IgniteCacheOffheapManager.CacheDataStore cacheDataStoreBatch = dataStore(CACHE_BATCH);
 
         /** */
-        GridDhtPartitionDemander demander(String name) {
-            try {
-                GridCacheContext cctx = ((IgniteEx)Ignition.ignite(NODE_NAME)).cachex(name).context();
-                GridDhtPreloader preloader = (GridDhtPreloader)cctx.group().preloader();
-                AffinityTopologyVersion topVer = cctx.group().affinity().lastVersion();
+        final IgniteCacheOffheapManager.CacheDataStore cacheDataStoreSingle = dataStore(CACHE_SINGLE);
 
-                GridDhtPartitionDemander.RebalanceFuture fut =
-                    newInstance(GridDhtPartitionDemander.RebalanceFuture.class);
+        /** */
+        IgniteCacheOffheapManager.CacheDataStore dataStore(String name) {
+            GridCacheContext cctx = ((IgniteEx)Ignition.ignite(NODE_NAME)).cachex(name).context();
 
-                setFieldValue(fut, "rebalanceId", 0);
-                setFieldValue(fut, "topVer", topVer);
-
-                GridDhtPartitionDemander demander = getFieldValue(preloader, "demander");
-
-                setFieldValue(demander, "rebalanceFut", fut);
-
-                setFieldValue(cctx.shared().exchange(), "rebTopVer", topVer);
-
-                return demander;
-            } catch (Exception e) {
-                throw new RuntimeException(e);
-            }
+            return cctx.offheap().dataStore(cctx.topology().localPartition(0));
         }
     }
 
@@ -301,10 +269,10 @@ public class JmhBatchUpdatesInPreloadBenchmark {
         private int[] sizes;
 
         /** */
-        private GridDhtPartitionSupplyMessage batchData;
+        private List<GridCacheEntryInfo> batchData;
 
         /** */
-        private GridDhtPartitionSupplyMessage singleData;
+        private List<GridCacheEntryInfo> singleData;
 
         /** */
         private GridCacheContext cctxBatch = ((IgniteEx)Ignition.ignite(NODE_NAME)).cachex(CACHE_BATCH).context();
@@ -331,10 +299,9 @@ public class JmhBatchUpdatesInPreloadBenchmark {
         public void prepare() {
             int iter = iteration++;
             int off = iter * BATCH_SIZE;
-            int rebalanceId = 0;
 
-            batchData = prepareSupplyMessage(cctxBatch, rebalanceId, part, off, BATCH_SIZE, sizes);
-            singleData = prepareSupplyMessage(cctxSingle, rebalanceId, part, off, BATCH_SIZE, sizes);
+            batchData = prepareSupplyMessage(cctxBatch, off, BATCH_SIZE, sizes);
+            singleData = prepareSupplyMessage(cctxSingle, off, BATCH_SIZE, sizes);
         }
 
         /**
@@ -370,20 +337,7 @@ public class JmhBatchUpdatesInPreloadBenchmark {
         }
 
         /** */
-        private GridDhtPartitionSupplyMessage prepareSupplyMessage(
-            GridCacheContext cctx,
-            int rebalanceId,
-            int p,
-            int off,
-            int cnt,
-            int[] sizes
-        ) {
-            GridDhtPartitionSupplyMessage msg = newInstance(GridDhtPartitionSupplyMessage.class);
-
-            setFieldValue(msg, GridCacheGroupIdMessage.class, "grpId", cctx.group().groupId());
-            setFieldValue(msg, "rebalanceId", rebalanceId);
-            setFieldValue(msg, "topVer", cctx.group().affinity().lastVersion());
-
+        private List<GridCacheEntryInfo> prepareSupplyMessage(GridCacheContext cctx, int off, int cnt, int[] sizes) {
             List<GridCacheEntryInfo> infos = new ArrayList<>();
 
             for (int i = off; i < off + cnt; i++) {
@@ -401,135 +355,7 @@ public class JmhBatchUpdatesInPreloadBenchmark {
                 infos.add(info);
             }
 
-            Map<Object, Object> map = new HashMap<>();
-
-            map.put(p, new CacheEntryInfoCollection(infos));
-
-            setFieldValue(msg, "infos", map);
-
-            return msg;
-        }
-    }
-
-    /** */
-    private static <T> T newInstance(Class<T> clazz) {
-        Constructor constructors[] = clazz.getDeclaredConstructors();
-
-        try {
-            for (Constructor constructor : constructors) {
-                if (constructor.getParameterTypes().length == 0) {
-                    constructor.setAccessible(true);
-
-                    return (T)constructor.newInstance();
-                }
-            }
-        }
-        catch (IllegalAccessException | InstantiationException | InvocationTargetException e) {
-            throw new RuntimeException(e);
-        }
-
-        throw new RuntimeException("No default constructor");
-    }
-
-    /**
-     * Get object field value via reflection.
-     *
-     * @param obj Object or class to get field value from.
-     * @param fieldNames Field names to get value for: obj->field1->field2->...->fieldN.
-     * @param <T> Expected field class.
-     * @return Field value.
-     * @throws IgniteException In case of error.
-     */
-    private static <T> T getFieldValue(Object obj, String... fieldNames) throws IgniteException {
-        assert obj != null;
-        assert fieldNames != null;
-        assert fieldNames.length >= 1;
-
-        try {
-            for (String fieldName : fieldNames) {
-                Class<?> cls = obj instanceof Class ? (Class)obj : obj.getClass();
-
-                try {
-                    obj = findField(cls, obj, fieldName);
-                }
-                catch (NoSuchFieldException e) {
-                    throw new RuntimeException(e);
-                }
-            }
-
-            return (T)obj;
-        }
-        catch (IllegalAccessException e) {
-            throw new IgniteException("Failed to get object field [obj=" + obj +
-                ", fieldNames=" + Arrays.toString(fieldNames) + ']', e);
-        }
-    }
-
-    /**
-     * @param cls Class for searching.
-     * @param obj Target object.
-     * @param fieldName Field name for search.
-     * @return Field from object if it was found.
-     */
-    private static Object findField(Class<?> cls, Object obj,
-        String fieldName) throws NoSuchFieldException, IllegalAccessException {
-        // Resolve inner field.
-        Field field = cls.getDeclaredField(fieldName);
-
-        boolean accessible = field.isAccessible();
-
-        if (!accessible)
-            field.setAccessible(true);
-
-        return field.get(obj);
-    }
-
-    /**
-     * Set object field value via reflection.
-     *
-     * @param obj Object to set field value to.
-     * @param fieldName Field name to set value for.
-     * @param val New field value.
-     * @throws IgniteException In case of error.
-     */
-    private static void setFieldValue(Object obj, String fieldName, Object val) throws IgniteException {
-        setFieldValue(obj, obj.getClass(), fieldName, val);
-    }
-
-    /**
-     * Set object field value via reflection.
-     *
-     * @param obj Object to set field value to.
-     * @param cls Class to get field from.
-     * @param fieldName Field name to set value for.
-     * @param val New field value.
-     * @throws IgniteException In case of error.
-     */
-    private static void setFieldValue(Object obj, Class cls, String fieldName, Object val) throws IgniteException {
-        assert fieldName != null;
-
-        try {
-            Field field = cls.getDeclaredField(fieldName);
-
-            boolean accessible = field.isAccessible();
-
-            if (!accessible)
-                field.setAccessible(true);
-
-            boolean isFinal = (field.getModifiers() & Modifier.FINAL) != 0;
-
-            if (isFinal) {
-                Field modifiersField = Field.class.getDeclaredField("modifiers");
-
-                modifiersField.setAccessible(true);
-
-                modifiersField.setInt(field, field.getModifiers() & ~Modifier.FINAL);
-            }
-
-            field.set(obj, val);
-        }
-        catch (NoSuchFieldException | IllegalAccessException e) {
-            throw new IgniteException("Failed to set object field [obj=" + obj + ", field=" + fieldName + ']', e);
+            return infos;
         }
     }
 
