@@ -94,13 +94,27 @@ public class PagememLeakAfterRebalanceSelfTest extends GridCommonAbstractTest {
         return cfg;
     }
 
+    @Override protected void beforeTestsStarted() throws Exception {
+        super.beforeTestsStarted();
+
+        cleanPersistenceDir();
+    }
+
+    @Override protected void afterTestsStopped() throws Exception {
+        super.afterTestsStopped();
+
+        stopAllGrids();
+
+        cleanPersistenceDir();
+    }
+
     /**
      * @throws Exception If failed.
      */
     @Test
     @WithSystemProperty(key = IGNITE_BASELINE_AUTO_ADJUST_ENABLED, value = "false")
     public void testPreloadingWithConcurrentUpdates() throws Exception {
-        int size = 500_000;
+        int size = 5_000;
 
         Map<Integer, String> srcMap = new HashMap<>(U.capacity(size));
 
@@ -115,13 +129,13 @@ public class PagememLeakAfterRebalanceSelfTest extends GridCommonAbstractTest {
 
         node.cache(DEF_CACHE_NAME).putAll(srcMap);
 
-        node.cluster().active(false);
+        //node.cluster().active(false);
 
         IgniteEx node2 = startGrid(1);
 
         node.cluster().setBaselineTopology(node.cluster().nodes());
 
-        node.cluster().active(true);
+        //node.cluster().active(true);
 
         IgniteInternalCache<Object, Object> cache = null;
 
