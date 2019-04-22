@@ -1208,6 +1208,7 @@ public class GridDhtPartitionDemander {
                     else {
                         cached.touch(); // Start tracking.
 
+                        System.out.println(">xxx> remove row " + row.value().value(cctx.cacheObjectContext(), false));
                         cleanupRow(cctx, row); // Remove pre-created row.
 
                         if (log.isTraceEnabled())
