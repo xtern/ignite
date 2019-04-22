@@ -133,6 +133,8 @@ public class FreeListPreloadWithBatchUpdatesTest extends GridCommonAbstractTest 
      */
     @After
     public void after() throws Exception {
+        System.clearProperty(IGNITE_BASELINE_AUTO_ADJUST_ENABLED);
+
         stopAllGrids();
 
         cleanPersistenceDir();
@@ -144,8 +146,9 @@ public class FreeListPreloadWithBatchUpdatesTest extends GridCommonAbstractTest 
     @Test
     @WithSystemProperty(key = IGNITE_DATA_STORAGE_BATCH_PAGE_WRITE, value = "true")
     @WithSystemProperty(key = IGNITE_PDS_WAL_REBALANCE_THRESHOLD, value = "100")
-    @WithSystemProperty(key = IGNITE_BASELINE_AUTO_ADJUST_ENABLED, value = "false")
     public void testBatchRebalance() throws Exception {
+        System.setProperty(IGNITE_BASELINE_AUTO_ADJUST_ENABLED, String.valueOf(!persistence));
+
         Ignite node1 = startGrid(0);
 
         node1.cluster().active(true);

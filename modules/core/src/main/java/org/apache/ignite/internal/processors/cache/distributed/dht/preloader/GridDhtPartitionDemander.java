@@ -993,6 +993,7 @@ public class GridDhtPartitionDemander {
     private void cleanupRow(GridCacheContext cctx, CacheDataRow row) throws IgniteCheckedException {
         if (row != null) {
             RowStore rowStore = cctx.offheap().dataStore(cctx.topology().localPartition(row.partition())).rowStore();
+
             rowStore.removeRow(row.link(), grp.statisticsHolderData());
         }
     }
@@ -1206,6 +1207,8 @@ public class GridDhtPartitionDemander {
                     }
                     else {
                         cached.touch(); // Start tracking.
+
+                        cleanupRow(cctx, row); // Remove pre-created row.
 
                         if (log.isTraceEnabled())
                             log.trace("Rebalancing entry is already in cache (will ignore) [key=" + cached.key() +

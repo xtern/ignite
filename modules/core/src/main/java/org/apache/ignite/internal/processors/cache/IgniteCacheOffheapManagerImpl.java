@@ -1689,6 +1689,11 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
                 }
 
                 rowStore().addRows(rows, statHolder);
+
+                if (grp.sharedGroup() && !cctx.group().storeCacheIdInDataPage()) {
+                    for (CacheDataRow row : rows)
+                        ((DataRow)row).cacheId(cctx.cacheId());
+                }
             }
             finally {
                 busyLock.leaveBusy();

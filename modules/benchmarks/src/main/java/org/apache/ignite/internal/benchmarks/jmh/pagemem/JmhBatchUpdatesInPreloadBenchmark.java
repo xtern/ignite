@@ -113,28 +113,19 @@ public class JmhBatchUpdatesInPreloadBenchmark {
     /** */
     public enum OBJECT_SIZE_RANGE {
         /** */
-        r0_4(0, 4),
+        r4_16(4, 64),
 
         /** */
-        r4_16(4, 16),
+        r100_300(100, 300),
 
         /** */
-        r16_64(16, 64),
+        r300_700(300, 700),
 
         /** */
-        r100_200(100, 200),
+        r700_1200(700, 1200),
 
         /** */
-        r200_500(200, 500),
-
-        /** */
-        r500_800(500, 800),
-
-        /** */
-        r800_1200(800, 1200),
-
-        /** */
-        r2000_3000(2_000, 3_000),
+        r1200_3000(1_200, 3_000),
 
         /** */
         r1000_8000(1_000, 8_000),
@@ -540,7 +531,7 @@ public class JmhBatchUpdatesInPreloadBenchmark {
      */
     public static void main(String[] args) throws RunnerException {
         final Options options = new OptionsBuilder()
-            .include(JmhBatchUpdatesBenchmark.class.getSimpleName())
+            .include(JmhBatchUpdatesInPreloadBenchmark.class.getSimpleName())
             .build();
 
         new Runner(options).run();

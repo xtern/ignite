@@ -3333,8 +3333,6 @@ public abstract class GridCacheMapEntry extends GridMetadataAwareAdapter impleme
         lockListenerReadLock();
         lockEntry();
 
-        boolean update = false;
-
         try {
             checkObsolete();
 
@@ -3345,6 +3343,8 @@ public abstract class GridCacheMapEntry extends GridMetadataAwareAdapter impleme
             val = cctx.kernalContext().cacheObjects().prepareForCache(val, cctx);
 
             final boolean unswapped = ((flags & IS_UNSWAPPED_MASK) != 0);
+
+            boolean update;
 
             IgnitePredicate<CacheDataRow> p = new IgnitePredicate<CacheDataRow>() {
                 @Override public boolean apply(@Nullable CacheDataRow row) {
@@ -3510,14 +3510,6 @@ public abstract class GridCacheMapEntry extends GridMetadataAwareAdapter impleme
         finally {
             unlockEntry();
             unlockListenerReadLock();
-
-            if (!update && row != null) {
-                assert localPartition() != null;
-
-                // Remove pre created row.
-                cctx.offheap().dataStore(localPartition()).rowStore().
-                    removeRow(row.link(), cctx.group().statisticsHolderData());
-            }
 
             // It is necessary to execute these callbacks outside of lock to avoid deadlocks.
 
