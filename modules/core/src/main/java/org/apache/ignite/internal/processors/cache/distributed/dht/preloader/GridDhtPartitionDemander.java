@@ -31,7 +31,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.IgniteLogger;
-import org.apache.ignite.IgniteSystemProperties;
 import org.apache.ignite.cache.CacheRebalanceMode;
 import org.apache.ignite.cluster.ClusterNode;
 import org.apache.ignite.configuration.CacheConfiguration;
@@ -98,10 +97,6 @@ import static org.apache.ignite.internal.processors.dr.GridDrType.DR_PRELOAD;
 public class GridDhtPartitionDemander {
     /** */
     private static final int CHECKPOINT_THRESHOLD = 100;
-
-    /** */
-    private static final boolean BATCH_PAGE_WRITE_ENABLED =
-        IgniteSystemProperties.getBoolean(IgniteSystemProperties.IGNITE_DATA_STORAGE_BATCH_PAGE_WRITE, true);
 
     /** */
     private final GridCacheSharedContext<?, ?> ctx;
@@ -780,8 +775,7 @@ public class GridDhtPartitionDemander {
 
                     boolean last = supplyMsg.last().containsKey(p);
 
-                    boolean batchPageWrite = BATCH_PAGE_WRITE_ENABLED &&
-                        evictionsAllowsBatch(grp.dataRegion(), supplyMsg.messageSize());
+                    boolean batched = evictionAllowsBatch(grp.dataRegion(), supplyMsg.messageSize());
 
                     if (part.state() == MOVING) {
                         boolean reserved = part.reserve();
@@ -797,7 +791,7 @@ public class GridDhtPartitionDemander {
                             if (grp.mvccEnabled())
                                 mvccPreloadEntries(topVer, node, p, infos);
                             else
-                                preloadEntries(topVer, node, p, infos, batchPageWrite);
+                                preloadEntries(topVer, node, p, infos, batched);
 
                             // If message was last for this partition,
                             // then we take ownership.
@@ -882,7 +876,7 @@ public class GridDhtPartitionDemander {
      * @param msgSize Rebalance message size.
      * @return {@code True} if entries could processed in batch.
      */
-    private boolean evictionsAllowsBatch(DataRegion region, int msgSize) {
+    private boolean evictionAllowsBatch(DataRegion region, int msgSize) {
         DataRegionConfiguration plc = region.config();
 
         if (plc.isPersistenceEnabled() || plc.getPageEvictionMode() == DataPageEvictionMode.DISABLED)
