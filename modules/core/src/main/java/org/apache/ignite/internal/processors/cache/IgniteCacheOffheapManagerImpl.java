@@ -1680,8 +1680,8 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
 
                     CacheObjectContext coCtx = cctx.cacheObjectContext();
 
-                    val.valueBytes(coCtx);
                     key.valueBytes(coCtx);
+                    val.valueBytes(coCtx);
 
                     DataRow row = makeDataRow(key, val, info.version(), info.expireTime(), cacheId);
 

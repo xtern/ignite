@@ -332,10 +332,6 @@ public abstract class AbstractFreeList<T extends Storable> extends PagesList imp
             int remainSpace = iox.getFreeSpace(pageAddr);
             int remainItems = MAX_DATA_ROWS_PER_PAGE - iox.getRowsCount(pageAddr);
 
-            boolean pageIsEmpty = remainItems == MAX_DATA_ROWS_PER_PAGE && !needWalDeltaRecord(pageId, page, walPlc);
-
-            List<T> rows0 = pageIsEmpty ? new ArrayList<>(8) : null;
-
             while (idx < rows.size() && remainItems > 0) {
                 T row = rows.get(idx);
 
@@ -346,26 +342,18 @@ public abstract class AbstractFreeList<T extends Storable> extends PagesList imp
                 if (remainSpace < payloadSize)
                     break;
 
-                if (pageIsEmpty)
-                    rows0.add(row);
-                else {
-                    int written = size > MIN_SIZE_FOR_DATA_PAGE ?
-                        addRowFragment(pageId, page, pageAddr, iox, row, size - payloadSize, size) :
-                        addRow(pageId, page, pageAddr, iox, row, size);
+                int written = size > MIN_SIZE_FOR_DATA_PAGE ?
+                    addRowFragment(pageId, page, pageAddr, iox, row, size - payloadSize, size) :
+                    addRow(pageId, page, pageAddr, iox, row, size);
 
-                    assert written == size : "The object is not fully written into page: pageId=" + pageId +
-                        ", written=" + written + ", size=" + row.size();
-                }
+                assert written == size : "The object is not fully written into page: pageId=" + pageId +
+                    ", written=" + written + ", size=" + row.size();
 
                 remainSpace -= getPageEntrySize(row, iox);
                 remainItems -= 1;
 
                 idx += 1;
             }
-
-            // Update page counters only once.
-            if (pageIsEmpty)
-                iox.addRows(pageMem, pageId, pageAddr, rows0, pageSize());
 
             assert idx != writtenCnt;
 

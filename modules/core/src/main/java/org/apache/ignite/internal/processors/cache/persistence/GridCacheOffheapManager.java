@@ -1992,7 +1992,7 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
 
             return delegate.mvccInitialValue(cctx, key, val, ver, expireTime, mvccVer, newMvccVer);
         }
-
+        
         /** {@inheritDoc} */
         @Override public boolean mvccApplyHistoryIfAbsent(
             GridCacheContext cctx,

@@ -22,7 +22,6 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.HashSet;
-import java.util.Iterator;
 import java.util.List;
 import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.internal.pagemem.PageIdUtils;
@@ -32,7 +31,6 @@ import org.apache.ignite.internal.processors.cache.persistence.Storable;
 import org.apache.ignite.internal.processors.cache.persistence.tree.util.PageHandler;
 import org.apache.ignite.internal.util.GridStringBuilder;
 import org.apache.ignite.internal.util.typedef.internal.SB;
-import org.apache.ignite.internal.util.typedef.internal.U;
 import org.jetbrains.annotations.Nullable;
 
 import static org.apache.ignite.internal.util.GridUnsafe.bufferAddress;
@@ -977,67 +975,6 @@ public abstract class AbstractDataPageIO<T extends Storable> extends PageIO impl
         int pageSize
     ) throws IgniteCheckedException {
         addRowFragment(null, pageId, pageAddr, 0, 0, lastLink, null, payload, pageSize);
-    }
-
-    /**
-     * @param pageMem Page memory.
-     * @param pageId Page ID to use to construct a link.
-     * @param pageAddr Page address.
-     * @param rows Data rows.
-     * @param pageSize Page size.
-     * @throws IgniteCheckedException If failed.
-     */
-    public void addRows(
-        final PageMemory pageMem,
-        final long pageId,
-        final long pageAddr,
-        final Collection<T> rows,
-        final int pageSize
-    ) throws IgniteCheckedException {
-        int maxPayloadSIze = pageSize - MIN_DATA_PAGE_OVERHEAD;
-        int dataOff = pageSize;
-        int written = 0;
-        int cnt = 0;
-
-        for (T row : rows) {
-            int size = row.size();
-            int payloadSize = size % maxPayloadSIze;
-            boolean fragment = size > maxPayloadSIze;
-
-            int fullEntrySize = getPageEntrySize(payloadSize, fragment ?
-                SHOW_PAYLOAD_LEN | SHOW_ITEM | SHOW_LINK : SHOW_PAYLOAD_LEN | SHOW_ITEM);
-
-            written += fullEntrySize;
-            dataOff -= (fullEntrySize - ITEM_SIZE);
-
-            if (fragment) {
-                ByteBuffer buf = pageMem.pageBuffer(pageAddr);
-
-                buf.position(dataOff);
-
-                buf.putShort((short)(payloadSize | FRAGMENTED_FLAG));
-                buf.putLong(row.link());
-
-                writeFragmentData(row, buf, 0, payloadSize);
-            }
-            else
-                writeRowData(pageAddr, dataOff, payloadSize, row, true);
-
-            setItem(pageAddr, cnt, directItemFromOffset(dataOff));
-
-            assert checkIndex(cnt) : cnt;
-            assert getIndirectCount(pageAddr) <= getDirectCount(pageAddr);
-
-            setLinkByPageId(row, pageId, cnt);
-
-            cnt += 1;
-        }
-
-        setDirectCount(pageAddr, cnt);
-
-        setFirstEntryOffset(pageAddr, dataOff, pageSize);
-
-        setRealFreeSpace(pageAddr, getRealFreeSpace(pageAddr) - written, pageSize);
     }
 
     /**
