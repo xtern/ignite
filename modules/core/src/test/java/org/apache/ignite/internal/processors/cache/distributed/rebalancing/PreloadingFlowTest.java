@@ -188,11 +188,13 @@ public class PreloadingFlowTest extends GridCommonAbstractTest {
 
             IgniteInternalCache<Integer, TestObject> cache = node2.cachex(DEFAULT_CACHE_NAME);
 
-            assert GridTestUtils.waitForCondition(new PA() {
+            boolean rebalanceStarted = GridTestUtils.waitForCondition(new PA() {
                 @Override public boolean apply() {
                     return !cache.context().preloader().rebalanceFuture().isDone();
                 }
             }, 10_000);
+
+            assertTrue(rebalanceStarted);
 
             preloadStartSync.countDown();
 
