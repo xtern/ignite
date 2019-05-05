@@ -117,18 +117,9 @@ public class RowStore {
      * @throws IgniteCheckedException If failed.
      */
     public void addRows(Collection<CacheDataRow> rows, IoStatisticsHolder statHolder) throws IgniteCheckedException {
-        if (!persistenceEnabled)
-            freeList.insertDataRows(rows, statHolder);
-        else {
-            ctx.database().checkpointReadLock();
+        assert ctx.database().checkpointLockIsHeldByThread();
 
-            try {
-                freeList.insertDataRows(rows, statHolder);
-            }
-            finally {
-                ctx.database().checkpointReadUnlock();
-            }
-        }
+        freeList.insertDataRows(rows, statHolder);
     }
 
     /**
