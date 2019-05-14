@@ -58,6 +58,7 @@ import org.apache.ignite.internal.processors.cache.distributed.dht.topology.Grid
 import org.apache.ignite.internal.processors.cache.mvcc.MvccUpdateVersionAware;
 import org.apache.ignite.internal.processors.cache.mvcc.MvccVersionAware;
 import org.apache.ignite.internal.processors.cache.mvcc.txlog.TxState;
+import org.apache.ignite.internal.processors.cache.persistence.tree.AllocationContext;
 import org.apache.ignite.internal.processors.timeout.GridTimeoutObject;
 import org.apache.ignite.internal.processors.timeout.GridTimeoutObjectAdapter;
 import org.apache.ignite.internal.util.future.GridCompoundFuture;
@@ -74,6 +75,7 @@ import org.apache.ignite.internal.util.typedef.internal.U;
 import org.apache.ignite.lang.IgniteInClosure;
 import org.apache.ignite.lang.IgnitePredicate;
 import org.apache.ignite.spi.IgniteSpiException;
+import org.apache.ignite.thread.IgniteThread;
 import org.jetbrains.annotations.Nullable;
 
 import static org.apache.ignite.events.EventType.EVT_CACHE_REBALANCE_OBJECT_LOADED;
@@ -644,6 +646,8 @@ public class GridDhtPartitionDemander {
         return clearAllFuture;
     }
 
+    public static boolean DEBUG = false;
+
     /**
      * Handles supply message from {@code nodeId} with specified {@code topicId}.
      *
@@ -773,6 +777,16 @@ public class GridDhtPartitionDemander {
 
                         part.lock();
 
+                        Thread curThread = Thread.currentThread();
+
+                        if (curThread instanceof IgniteThread) {
+                            AllocationContext allocCtx = new AllocationContext(ctx.kernalContext().config().getDataStorageConfiguration().getPageSize());
+
+                            ((IgniteThread)curThread).allocator(allocCtx);
+                        }
+
+                        DEBUG = true;
+
                         try {
                             Iterator<GridCacheEntryInfo> infos = e.getValue().infos().iterator();
 
@@ -794,6 +808,11 @@ public class GridDhtPartitionDemander {
                         finally {
                             part.unlock();
                             part.release();
+
+                            if (curThread instanceof IgniteThread)
+                                ((IgniteThread)curThread).allocator(null);
+
+                            DEBUG = false;
                         }
                     }
                     else {

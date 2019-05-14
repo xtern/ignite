@@ -29,7 +29,7 @@ public class RebalanceIndexingTest extends GridCommonAbstractTest {
 
     private static final boolean IDX = false;
 
-    private static final boolean PERSISTENCE = true;
+    private static final boolean PERSISTENCE = false;
 
     @Override protected IgniteConfiguration getConfiguration(String igniteInstanceName) throws Exception {
         IgniteConfiguration cfg = super.getConfiguration(igniteInstanceName);
@@ -137,7 +137,7 @@ public class RebalanceIndexingTest extends GridCommonAbstractTest {
         private final String someKey;
 
         /** Organization ID. */
-        @QuerySqlField(index = true)
+        @QuerySqlField(index = IDX)
         private final String someKey1;
 
         /** Organization ID. */
