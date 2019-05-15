@@ -500,8 +500,6 @@ public class CacheDataRowAdapter implements CacheDataRow {
 
             byte[] bytes;
 
-//            assert !tmpAlloc : tmpAlloc;
-
             if (tmpAlloc) {
                 bytes = ((IgniteThread)Thread.currentThread()).allocator().tmpBuf;
 

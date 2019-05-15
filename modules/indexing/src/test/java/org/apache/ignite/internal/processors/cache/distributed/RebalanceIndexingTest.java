@@ -83,7 +83,12 @@ public class RebalanceIndexingTest extends GridCommonAbstractTest {
 
             orgCache.put(orgKey, new Organization(i, String.valueOf(i)));
 
-            for (int j = 0; j < 10_000; j++) {
+            for (int j = 0; j < 1_000; j++) {
+                if (j >= 500 && j <= 502 && i == 1)
+                    personCache.put(
+                        new AffinityKey<>("person" + j, orgKey),
+                        new Person("John White " + " " + i + " " + j, 25, i, "012345678900123456789001234567890012345678900123456789001234567890" + j));
+                else
                 personCache.put(
                     new AffinityKey<>("person" + j, orgKey),
                     new Person("John White " + " " + i + " " + j, 25, i, "Person Person " + j));
