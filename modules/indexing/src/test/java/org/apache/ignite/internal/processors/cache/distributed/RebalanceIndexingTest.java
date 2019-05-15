@@ -10,10 +10,14 @@ import org.apache.ignite.cache.CacheRebalanceMode;
 import org.apache.ignite.cache.CacheWriteSynchronizationMode;
 import org.apache.ignite.cache.affinity.AffinityKey;
 import org.apache.ignite.cache.query.annotations.QuerySqlField;
+import org.apache.ignite.configuration.BinaryConfiguration;
 import org.apache.ignite.configuration.CacheConfiguration;
 import org.apache.ignite.configuration.DataRegionConfiguration;
 import org.apache.ignite.configuration.DataStorageConfiguration;
 import org.apache.ignite.configuration.IgniteConfiguration;
+import org.apache.ignite.internal.IgniteEx;
+import org.apache.ignite.internal.IgniteInternalFuture;
+import org.apache.ignite.internal.processors.cache.IgniteInternalCache;
 import org.apache.ignite.internal.util.typedef.F;
 import org.apache.ignite.internal.util.typedef.internal.U;
 import org.apache.ignite.testframework.GridTestUtils;
@@ -27,9 +31,9 @@ import static org.apache.ignite.cache.CacheMode.PARTITIONED;
 
 public class RebalanceIndexingTest extends GridCommonAbstractTest {
 
-    private static final boolean IDX = false;
+    private static final boolean IDX = true;
 
-    private static final boolean PERSISTENCE = false;
+    private static final boolean PERSISTENCE = true;
 
     @Override protected IgniteConfiguration getConfiguration(String igniteInstanceName) throws Exception {
         IgniteConfiguration cfg = super.getConfiguration(igniteInstanceName);
@@ -41,6 +45,12 @@ public class RebalanceIndexingTest extends GridCommonAbstractTest {
                 )
         );
 
+        BinaryConfiguration binCfg = new BinaryConfiguration();
+
+        binCfg.setCompactFooter(false);
+
+        cfg.setBinaryConfiguration(binCfg);
+
         return cfg;
     }
 
@@ -49,7 +59,7 @@ public class RebalanceIndexingTest extends GridCommonAbstractTest {
      */
     @Before
     public void before() throws Exception {
-        cleanPersistenceDir();
+//        cleanPersistenceDir();
     }
 
     /**
@@ -59,6 +69,73 @@ public class RebalanceIndexingTest extends GridCommonAbstractTest {
     public void after() throws Exception {
 //        cleanPersistenceDir();
     }
+
+    @Test
+    @WithSystemProperty(key=IgniteSystemProperties.IGNITE_MAX_INDEX_PAYLOAD_SIZE, value="10")
+    public void testIndexRebuild() throws Exception {
+        long start = U.currentTimeMillis();
+
+        IgniteEx node = startGrid(0);
+
+        node.cluster().active(true);
+
+        node.cluster().baselineAutoAdjustTimeout(0);
+
+        IgniteCache<String, Organization> orgCache = jcache(String.class, Organization.class);
+
+        assert orgCache != null;
+
+        IgniteCache<?, ?> c = jcache(AffinityKey.class, Person.class);
+        IgniteCache<AffinityKey<String>, Person>  personCache = (IgniteCache<AffinityKey<String>, Person>)c;
+
+
+        int orgSize = 100;
+        int personSize = 10_000;
+
+        if (personCache.size() == 0) {
+            log.info("Loading data.");
+
+            for (int i = 0; i < orgSize; i++) {
+                String orgKey = "organization" + i;
+
+                orgCache.put(orgKey, new Organization(i, String.valueOf(i)));
+
+                for (int j = 0; j < personSize; j++) {
+                    //                if (j >= 500 && j <= 502 && i == 1)
+                    //                    personCache.put(
+                    //                        new AffinityKey<>("person" + j, orgKey),
+                    //                        new Person("John White " + " " + i + " " + j, 25, i, "012345678900123456789001234567890012345678900123456789001234567890" + j));
+                    //                else
+                    personCache.put(
+                        new AffinityKey<>("person" + j, orgKey),
+                        new Person("John White " + " " + i + " " + j, 25, i, "Person Person " + j));
+                }
+            }
+
+            forceCheckpoint(node);
+        }
+
+        log.info(">xxx> Data loaded.");
+
+
+
+        IgniteInternalCache persons = node.cachex(c.getName());
+
+        IgniteInternalFuture fut = node.context().cache().context().database().indexRebuildFuture(persons.context().cacheId());
+
+//        node.context().cache().context().database().rebuildIndexesIfNeeded();
+
+        if (fut != null && !fut.isDone()) {
+            System.out.println(">xxx> Wait for index rebuild");
+
+            fut.get();
+        }
+
+        log.info(">xxx> Done");
+
+        log.info(">xxx> total time " + (U.currentTimeMillis() - start));
+    }
+
 
     @Test
 //    @WithSystemProperty(key = IgniteSystemProperties.IGNITE_BASELINE_AUTO_ADJUST_ENABLED, value = "false")
@@ -89,9 +166,9 @@ public class RebalanceIndexingTest extends GridCommonAbstractTest {
                         new AffinityKey<>("person" + j, orgKey),
                         new Person("John White " + " " + i + " " + j, 25, i, "012345678900123456789001234567890012345678900123456789001234567890" + j));
                 else
-                personCache.put(
-                    new AffinityKey<>("person" + j, orgKey),
-                    new Person("John White " + " " + i + " " + j, 25, i, "Person Person " + j));
+                    personCache.put(
+                        new AffinityKey<>("person" + j, orgKey),
+                        new Person("John White " + " " + i + " " + j, 25, i, "Person Person " + j));
             }
         }
 
@@ -118,6 +195,8 @@ public class RebalanceIndexingTest extends GridCommonAbstractTest {
 
         System.out.println("Rebalance total time: " + (U.currentTimeMillis() - startTime) + " ms");
     }
+
+
 
 
 
