@@ -59,7 +59,9 @@ public class RebalanceIndexingTest extends GridCommonAbstractTest {
      */
     @Before
     public void before() throws Exception {
-//        cleanPersistenceDir();
+        stopAllGrids();
+
+        cleanPersistenceDir();
     }
 
     /**
@@ -71,7 +73,7 @@ public class RebalanceIndexingTest extends GridCommonAbstractTest {
     }
 
     @Test
-    @WithSystemProperty(key=IgniteSystemProperties.IGNITE_MAX_INDEX_PAYLOAD_SIZE, value="10")
+    @WithSystemProperty(key=IgniteSystemProperties.IGNITE_MAX_INDEX_PAYLOAD_SIZE, value="60")
     public void testIndexRebuild() throws Exception {
         long start = U.currentTimeMillis();
 
@@ -89,8 +91,8 @@ public class RebalanceIndexingTest extends GridCommonAbstractTest {
         IgniteCache<AffinityKey<String>, Person>  personCache = (IgniteCache<AffinityKey<String>, Person>)c;
 
 
-        int orgSize = 100;
-        int personSize = 10_000;
+        int orgSize = 1;
+        int personSize = 1;
 
         if (personCache.size() == 0) {
             log.info("Loading data.");
