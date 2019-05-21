@@ -61,7 +61,7 @@ import static org.apache.ignite.IgniteSystemProperties.IGNITE_BASELINE_AUTO_ADJU
  */
 public class PreloadingFlowTest extends GridCommonAbstractTest {
     /** */
-    private static final int CACHE_SIZE = 2_000_000;
+    private static final int CACHE_SIZE = 100_000;
 
     /** */
     private static final int ITERATIONS = 10;
@@ -233,7 +233,7 @@ public class PreloadingFlowTest extends GridCommonAbstractTest {
     private Map<Integer, TestObject> prepare(int cnt) {
         Map<Integer, TestObject> data = new LinkedHashMap<>(U.capacity(cnt));
 
-        byte[] bytes = new byte[50];
+        byte[] bytes = new byte[4000];
 
         for (int i = 0; i < cnt; i++)
             data.put(i, new TestObject("val-" + i, "version-" + i, i, i * Integer.MAX_VALUE, bytes));
