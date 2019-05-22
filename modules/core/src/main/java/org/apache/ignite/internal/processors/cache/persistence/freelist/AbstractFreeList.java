@@ -178,52 +178,41 @@ public abstract class AbstractFreeList<T extends Storable> extends PagesList imp
             AbstractDataPageIO<T> io = (AbstractDataPageIO<T>)iox;
 
             int oldFreeSpace = io.getFreeSpace(pageAddr);
+            int remainItems = MAX_DATA_ROWS_PER_PAGE - io.getRowsCount(pageAddr);
 
             assert oldFreeSpace > 0 : oldFreeSpace;
 
-            if (singleRow) {
-                assert rows.hasNext();
+            if (!singleRow)
+                written = 0;
 
+            while (rows.hasNext() && remainItems > 0) {
                 T row = rows.next();
 
                 int rowSize = row.size();
 
-                // If the full row does not fit into this page write only a fragment.
-                written = (written == 0 && oldFreeSpace >= rowSize) ? addRow(pageId, page, pageAddr, io, row, rowSize) :
-                    written + addRowFragment(pageId, page, pageAddr, io, row, written, rowSize);
+                boolean fragment = rowSize > MIN_SIZE_FOR_DATA_PAGE;
+
+                int payloadSize = fragment ? rowSize % MIN_SIZE_FOR_DATA_PAGE : rowSize;
+
+                // If there is not enough space on page.
+                if (oldFreeSpace < payloadSize) {
+                    rows.previous();
+
+                    break;
+                }
+
+                written += !fragment ? addRow(pageId, page, pageAddr, io, row, rowSize) :
+                    addRowFragment(pageId, page, pageAddr, io, row, singleRow ? written : rowSize - payloadSize, rowSize);
+
+                if (!singleRow) {
+                    oldFreeSpace -= io.getPageEntrySize(payloadSize, fragment ? FRAGMENT_SIZE_FLAGS : SIZE_FLAGS);
+                    remainItems -= 1;
+
+                    continue;
+                }
 
                 if (written != rowSize)
                     touchPage = false;
-
-                assert !rows.hasNext() : "Single row expected";
-            }
-            else {
-                int remainItems = MAX_DATA_ROWS_PER_PAGE - io.getRowsCount(pageAddr);
-
-                written = 0;
-
-                while (rows.hasNext() && remainItems > 0) {
-                    T row = rows.next();
-
-                    int rowSize = row.size();
-
-                    boolean fragment = rowSize > MIN_SIZE_FOR_DATA_PAGE;
-
-                    int payloadSize = fragment ? rowSize % MIN_SIZE_FOR_DATA_PAGE : rowSize;
-
-                    // If there is not enough space on page.
-                    if (oldFreeSpace < payloadSize) {
-                        rows.previous();
-
-                        break;
-                    }
-
-                    written += !fragment ? addRow(pageId, page, pageAddr, io, row, rowSize) :
-                        addRowFragment(pageId, page, pageAddr, io, row, rowSize - payloadSize, rowSize);
-
-                    oldFreeSpace -= io.getPageEntrySize(payloadSize, fragment ? FRAGMENT_SIZE_FLAGS : SIZE_FLAGS);
-                    remainItems -= 1;
-                }
             }
 
             // Reread free space after update.
