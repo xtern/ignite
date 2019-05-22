@@ -20,6 +20,7 @@ package org.apache.ignite.internal.processors.cache.persistence.freelist;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
+import java.util.ListIterator;
 import java.util.concurrent.atomic.AtomicReferenceArray;
 import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.IgniteLogger;
@@ -45,7 +46,11 @@ import org.apache.ignite.internal.processors.cache.persistence.tree.reuse.ReuseL
 import org.apache.ignite.internal.processors.cache.persistence.tree.util.PageHandler;
 import org.apache.ignite.internal.stat.IoStatisticsHolder;
 import org.apache.ignite.internal.stat.IoStatisticsHolderNoOp;
+import org.apache.ignite.internal.util.lang.gridfunc.MutableSingletonListIterator;
 import org.apache.ignite.internal.util.typedef.internal.U;
+
+import static java.util.Collections.singleton;
+import static java.util.Collections.singletonList;
 
 /**
  */
@@ -92,6 +97,9 @@ public abstract class AbstractFreeList<T extends Storable> extends PagesList imp
     /** */
     private final PageEvictionTracker evictionTracker;
 
+    /** */
+    private final MutableSingletonListIterator<T> listItr = new MutableSingletonListIterator<>();
+
     /**
      *
      */
@@ -137,15 +145,15 @@ public abstract class AbstractFreeList<T extends Storable> extends PagesList imp
     }
 
     /** */
-    private final PageHandler<T, Integer> writeRow = new WriteRowHandler();
+//    private final PageHandler<T, Integer> writeRow = new WriteRowHandler();
 
     /** */
-    private final PageHandler<List<T>, Integer> writeRows = new WriteRowsHandler();
+    private final PageHandler<ListIterator<T>, Integer> writeRow = new WriteRowHandler();
 
     /**
      *
      */
-    private final class WriteRowHandler extends PageHandler<T, Integer> {
+    private final class WriteRowHandler1 extends PageHandler<T, Integer> {
         @Override public Integer run(
             int cacheId,
             long pageId,
@@ -268,7 +276,8 @@ public abstract class AbstractFreeList<T extends Storable> extends PagesList imp
     /**
      *
      */
-    private class WriteRowsHandler extends PageHandler<List<T>, Integer> {
+    private class WriteRowHandler extends PageHandler<ListIterator<T>, Integer> {
+
         /** */
         private static final int SIZE_FLAGS = AbstractDataPageIO.SHOW_PAYLOAD_LEN | AbstractDataPageIO.SHOW_ITEM;
 
@@ -281,20 +290,34 @@ public abstract class AbstractFreeList<T extends Storable> extends PagesList imp
             long pageId,
             long page,
             long pageAddr,
-            PageIO io,
+            PageIO iox,
             Boolean walPlc,
-            List<T> rows,
-            int writtenCnt,
+            ListIterator<T> rows,
+            int written,
             IoStatisticsHolder statHolder
         ) throws IgniteCheckedException {
-            AbstractDataPageIO<T> iox = (AbstractDataPageIO<T>)io;
+            AbstractDataPageIO<T> io = (AbstractDataPageIO<T>)iox;
 
-            int idx = writtenCnt;
-            int remainSpace = iox.getFreeSpace(pageAddr);
-            int remainItems = MAX_DATA_ROWS_PER_PAGE - iox.getRowsCount(pageAddr);
+            boolean singleRow = written >= 0;
+//
+//            int rowSize = row.size();
+//            int oldFreeSpace = io.getFreeSpace(pageAddr);
+//
+//            assert oldFreeSpace > 0 : oldFreeSpace;
+//
+//            // If the full row does not fit into this page write only a fragment.
+//            written = (written == 0 && oldFreeSpace >= rowSize) ? addRow(pageId, page, pageAddr, io, row, rowSize) :
+//                addRowFragment(pageId, page, pageAddr, io, row, written, rowSize);
+//
+//            AbstractDataPageIO<T> iox = (AbstractDataPageIO<T>)io;
 
-            while (idx < rows.size() && remainItems > 0) {
-                T row = rows.get(idx);
+            int remainSpace = io.getFreeSpace(pageAddr);
+            int remainItems = MAX_DATA_ROWS_PER_PAGE - io.getRowsCount(pageAddr);
+
+
+
+            while (rows.hasNext() && remainItems > 0) {
+                T row = rows.next();
 
                 int size = row.size();
 
@@ -303,29 +326,33 @@ public abstract class AbstractFreeList<T extends Storable> extends PagesList imp
                 int payloadSize = fragment ? size % MIN_SIZE_FOR_DATA_PAGE : size;
 
                 // If there is not enough space on page.
-                if (remainSpace < payloadSize)
+                if (remainSpace < payloadSize) {
+                    rows.previous();
+
                     break;
+                }
 
-                long lastLink = row.link();
+                if (fragment) {
+                    int off = singleRow ? written : size - payloadSize;
 
-                if (fragment)
-                    iox.addRowFragment(pageMem, pageId, pageAddr, row, size - payloadSize, size, pageSize());
+                    written = addRowFragment(pageId, page, pageAddr, io, row, off, size);
+                }
                 else
-                    iox.addRow(pageId, pageAddr, row, size, pageSize());
+                    written += addRow(pageId, page, pageAddr, io, row, size);
 
-                if (needWalDeltaRecord(pageId, page, null))
-                    walLog(pageId, pageAddr, iox, row, payloadSize, fragment, lastLink);
+                if (!singleRow) {
+                    remainSpace -= io.getPageEntrySize(payloadSize, fragment ? FRAGMENT_SIZE_FLAGS : SIZE_FLAGS);
+                    remainItems -= 1;
 
-                remainSpace -= iox.getPageEntrySize(payloadSize, fragment ? FRAGMENT_SIZE_FLAGS : SIZE_FLAGS);
-                remainItems -= 1;
+                    continue;
+                }
 
-                ++idx;
+                if (written == size)
+                    written = COMPLETE;
             }
 
-            assert idx > writtenCnt;
-
             // Reread free space after update.
-            int newFreeSpace = iox.getFreeSpace(pageAddr);
+            int newFreeSpace = io.getFreeSpace(pageAddr);
 
             if (newFreeSpace > MIN_PAGE_FREE_SPACE) {
                 int bucket = bucket(newFreeSpace, false);
@@ -335,39 +362,87 @@ public abstract class AbstractFreeList<T extends Storable> extends PagesList imp
 
             evictionTracker.touchPage(pageId);
 
-            return idx;
+            return written;
         }
 
         /**
          * @param pageId Page ID.
+         * @param page Page pointer.
          * @param pageAddr Page address.
          * @param io IO.
          * @param row Row.
-         * @param payloadSize Payload size.
-         * @param fragment Fragment flag.
-         * @param lastLink Link to the last entry fragment (for fragment record).
+         * @param rowSize Row size.
+         * @return Written size which is always equal to row size here.
          * @throws IgniteCheckedException If failed.
          */
-        private void walLog(
+        private int addRow(
             long pageId,
+            long page,
             long pageAddr,
             AbstractDataPageIO<T> io,
             T row,
-            int payloadSize,
-            boolean fragment,
-            long lastLink
+            int rowSize
         ) throws IgniteCheckedException {
-            // TODO IGNITE-5829 This record must contain only a reference to a logical WAL record with the actual data.
-            byte[] payload = new byte[payloadSize];
+            io.addRow(pageId, pageAddr, row, rowSize, pageSize());
 
-            DataPagePayload data = io.readPayload(pageAddr, PageIdUtils.itemId(row.link()), pageSize());
+            if (needWalDeltaRecord(pageId, page, null)) {
+                // TODO IGNITE-5829 This record must contain only a reference to a logical WAL record with the actual data.
+                byte[] payload = new byte[rowSize];
 
-            assert data.payloadSize() == payloadSize;
+                DataPagePayload data = io.readPayload(pageAddr, PageIdUtils.itemId(row.link()), pageSize());
 
-            PageUtils.getBytes(pageAddr, data.offset(), payload, 0, payloadSize);
+                assert data.payloadSize() == rowSize;
 
-            wal.log(fragment ? new DataPageInsertFragmentRecord(grpId, pageId, payload, lastLink) :
-                new DataPageInsertRecord(grpId, pageId, payload));
+                PageUtils.getBytes(pageAddr, data.offset(), payload, 0, rowSize);
+
+                wal.log(new DataPageInsertRecord(
+                    grpId,
+                    pageId,
+                    payload));
+            }
+
+            return rowSize;
+        }
+
+        /**
+         * @param pageId Page ID.
+         * @param page Page pointer.
+         * @param pageAddr Page address.
+         * @param io IO.
+         * @param row Row.
+         * @param written Written size.
+         * @param rowSize Row size.
+         * @return Updated written size.
+         * @throws IgniteCheckedException If failed.
+         */
+        private int addRowFragment(
+            long pageId,
+            long page,
+            long pageAddr,
+            AbstractDataPageIO<T> io,
+            T row,
+            int written,
+            int rowSize
+        ) throws IgniteCheckedException {
+            // Read last link before the fragment write, because it will be updated there.
+            long lastLink = row.link();
+
+            int payloadSize = io.addRowFragment(pageMem, pageId, pageAddr, row, written, rowSize, pageSize());
+
+            assert payloadSize > 0 : payloadSize;
+
+            if (needWalDeltaRecord(pageId, page, null)) {
+                // TODO IGNITE-5829 This record must contain only a reference to a logical WAL record with the actual data.
+                byte[] payload = new byte[payloadSize];
+
+                DataPagePayload data = io.readPayload(pageAddr, PageIdUtils.itemId(row.link()), pageSize());
+
+                PageUtils.getBytes(pageAddr, data.offset(), payload, 0, payloadSize);
+
+                wal.log(new DataPageInsertFragmentRecord(grpId, pageId, payload, lastLink));
+            }
+
+            return written + payloadSize;
         }
     }
 
@@ -618,7 +693,7 @@ public abstract class AbstractFreeList<T extends Storable> extends PagesList imp
                 else
                     pageId = PageIdUtils.changePartitionId(pageId, (row.partition()));
 
-                written = write(pageId, writeRow, initIo, row, written, FAIL_I, statHolder);
+                written = write(pageId, writeRow, initIo, singletonList(row).listIterator(), written, FAIL_I, statHolder);
 
                 assert written != FAIL_I; // We can't fail here.
             }
@@ -665,7 +740,7 @@ public abstract class AbstractFreeList<T extends Storable> extends PagesList imp
                     else
                         pageId = PageIdUtils.changePartitionId(pageId, (dataRow.partition()));
 
-                    written = write(pageId, writeRow, initIo, dataRow, written, FAIL_I, statHolder);
+                    written = write(pageId, writeRow, initIo, singletonList(dataRow).listIterator(), written, FAIL_I, statHolder);
 
                     assert written != FAIL_I; // We can't fail here.
 
@@ -678,8 +753,10 @@ public abstract class AbstractFreeList<T extends Storable> extends PagesList imp
                     regularRows.add(dataRow);
             }
 
-            for (int writtenCnt = 0; writtenCnt < regularRows.size(); ) {
-                T row = regularRows.get(writtenCnt);
+            ListIterator<T> itr = regularRows.listIterator();
+
+            while (itr.nextIndex() < regularRows.size()) {
+                T row = regularRows.get(itr.nextIndex());
 
                 int size = row.size() % MIN_SIZE_FOR_DATA_PAGE;
 
@@ -709,7 +786,7 @@ public abstract class AbstractFreeList<T extends Storable> extends PagesList imp
                 else
                     pageId = PageIdUtils.changePartitionId(pageId, row.partition());
 
-                writtenCnt = write(pageId, writeRows, initIo, regularRows, writtenCnt, FAIL_I, statHolder);
+                write(pageId, writeRow, initIo, itr, -1, FAIL_I, statHolder);
             }
         }
         catch (RuntimeException e) {
@@ -745,6 +822,17 @@ public abstract class AbstractFreeList<T extends Storable> extends PagesList imp
             releasePage(reusedPageId, reusedPage);
         }
     }
+
+    /**
+     * @param row Row.
+     * @return Wrapped into singleton list iterator row.
+     */
+    private ListIterator<T> asListIterator(T row) {
+        listItr.set(row);
+
+        return listItr;
+    }
+
 
     /** {@inheritDoc} */
     @Override public boolean updateDataRow(long link, T row,
