@@ -1292,7 +1292,7 @@ public abstract class PagesList extends DataStructure {
         throws IgniteCheckedException {
         final long pageId = dataIO.getFreeListPageId(dataAddr);
 
-        assert pageId != 0;
+        assert pageId != 0 : dataAddr;
 
         final long page = acquirePage(pageId, statHolder);
         try {

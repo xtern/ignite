@@ -274,8 +274,10 @@ public class CacheFreeListImplSelfTest extends GridCommonAbstractTest {
 
                         TestDataRow row = new TestDataRow(keySize, valSize);
 
-                        if (batched)
+                        if (batched) {
+                            assert row.link() == 0;
                             rows.add(row);
+                        }
                         else {
                             list.insertDataRow(row, IoStatisticsHolderNoOp.INSTANCE);
 
