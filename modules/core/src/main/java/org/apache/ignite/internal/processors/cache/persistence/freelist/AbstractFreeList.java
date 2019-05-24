@@ -27,7 +27,6 @@ import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.IgniteLogger;
 import org.apache.ignite.internal.pagemem.PageIdAllocator;
 import org.apache.ignite.internal.pagemem.PageIdUtils;
-import org.apache.ignite.internal.pagemem.PageMemory;
 import org.apache.ignite.internal.pagemem.PageUtils;
 import org.apache.ignite.internal.pagemem.wal.IgniteWriteAheadLogManager;
 import org.apache.ignite.internal.pagemem.wal.record.delta.DataPageInsertFragmentRecord;
@@ -46,7 +45,6 @@ import org.apache.ignite.internal.processors.cache.persistence.tree.reuse.LongLi
 import org.apache.ignite.internal.processors.cache.persistence.tree.reuse.ReuseBag;
 import org.apache.ignite.internal.processors.cache.persistence.tree.reuse.ReuseList;
 import org.apache.ignite.internal.processors.cache.persistence.tree.util.PageHandler;
-import org.apache.ignite.internal.processors.cache.persistence.tree.util.PageLockListener;
 import org.apache.ignite.internal.stat.IoStatisticsHolder;
 import org.apache.ignite.internal.stat.IoStatisticsHolderNoOp;
 import org.apache.ignite.internal.util.typedef.internal.U;
@@ -690,56 +688,24 @@ public abstract class AbstractFreeList<T extends Storable> extends PagesList imp
 
     /** {@inheritDoc} */
     @Override public void insertDataRows(Collection<T> rows, IoStatisticsHolder statHolder) throws IgniteCheckedException {
+        assert !rows.isEmpty();
+
         try {
-            // Ordinary objects and the remaining parts of large objects.
-            List<T> regularRows = new ArrayList<>(rows.size());
+            Iterator<T> iter = rows.iterator();
 
-            for (T dataRow : rows) {
-                int size = dataRow.size();
+            T row = iter.next();
 
-                if (size < MIN_SIZE_FOR_DATA_PAGE) {
-                    regularRows.add(dataRow);
+            while (row != null) {
+                int rowSize = row.size();
+
+                if (storeWholePageFragments(row, statHolder) == COMPLETE) {
+                    if (!iter.hasNext())
+                        break;
+
+                    row = iter.next();
 
                     continue;
                 }
-
-                int written = 0;
-
-                // Write large row fragments.
-                do {
-                    long pageId = takeEmptyPage(REUSE_BUCKET, ioVersions(), statHolder);
-
-                    AbstractDataPageIO<T> initIo = null;
-
-                    if (pageId == 0L) {
-                        pageId = allocateDataPage(dataRow.partition());
-
-                        initIo = ioVersions().latest();
-                    }
-                    else if (PageIdUtils.tag(pageId) != PageIdAllocator.FLAG_DATA)
-                        pageId = initReusedPage(pageId, dataRow.partition(), statHolder);
-                    else
-                        pageId = PageIdUtils.changePartitionId(pageId, (dataRow.partition()));
-
-                    written = write(pageId, writeRow, initIo, asListIterator(dataRow), written, FAIL_I, statHolder);
-
-                    assert written != FAIL_I; // We can't fail here.
-
-                    memMetrics.incrementLargeEntriesPages();
-                }
-                while (written != COMPLETE && (size - written) >= MIN_SIZE_FOR_DATA_PAGE);
-
-                // Store the rest of the row, if it has not been fully written.
-                if (written != COMPLETE)
-                    regularRows.add(dataRow);
-            }
-
-            Iterator<T> itr = regularRows.iterator();
-
-            T row = null;
-
-            while ((row = row == null ? itr.hasNext() ? itr.next() : null : row) != null) {
-                int rowSize = row.size();
 
                 int payloadSize = rowSize % MIN_SIZE_FOR_DATA_PAGE;
 
@@ -770,8 +736,6 @@ public abstract class AbstractFreeList<T extends Storable> extends PagesList imp
                 else
                     pageId = PageIdUtils.changePartitionId(pageId, row.partition());
 
-                AbstractDataPageIO io = initIo;
-
                 long page = pageMem.acquirePage(grpId, pageId, statHolder);
 
                 boolean releaseAfterWrite = true;
@@ -782,14 +746,14 @@ public abstract class AbstractFreeList<T extends Storable> extends PagesList imp
                     // todo return lockFailed
                     assert pageAddr != 0;
 
-                    if (io == null)
-                        io = PageIO.getPageIO(pageAddr);
+                    AbstractDataPageIO io = initIo != null ? initIo : PageIO.getPageIO(pageAddr);
 
                     int remainItems = MAX_DATA_ROWS_PER_PAGE - io.getRowsCount(pageAddr);
 
                     boolean ok = false;
 
                     try {
+                        small_objects_loop:
                         do {
                             boolean fragment = rowSize > MIN_SIZE_FOR_DATA_PAGE;
 
@@ -805,26 +769,24 @@ public abstract class AbstractFreeList<T extends Storable> extends PagesList imp
 
                             assert written == COMPLETE : written;
 
-                            if (!itr.hasNext()) {
-                                row = null;
+                            do {
+                                if (!iter.hasNext()) {
+                                    row = null;
 
-                                break;
+                                    break small_objects_loop;
+                                }
+
+                                row = iter.next();
+
+                                rowSize = row.size();
                             }
-
-                            row = itr.next();
-
-                            rowSize = row.size();
+                            while (storeWholePageFragments(row, statHolder) == COMPLETE);
 
                             payloadSize = row.size() % MIN_SIZE_FOR_DATA_PAGE;
                         }
                         while (io.getFreeSpace(pageAddr) >= payloadSize && --remainItems > 0);
 
                         ok = true;
-                    }
-                    catch (Throwable t) {
-                        t.printStackTrace();
-
-                        throw t;
                     }
                     finally {
                         int newFreeSpace = io.getFreeSpace(pageAddr);
@@ -845,13 +807,46 @@ public abstract class AbstractFreeList<T extends Storable> extends PagesList imp
                     if (releaseAfterWrite)
                         pageMem.releasePage(grpId, pageId, page);
                 }
-
-//                write(pageId, writeRow, initIo, itr, -1, FAIL_I, statHolder);
             }
         }
         catch (RuntimeException e) {
             throw new CorruptedFreeListException("Failed to insert data rows", e);
         }
+    }
+
+    private int storeWholePageFragments(T row, IoStatisticsHolder statHolder) throws IgniteCheckedException {
+        // Write large row fragments.
+        int rowSize = row.size();
+
+        if (rowSize < MAX_DATA_ROWS_PER_PAGE)
+            return 0;
+
+        int written = 0;
+
+        do {
+            long pageId = takeEmptyPage(REUSE_BUCKET, ioVersions(), statHolder);
+
+            AbstractDataPageIO<T> initIo = null;
+
+            if (pageId == 0L) {
+                pageId = allocateDataPage(row.partition());
+
+                initIo = ioVersions().latest();
+            }
+            else if (PageIdUtils.tag(pageId) != PageIdAllocator.FLAG_DATA)
+                pageId = initReusedPage(pageId, row.partition(), statHolder);
+            else
+                pageId = PageIdUtils.changePartitionId(pageId, (row.partition()));
+
+            written = write(pageId, writeRow, initIo, asListIterator(row), written, FAIL_I, statHolder);
+
+            assert written != FAIL_I; // We can't fail here.
+
+            memMetrics.incrementLargeEntriesPages();
+        }
+        while (written != COMPLETE && (rowSize - written) >= MIN_SIZE_FOR_DATA_PAGE);
+
+        return written;
     }
 
     /**
