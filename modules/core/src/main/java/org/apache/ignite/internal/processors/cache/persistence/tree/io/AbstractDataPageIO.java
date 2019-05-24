@@ -41,13 +41,13 @@ import static org.apache.ignite.internal.util.GridUnsafe.bufferAddress;
 public abstract class AbstractDataPageIO<T extends Storable> extends PageIO implements CompactablePageIO {
 
     /** */
-    public static final int SHOW_ITEM = 0b0001;
+    private static final int SHOW_ITEM = 0b0001;
 
     /** */
-    public static final int SHOW_PAYLOAD_LEN = 0b0010;
+    private static final int SHOW_PAYLOAD_LEN = 0b0010;
 
     /** */
-    public static final int SHOW_LINK = 0b0100;
+    private static final int SHOW_LINK = 0b0100;
 
     /** */
     private static final int FREE_LIST_PAGE_ID_OFF = COMMON_HEADER_END;
