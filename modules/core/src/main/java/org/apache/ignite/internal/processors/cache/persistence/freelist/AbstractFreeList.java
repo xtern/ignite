@@ -695,17 +695,17 @@ public abstract class AbstractFreeList<T extends Storable> extends PagesList imp
 
             T row = iter.next();
 
-            while (row != null) {
-                int rowSize = row.size();
+            int written = 0;
 
-                if (storeWholePageFragments(row, statHolder) == COMPLETE) {
-                    if (!iter.hasNext())
-                        break;
-
-                    row = iter.next();
+            while (row.link() == 0 || written != COMPLETE) {
+                if ((written = storeWholePageFragments(row, statHolder)) == COMPLETE) {
+                    if (iter.hasNext())
+                        row = iter.next();
 
                     continue;
                 }
+
+                int rowSize = row.size();
 
                 int payloadSize = rowSize % MIN_SIZE_FOR_DATA_PAGE;
 
@@ -753,38 +753,24 @@ public abstract class AbstractFreeList<T extends Storable> extends PagesList imp
                     boolean ok = false;
 
                     try {
-                        small_objects_loop:
                         do {
-                            boolean fragment = rowSize > MIN_SIZE_FOR_DATA_PAGE;
-
-                            int written = fragment ? rowSize - payloadSize : 0;
-
-                            assert written > 0 || !fragment : "written=" + written + " , rowSize=" + rowSize + " payLoad=" + payloadSize;
-
-                            written = PageHandler.writePage(pageMem, grpId, pageId, page, pageAddr, this, writeRow1, initIo, wal, null, row, written, statHolder);
-
-                            initIo = null;
-
-                            assert row.link() != 0;
+                            written = PageHandler.writePage(pageMem, grpId, pageId, page, pageAddr, this, writeRow1, initIo, wal, null, row, rowSize > MIN_SIZE_FOR_DATA_PAGE ? rowSize - payloadSize : 0, statHolder);
 
                             assert written == COMPLETE : written;
 
-                            do {
-                                if (!iter.hasNext()) {
-                                    row = null;
+                            initIo = null;
 
-                                    break small_objects_loop;
-                                }
-
+                            while (iter.hasNext() && written == COMPLETE) {
                                 row = iter.next();
 
-                                rowSize = row.size();
+                                written = storeWholePageFragments(row, statHolder);
                             }
-                            while (storeWholePageFragments(row, statHolder) == COMPLETE);
 
-                            payloadSize = row.size() % MIN_SIZE_FOR_DATA_PAGE;
+                            rowSize = row.size();
+
+                            payloadSize = rowSize % MIN_SIZE_FOR_DATA_PAGE;
                         }
-                        while (io.getFreeSpace(pageAddr) >= payloadSize && --remainItems > 0);
+                        while (iter.hasNext() && io.getFreeSpace(pageAddr) >= payloadSize && --remainItems > 0);
 
                         ok = true;
                     }
