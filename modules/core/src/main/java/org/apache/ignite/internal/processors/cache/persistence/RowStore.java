@@ -119,7 +119,7 @@ public class RowStore {
     public void addRows(Collection<CacheDataRow> rows, IoStatisticsHolder statHolder) throws IgniteCheckedException {
         assert ctx.database().checkpointLockIsHeldByThread();
 
-        freeList.insertDataRows(rows, statHolder);
+        freeList.insertDataRows(rows.iterator(), statHolder);
     }
 
     /**

@@ -289,7 +289,7 @@ public class CacheFreeListImplSelfTest extends GridCommonAbstractTest {
                         }
 
                         if (rows.size() == BATCH_SIZE) {
-                            list.insertDataRows(rows, IoStatisticsHolderNoOp.INSTANCE);
+                            list.insertDataRows(rows.iterator(), IoStatisticsHolderNoOp.INSTANCE);
 
                             for (TestDataRow row0 : rows) {
                                 assertTrue(row0.link() != 0L);
