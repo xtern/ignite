@@ -566,24 +566,26 @@ public abstract class AbstractFreeList<T extends Storable> extends PagesList imp
 
                     try {
                         do {
-                            boolean largeRow = rowSize > MIN_SIZE_FOR_DATA_PAGE;
+                            if (row.link() == 0)
+                                written = writeLargeFragments(row, statHolder);
 
-                            written = PageHandler.writePage(pageMem, grpId, pageId, page, pageAddr, this, writeRow,
-                                initIo, wal, null, row, largeRow ? written : 0, statHolder);
+                            if (written != COMPLETE) {
+                                written = PageHandler.writePage(pageMem, grpId, pageId, page, pageAddr, this,
+                                    writeRow, initIo, wal, null, row, written, statHolder);
+                            }
 
                             assert written == COMPLETE : written;
 
                             initIo = null;
 
-                            while (iter.hasNext() && written == COMPLETE) {
-                                row = iter.next();
+                            if (!iter.hasNext())
+                                break;
 
-                                written = writeLargeFragments(row, statHolder);
-                            }
+                            row = iter.next();
 
                             rowSize = row.size();
                         }
-                        while (iter.hasNext() && io.getFreeSpace(pageAddr) >= (rowSize % MIN_SIZE_FOR_DATA_PAGE));
+                        while (io.getFreeSpace(pageAddr) >= (rowSize % MIN_SIZE_FOR_DATA_PAGE));
 
                         ok = true;
                     }
