@@ -3311,7 +3311,8 @@ public abstract class GridCacheMapEntry extends GridMetadataAwareAdapter impleme
         boolean preload,
         AffinityTopologyVersion topVer,
         GridDrType drType,
-        boolean fromStore
+        boolean fromStore,
+        CacheDataRow row
     ) throws IgniteCheckedException, GridCacheEntryRemovedException {
         ensureFreeSpace();
 
@@ -3387,7 +3388,7 @@ public abstract class GridCacheMapEntry extends GridMetadataAwareAdapter impleme
                         cctx.offheap().mvccInitialValue(this, val, ver, expTime, mvccVer, newMvccVer);
                     }
                     else
-                        storeValue(val, expTime, ver);
+                        storeValue(val, expTime, ver, null, row);
                 }
             }
             else {
@@ -3418,7 +3419,7 @@ public abstract class GridCacheMapEntry extends GridMetadataAwareAdapter impleme
                 }
                 else
                     // Optimization to access storage only once.
-                    update = storeValue(val, expTime, ver, p);
+                    update = storeValue(val, expTime, ver, p, row);
             }
 
             if (update) {
@@ -4258,7 +4259,7 @@ public abstract class GridCacheMapEntry extends GridMetadataAwareAdapter impleme
     protected boolean storeValue(@Nullable CacheObject val,
         long expireTime,
         GridCacheVersion ver) throws IgniteCheckedException {
-        return storeValue(val, expireTime, ver, null);
+        return storeValue(val, expireTime, ver, null, null);
     }
 
     /**
@@ -4268,6 +4269,7 @@ public abstract class GridCacheMapEntry extends GridMetadataAwareAdapter impleme
      * @param expireTime Expire time.
      * @param ver New entry version.
      * @param predicate Optional predicate.
+     * @param row Pre-created data row, associated with this cache entry.
      * @return {@code True} if storage was modified.
      * @throws IgniteCheckedException If update failed.
      */
@@ -4275,10 +4277,12 @@ public abstract class GridCacheMapEntry extends GridMetadataAwareAdapter impleme
         @Nullable CacheObject val,
         long expireTime,
         GridCacheVersion ver,
-        @Nullable IgnitePredicate<CacheDataRow> predicate) throws IgniteCheckedException {
+        @Nullable IgnitePredicate<CacheDataRow> predicate,
+        @Nullable CacheDataRow row
+    ) throws IgniteCheckedException {
         assert lock.isHeldByCurrentThread();
 
-        UpdateClosure closure = new UpdateClosure(this, val, ver, expireTime, predicate);
+        UpdateClosure closure = new UpdateClosure(this, val, ver, expireTime, predicate, row);
 
         cctx.offheap().invoke(cctx, key, localPartition(), closure);
 
@@ -5718,16 +5722,19 @@ public abstract class GridCacheMapEntry extends GridMetadataAwareAdapter impleme
          * @param predicate Optional predicate.
          */
         UpdateClosure(GridCacheMapEntry entry, @Nullable CacheObject val, GridCacheVersion ver, long expireTime,
-            @Nullable IgnitePredicate<CacheDataRow> predicate) {
+            @Nullable IgnitePredicate<CacheDataRow> predicate, @Nullable CacheDataRow newRow) {
             this.entry = entry;
             this.val = val;
             this.ver = ver;
             this.expireTime = expireTime;
             this.predicate = predicate;
+            this.newRow = newRow;
         }
 
         /** {@inheritDoc} */
         @Override public void call(@Nullable CacheDataRow oldRow) throws IgniteCheckedException {
+            assert newRow == null || val != null;
+
             if (oldRow != null) {
                 oldRow.key(entry.key);
 
@@ -5743,6 +5750,14 @@ public abstract class GridCacheMapEntry extends GridMetadataAwareAdapter impleme
             }
 
             if (val != null) {
+                // If there is a pre created row, we cannot update the old one.
+                // The old row will be removed after the operation is completed, as usual.
+                if (newRow != null) {
+                    treeOp = IgniteTree.OperationType.PUT;
+
+                    return;
+                }
+
                 newRow = entry.cctx.offheap().dataStore(entry.localPartition()).createRow(
                     entry.cctx,
                     entry.key,
