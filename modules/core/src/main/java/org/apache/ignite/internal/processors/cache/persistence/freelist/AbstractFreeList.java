@@ -532,17 +532,17 @@ public abstract class AbstractFreeList<T extends Storable> extends PagesList imp
                 written = writeLargeFragments(row, statHolder);
 
                 if (written == COMPLETE) {
-                    row = iter.hasNext() ? iter.next() : row;
+                    if (iter.hasNext())
+                        row = iter.next();
 
                     continue;
                 }
 
                 AbstractDataPageIO initIo = null;
 
-                int rowSize = row.size();
+                int minBucket = bucket(row.size() % MIN_SIZE_FOR_DATA_PAGE, false);
 
-                int minBucket = bucket(rowSize % MIN_SIZE_FOR_DATA_PAGE, false);
-
+                // Search for the most free page with enough space.
                 long pageId = getPage(REUSE_BUCKET - 1, minBucket, row, statHolder);
 
                 if (pageId == 0) {
@@ -582,10 +582,8 @@ public abstract class AbstractFreeList<T extends Storable> extends PagesList imp
                                 break;
 
                             row = iter.next();
-
-                            rowSize = row.size();
                         }
-                        while (io.getFreeSpace(pageAddr) >= (rowSize % MIN_SIZE_FOR_DATA_PAGE));
+                        while (io.getFreeSpace(pageAddr) >= (row.size() % MIN_SIZE_FOR_DATA_PAGE));
 
                         ok = true;
                     }

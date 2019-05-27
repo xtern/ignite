@@ -68,7 +68,7 @@ public class CacheFreeListImplSelfTest extends GridCommonAbstractTest {
     private static final long MB = 1024L * 1024L;
 
     /** */
-    private static final int BATCH_SIZE = 100;
+    private static final int BATCH_SIZE = 1000;
 
     /** */
     private PageMemory pageMem;
