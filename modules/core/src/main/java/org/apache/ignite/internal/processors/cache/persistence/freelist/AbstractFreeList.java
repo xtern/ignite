@@ -17,6 +17,7 @@
 
 package org.apache.ignite.internal.processors.cache.persistence.freelist;
 
+import java.util.Collection;
 import java.util.Iterator;
 import java.util.concurrent.atomic.AtomicReferenceArray;
 import org.apache.ignite.IgniteCheckedException;
@@ -543,19 +544,22 @@ public abstract class AbstractFreeList<T extends Storable> extends PagesList imp
     }
 
     /** {@inheritDoc} */
-    @Override public void insertDataRows(Iterator<T> iter, IoStatisticsHolder statHolder) throws IgniteCheckedException {
-        assert iter.hasNext();
+    @Override public void insertDataRows(Collection<T> rows, IoStatisticsHolder statHolder) throws IgniteCheckedException {
+        assert !rows.isEmpty();
 
         try {
+            for (T row : rows)
+                writeLargeFragments(row, statHolder);
+
+            Iterator<T> iter = rows.iterator();
+
             T row = iter.next();
 
-            int written;
+            while (iter.hasNext()) {
 
-            do {
-                written = writeLargeFragments(row, statHolder);
+                int remaining = row.size() % MIN_SIZE_FOR_DATA_PAGE;
 
-                // If there is no remainder - go to the next row.
-                if (written == COMPLETE) {
+                if (remaining == 0) {
                     if (iter.hasNext())
                         row = iter.next();
 
@@ -564,22 +568,22 @@ public abstract class AbstractFreeList<T extends Storable> extends PagesList imp
 
                 long pageId = 0;
 
-                // Search for the most free page with enough space.
-                int minBucket = bucket(row.size() - written, false);
-
-                for (int b = REUSE_BUCKET - 1; b != minBucket; b--) {
-                    pageId = takeEmptyPage(b, row.ioVersions(), statHolder);
-
-                    if (pageId != 0L)
-                        break;
-                }
-
-                if (pageId == 0) {
-                    if (reuseList == this)
-                        pageId = takeEmptyPage(REUSE_BUCKET, row.ioVersions(), statHolder);
-                    else
-                        pageId = reuseList.takeRecycledPage();
-                }
+//            // Search for the most free page with enough space.
+//            int minBucket = bucket(row.size() - written, false);
+//
+//            for (int b = REUSE_BUCKET - 1; b != minBucket; b--) {
+//                pageId = takeEmptyPage(b, row.ioVersions(), statHolder);
+//
+//                if (pageId != 0L)
+//                    break;
+//            }
+//
+//            if (pageId == 0) {
+                if (reuseList == this)
+                    pageId = takeEmptyPage(REUSE_BUCKET, row.ioVersions(), statHolder);
+                else
+                    pageId = reuseList.takeRecycledPage();
+//            }
 
                 AbstractDataPageIO initIo = null;
 
@@ -608,15 +612,12 @@ public abstract class AbstractFreeList<T extends Storable> extends PagesList imp
                     try {
                         // Fill the page up to the end.
                         do {
-                            if (row.link() == 0)
-                                written = writeLargeFragments(row, statHolder);
+//                        if (written != COMPLETE) {
+                            int written = PageHandler.writePage(pageMem, grpId, pageId, page, pageAddr, this,
+                                writeRowNoPut, initIo, wal, null, row, row.size() - remaining, statHolder);
 
-                            if (written != COMPLETE) {
-                                written = PageHandler.writePage(pageMem, grpId, pageId, page, pageAddr, this,
-                                    writeRowNoPut, initIo, wal, null, row, written, statHolder);
-
-                                initIo = null;
-                            }
+                            initIo = null;
+//                        }
 
                             assert written == COMPLETE : written;
 
@@ -624,8 +625,10 @@ public abstract class AbstractFreeList<T extends Storable> extends PagesList imp
                                 break;
 
                             row = iter.next();
+
+                            remaining = row.size() % MIN_SIZE_FOR_DATA_PAGE;
                         }
-                        while (io.getFreeSpace(pageAddr) >= (row.size() % MIN_SIZE_FOR_DATA_PAGE));
+                        while (io.getFreeSpace(pageAddr) >= remaining);
 
                         int freeSpace = io.getFreeSpace(pageAddr);
 
@@ -650,7 +653,113 @@ public abstract class AbstractFreeList<T extends Storable> extends PagesList imp
                     releasePage(pageId, page);
                 }
             }
-            while (written != COMPLETE || row.link() == 0);
+
+//
+//        try {
+//            T row = iter.next();
+//
+//            int written;
+//
+//            do {
+//                written = writeLargeFragments(row, statHolder);
+//
+//                // If there is no remainder - go to the next row.
+//                if (written == COMPLETE) {
+//                    if (iter.hasNext())
+//                        row = iter.next();
+//
+//                    continue;
+//                }
+//
+//                long pageId = 0;
+//
+//                // Search for the most free page with enough space.
+//                int minBucket = bucket(row.size() - written, false);
+//
+//                for (int b = REUSE_BUCKET - 1; b != minBucket; b--) {
+//                    pageId = takeEmptyPage(b, row.ioVersions(), statHolder);
+//
+//                    if (pageId != 0L)
+//                        break;
+//                }
+//
+//                if (pageId == 0) {
+//                    if (reuseList == this)
+//                        pageId = takeEmptyPage(REUSE_BUCKET, row.ioVersions(), statHolder);
+//                    else
+//                        pageId = reuseList.takeRecycledPage();
+//                }
+//
+//                AbstractDataPageIO initIo = null;
+//
+//                if (pageId == 0) {
+//                    pageId = allocateDataPage(row.partition());
+//
+//                    initIo = row.ioVersions().latest();
+//                }
+//                else if (PageIdUtils.tag(pageId) != PageIdAllocator.FLAG_DATA) // Page is taken from reuse bucket.
+//                    pageId = initReusedPage(row, pageId, statHolder);
+//                else // For in-memory mode partition must be changed.
+//                    pageId = PageIdUtils.changePartitionId(pageId, row.partition());
+//
+//                // Lock page.
+//                long page = acquirePage(pageId, statHolder);
+//
+//                try {
+//                    long pageAddr = writeLock(pageId, page);
+//
+//                    assert pageAddr != 0;
+//
+//                    AbstractDataPageIO io = row.ioVersions().latest();
+//
+//                    boolean ok = false;
+//
+//                    try {
+//                        // Fill the page up to the end.
+//                        do {
+//                            if (row.link() == 0)
+//                                written = writeLargeFragments(row, statHolder);
+//
+//                            if (written != COMPLETE) {
+//                                written = PageHandler.writePage(pageMem, grpId, pageId, page, pageAddr, this,
+//                                    writeRowNoPut, initIo, wal, null, row, written, statHolder);
+//
+//                                initIo = null;
+//                            }
+//
+//                            assert written == COMPLETE : written;
+//
+//                            if (!iter.hasNext())
+//                                break;
+//
+//                            row = iter.next();
+//                        }
+//                        while (io.getFreeSpace(pageAddr) >= (row.size() % MIN_SIZE_FOR_DATA_PAGE));
+//
+//                        int freeSpace = io.getFreeSpace(pageAddr);
+//
+//                        // Put page into the free list if needed.
+//                        if (freeSpace > MIN_PAGE_FREE_SPACE) {
+//                            int bucket = bucket(freeSpace, false);
+//
+//                            put(null, pageId, page, pageAddr, bucket, statHolder);
+//                        }
+//
+//                        assert PageIO.getCrc(pageAddr) == 0; //TODO GG-11480
+//
+//                        ok = true;
+//                    }
+//                    finally {
+//                        assert writeRowNoPut.releaseAfterWrite(grpId, pageId, page, pageAddr, row, 0);
+//
+//                        writeUnlock(pageId, page, pageAddr, ok);
+//                    }
+//                }
+//                finally {
+//                    releasePage(pageId, page);
+//                }
+//            }
+//            while (written != COMPLETE || row.link() == 0);
         }
         catch (RuntimeException e) {
             throw new CorruptedFreeListException("Failed to insert data rows", e);

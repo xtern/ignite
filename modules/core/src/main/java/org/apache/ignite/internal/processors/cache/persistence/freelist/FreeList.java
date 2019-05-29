@@ -17,6 +17,7 @@
 
 package org.apache.ignite.internal.processors.cache.persistence.freelist;
 
+import java.util.Collection;
 import java.util.Iterator;
 import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.IgniteLogger;
@@ -34,10 +35,10 @@ public interface FreeList<T extends Storable> {
     public void insertDataRow(T row, IoStatisticsHolder statHolder) throws IgniteCheckedException;
 
     /**
-     * @param iter Rows iterator.
+     * @param rows Rows.
      * @throws IgniteCheckedException If failed.
      */
-    public void insertDataRows(Iterator<T> iter, IoStatisticsHolder statHolder) throws IgniteCheckedException;
+    public void insertDataRows(Collection<T> rows, IoStatisticsHolder statHolder) throws IgniteCheckedException;
 
     /**
      * @param link Row link.
