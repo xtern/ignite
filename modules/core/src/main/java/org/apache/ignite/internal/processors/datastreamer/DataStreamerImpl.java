@@ -2390,26 +2390,25 @@ public class DataStreamerImpl<K, V> implements IgniteDataStreamer<K, V>, Delayed
             Collection<Integer> ignoredParts = new HashSet<>();
 
             try {
-                Map<Integer, List<Entry<KeyCacheObject, CacheObject>>> map = mapByPartition(cctx, entries);
+                Map<GridDhtLocalPartition, List<GridCacheEntryInfo>> map = new HashMap<>();
 
-                for (Map.Entry<Integer, List<Entry<KeyCacheObject, CacheObject>>> e : map.entrySet()) {
-                    cctx.shared().database().checkpointReadLock();
+                try {
+                    for (Entry<KeyCacheObject, CacheObject> e : entries) {
+                        e.getKey().finishUnmarshal(cctx.cacheObjectContext(), cctx.deploy().globalLoader());
 
-                    try {
-                        for (Entry<KeyCacheObject, CacheObject> e0 : e.getValue())
-                            e0.getKey().finishUnmarshal(cctx.cacheObjectContext(), cctx.deploy().globalLoader());
+                        int p = cctx.affinity().partition(e.getKey());
 
-                        //e.getKey().finishUnmarshal(cctx.cacheObjectContext(), cctx.deploy().globalLoader());
                         GridDhtLocalPartition part = null;
 
-                        if (!cctx.isLocal()) {
-                            int p = e.getKey();
+                        assert !cctx.isLocal();
 
+                        if (!cctx.isLocal()) {
                             if (ignoredParts.contains(p))
                                 continue;
 
+                            part = cctx.topology().localPartition(p, topVer, true);
+
                             if (!reservedParts.contains(p)) {
-                                part = cctx.topology().localPartition(p, topVer, true);
 
                                 if (!part.reserve()) {
                                     ignoredParts.add(p);
@@ -2431,6 +2430,17 @@ public class DataStreamerImpl<K, V> implements IgniteDataStreamer<K, V>, Delayed
                             }
                         }
 
+                        if (plc != null) {
+                            ttl = CU.toTtl(plc.getExpiryForCreation());
+
+                            if (ttl == CU.TTL_ZERO)
+                                continue;
+                            else if (ttl == CU.TTL_NOT_CHANGED)
+                                ttl = 0;
+
+                            expiryTime = CU.toExpireTime(ttl);
+                        }
+
                         assert part != null;
 
                         if (plc != null) {
@@ -2444,191 +2454,119 @@ public class DataStreamerImpl<K, V> implements IgniteDataStreamer<K, V>, Delayed
                             expiryTime = CU.toExpireTime(ttl);
                         }
 
-                        Collection<GridCacheEntryInfo> infos = prepareList(e.getValue(), ttl, expiryTime, ver);
+                        GridCacheEntryInfo info = new GridCacheEntryInfo();
 
-                        System.out.println(">xxx> infossize " + infos.size());
+                        info.key(e.getKey());
+                        info.value(e.getValue());
+                        info.ttl(ttl);
+                        info.expireTime(expiryTime);
+                        info.version(ver);
 
-                        Iterator<CacheDataRow> rowsIter = cctx.offheap().storeAll(part, infos).iterator();
-
-                        for (GridCacheEntryInfo info : infos) {
-                            CacheDataRow row = rowsIter.next();
-                            assert row != null;
-                            try {
-                                GridCacheEntryEx entry = internalCache.entryEx(info.key(), topVer);
-
-                                if (topFut != null) {
-                                    Throwable err = topFut.validateCache(cctx, false, false, entry.key(), null);
-
-                                    if (err != null)
-                                        throw new IgniteCheckedException(err);
-                                }
-
-                                boolean primary = cctx.affinity().primaryByKey(cctx.localNode(), entry.key(), topVer);
-
-//                                entry.value(),
-//                                    entry.version(),
-//                                    cctx.mvccEnabled() ? ((MvccVersionAware)entry).mvccVersion() : null,
-//                                    cctx.mvccEnabled() ? ((MvccUpdateVersionAware)entry).newMvccVersion() : null,
-//                                    cctx.mvccEnabled() ? ((MvccVersionAware)entry).mvccTxState() : TxState.NA,
-//                                    cctx.mvccEnabled() ? ((MvccUpdateVersionAware)entry).newMvccTxState() : TxState.NA,
-//                                    entry.ttl(),
-//                                    entry.expireTime(),
-//                                    true,
-//                                    topVer,
-//                                    cctx.isDrEnabled() ? DR_PRELOAD : DR_NONE,
-//                                    false,
-//                                    row
-
-                                if (!entry.initialValue(info.value(),
-                                    ver,
-                                    cctx.mvccEnabled() ? ((MvccVersionAware)entry).mvccVersion() : null,
-                                    cctx.mvccEnabled() ? ((MvccUpdateVersionAware)entry).newMvccVersion() : null,
-                                    cctx.mvccEnabled() ? ((MvccVersionAware)entry).mvccTxState() : TxState.NA,
-                                    cctx.mvccEnabled() ? ((MvccUpdateVersionAware)entry).newMvccTxState() : TxState.NA,
-                                    ttl,
-                                    expiryTime,
-                                    false,
-                                    topVer,
-                                    primary ? GridDrType.DR_LOAD : GridDrType.DR_PRELOAD,
-                                    false,
-                                    row)) {
-                                    assert false;
-
-                                    RowStore rowStore = cctx.offheap().dataStore(cctx.topology().localPartition(row.partition())).rowStore();
-
-                                    rowStore.removeRow(row.link(), cctx.group().statisticsHolderData());
-                                }
-
-                                entry.touch();
-
-                                CU.unwindEvicts(cctx);
-
-                                entry.onUnlock();
-                            }
-                            catch (GridCacheEntryRemovedException ignored) {
-                                // No-op.
-                            }
-                            catch (IgniteCheckedException ex) {
-                                IgniteLogger log = cache.unwrap(Ignite.class).log();
-
-                                U.error(log, "Failed to set initial value for cache entry: " + e, ex);
-
-                                throw new IgniteException("Failed to set initial value for cache entry.", ex);
-                            }
-                        }
-
-
+                        map.computeIfAbsent(part, v -> new ArrayList<>()).add(info);
                     }
-                    catch (GridDhtInvalidPartitionException ignored) {
-                        ignoredParts.add(cctx.affinity().partition(e.getKey()));
-                    }
-//                    catch (GridCacheEntryRemovedException ignored) {
-//                        // No-op.
-//                    }
-                    // todo
-                    catch (IgniteCheckedException ex) {
-//                        IgniteLogger log = cache.unwrap(Ignite.class).log();
-//
-//                        U.error(log, "Failed to set initial value for cache entry: " + e, ex);
-//
-                        throw new IgniteException("Failed to pre-create values.", ex);
-                    }
-                    finally {
-                        cctx.shared().database().checkpointReadUnlock();
-                    }
-
+                } catch (IgniteCheckedException ex) {
+                    throw new IgniteException("Failed to pre-create values.", ex);
                 }
 
-//                for (Entry<KeyCacheObject, CacheObject> e : entries) {
-//                    cctx.shared().database().checkpointReadLock();
-//
-//                    try {
-//                        e.getKey().finishUnmarshal(cctx.cacheObjectContext(), cctx.deploy().globalLoader());
-//
-//                        if (!cctx.isLocal()) {
-//                            int p = cctx.affinity().partition(e.getKey());
-//
-//                            if (ignoredParts.contains(p))
-//                                continue;
-//
-//                            if (!reservedParts.contains(p)) {
-//                                GridDhtLocalPartition part = cctx.topology().localPartition(p, topVer, true);
-//
-//                                if (!part.reserve()) {
-//                                    ignoredParts.add(p);
-//
-//                                    continue;
-//                                }
-//                                else {
-//                                    // We must not allow to read from RENTING partitions.
-//                                    if (part.state() == GridDhtPartitionState.RENTING) {
-//                                        part.release();
-//
-//                                        ignoredParts.add(p);
-//
-//                                        continue;
-//                                    }
-//
-//                                    reservedParts.add(p);
-//                                }
-//                            }
-//                        }
-//
-//                        GridCacheEntryEx entry = internalCache.entryEx(e.getKey(), topVer);
-//
-//                        if (plc != null) {
-//                            ttl = CU.toTtl(plc.getExpiryForCreation());
-//
-//                            if (ttl == CU.TTL_ZERO)
-//                                continue;
-//                            else if (ttl == CU.TTL_NOT_CHANGED)
-//                                ttl = 0;
-//
-//                            expiryTime = CU.toExpireTime(ttl);
-//                        }
-//
-//                        if (topFut != null) {
-//                            Throwable err = topFut.validateCache(cctx, false, false, entry.key(), null);
-//
-//                            if (err != null)
-//                                throw new IgniteCheckedException(err);
-//                        }
-//
-//                        boolean primary = cctx.affinity().primaryByKey(cctx.localNode(), entry.key(), topVer);
-//
-//                        entry.initialValue(e.getValue(),
-//                            ver,
-//                            ttl,
-//                            expiryTime,
-//                            false,
-//                            topVer,
-//                            primary ? GridDrType.DR_LOAD : GridDrType.DR_PRELOAD,
-//                            false);
-//
-//                        entry.touch();
-//
-//                        CU.unwindEvicts(cctx);
-//
-//                        entry.onUnlock();
-//                    }
-//                    catch (GridDhtInvalidPartitionException ignored) {
-//                        ignoredParts.add(cctx.affinity().partition(e.getKey()));
-//                    }
-//                    catch (GridCacheEntryRemovedException ignored) {
-//                        // No-op.
-//                    }
-//                    catch (IgniteCheckedException ex) {
-//                        IgniteLogger log = cache.unwrap(Ignite.class).log();
-//
-//                        U.error(log, "Failed to set initial value for cache entry: " + e, ex);
-//
-//                        throw new IgniteException("Failed to set initial value for cache entry.", ex);
-//                    }
-//                    finally {
-//                        cctx.shared().database().checkpointReadUnlock();
-//                    }
+//                return map;
+
+                GridCacheAdapter<KeyCacheObject, CacheObject> internalCache0 = internalCache;
+
+//                GridCompoundFuture fut = new GridCompoundFuture();
+
+                for (Map.Entry<GridDhtLocalPartition, List<GridCacheEntryInfo>> e : map.entrySet()) {
+
+//                    IgniteInternalFuture fut0 = cctx.kernalContext().closure().runLocalSafe( () -> {
+                        cctx.shared().database().checkpointReadLock();
+
+                        try {
+                            Iterator<CacheDataRow> rowsIter = cctx.offheap().storeAll(e.getKey(), e.getValue()).iterator();
+
+                            for (GridCacheEntryInfo info : e.getValue()) {
+                                CacheDataRow row = rowsIter.next();
+
+                                assert row != null;
+
+                                try {
+                                    GridCacheEntryEx entry = internalCache0.entryEx(info.key(), topVer);
+
+                                    if (topFut != null) {
+                                        Throwable err = topFut.validateCache(cctx, false, false, entry.key(), null);
+
+                                        if (err != null)
+                                            throw new IgniteCheckedException(err);
+                                    }
+
+                                    boolean primary = cctx.affinity().primaryByKey(cctx.localNode(), entry.key(), topVer);
+
+                                    if (!entry.initialValue(info.value(),
+                                        ver,
+                                        cctx.mvccEnabled() ? ((MvccVersionAware)entry).mvccVersion() : null,
+                                        cctx.mvccEnabled() ? ((MvccUpdateVersionAware)entry).newMvccVersion() : null,
+                                        cctx.mvccEnabled() ? ((MvccVersionAware)entry).mvccTxState() : TxState.NA,
+                                        cctx.mvccEnabled() ? ((MvccUpdateVersionAware)entry).newMvccTxState() : TxState.NA,
+                                        info.ttl(),
+                                        info.expireTime(),
+                                        false,
+                                        topVer,
+                                        primary ? GridDrType.DR_LOAD : GridDrType.DR_PRELOAD,
+                                        false,
+                                        row)) {
+                                        assert false;
+
+                                        RowStore rowStore = cctx.offheap().dataStore(cctx.topology().localPartition(row.partition())).rowStore();
+
+                                        rowStore.removeRow(row.link(), cctx.group().statisticsHolderData());
+                                    }
+
+                                    entry.touch();
+
+                                    CU.unwindEvicts(cctx);
+
+                                    entry.onUnlock();
+                                }
+                                catch (GridCacheEntryRemovedException ignored) {
+                                    // No-op.
+                                }
+                                catch (IgniteCheckedException ex) {
+                                    IgniteLogger log = cache.unwrap(Ignite.class).log();
+
+                                    U.error(log, "Failed to set initial value for cache entry: " + e, ex);
+
+                                    throw new IgniteException("Failed to set initial value for cache entry.", ex);
+                                }
+                            }
+
+                        }
+                        catch (GridDhtInvalidPartitionException ignored) {
+                            ignoredParts.add(cctx.affinity().partition(e.getKey()));
+                        }
+                        //                    catch (GridCacheEntryRemovedException ignored) {
+                        //                        // No-op.
+                        //                    }
+                        // todo
+                        catch (IgniteCheckedException ex) {
+                            //                        IgniteLogger log = cache.unwrap(Ignite.class).log();
+                            //
+                            //                        U.error(log, "Failed to set initial value for cache entry: " + e, ex);
+                            //
+                            throw new IgniteException("Failed to pre-create values.", ex);
+                        }
+                        finally {
+                            cctx.shared().database().checkpointReadUnlock();
+                        }
+                    }
+
+//                    fut.add(fut0);
 //                }
+
+//                fut.markInitialized();
+
+//                fut.get();
             }
+//            catch (IgniteCheckedException e) {
+//                throw new IgniteException(e);
+//            }
             finally {
                 for (Integer part : reservedParts) {
                     GridDhtLocalPartition locPart = cctx.topology().localPartition(part, topVer, false);

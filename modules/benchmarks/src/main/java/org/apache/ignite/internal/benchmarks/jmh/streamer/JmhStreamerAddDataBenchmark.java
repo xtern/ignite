@@ -25,6 +25,7 @@ import java.util.Map;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 import org.apache.ignite.cache.CacheWriteSynchronizationMode;
+import org.apache.ignite.cache.affinity.rendezvous.RendezvousAffinityFunction;
 import org.apache.ignite.configuration.CacheConfiguration;
 import org.apache.ignite.configuration.IgniteConfiguration;
 import org.apache.ignite.IgniteDataStreamer;
@@ -63,7 +64,7 @@ import static org.apache.ignite.cache.CacheWriteSynchronizationMode.FULL_SYNC;
 @Warmup(iterations = 21)
 public class JmhStreamerAddDataBenchmark {
     /** Data amount. */
-    private static final int DATA_AMOUNT = 512;
+    private static final int DATA_AMOUNT = 256_000;
 
     /** Ignite client instance. */
     private static final String IGNITE_CLIENT_INSTANCE_NAME = "client";
@@ -103,6 +104,7 @@ public class JmhStreamerAddDataBenchmark {
         CacheConfiguration cfg = new CacheConfiguration(cacheName);
 
         cfg.setWriteSynchronizationMode(writeSynchronizationMode());
+        cfg.setAffinity(new RendezvousAffinityFunction(false, 64));
 
         return cfg;
     }
@@ -165,6 +167,10 @@ public class JmhStreamerAddDataBenchmark {
         /** Data loader. */
         final IgniteDataStreamer<Integer, Integer> dataLdr =
             Ignition.ignite(IGNITE_CLIENT_INSTANCE_NAME).dataStreamer(IGNITE_CLIENT_CACHE_NAME);
+
+        {
+            dataLdr.perNodeBufferSize(4096);
+        }
     }
 
     /**

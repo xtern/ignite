@@ -67,7 +67,7 @@ import static org.apache.ignite.cache.CacheWriteSynchronizationMode.FULL_SYNC;
  */
 public class DataStreamerImplSelfTest extends GridCommonAbstractTest {
     /** Number of keys to load via data streamer. */
-    private static final int KEYS_COUNT = 500_000;
+    private static final int KEYS_COUNT = 2_000_000;
 
     /** Next nodes after MAX_CACHE_COUNT start without cache */
     private static final int MAX_CACHE_COUNT = 4;
@@ -193,6 +193,8 @@ public class DataStreamerImplSelfTest extends GridCommonAbstractTest {
         Ignite g0 = grid(0);
 
         IgniteDataStreamer<Integer, String> dataLdr = g0.dataStreamer(DEFAULT_CACHE_NAME);
+
+//        dataLdr.perNodeBufferSize(4096);
 
         Map<Integer, String> map = U.newHashMap(KEYS_COUNT);
 
