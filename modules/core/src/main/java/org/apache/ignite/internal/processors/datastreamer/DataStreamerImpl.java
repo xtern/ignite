@@ -26,6 +26,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
@@ -79,6 +80,7 @@ import org.apache.ignite.internal.processors.cache.DynamicCacheDescriptor;
 import org.apache.ignite.internal.processors.cache.GridCacheAdapter;
 import org.apache.ignite.internal.processors.cache.GridCacheContext;
 import org.apache.ignite.internal.processors.cache.GridCacheEntryEx;
+import org.apache.ignite.internal.processors.cache.GridCacheEntryInfo;
 import org.apache.ignite.internal.processors.cache.GridCacheEntryRemovedException;
 import org.apache.ignite.internal.processors.cache.GridCacheGateway;
 import org.apache.ignite.internal.processors.cache.GridCacheUtils;
@@ -89,6 +91,11 @@ import org.apache.ignite.internal.processors.cache.distributed.dht.GridDhtTopolo
 import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtInvalidPartitionException;
 import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtLocalPartition;
 import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtPartitionState;
+import org.apache.ignite.internal.processors.cache.mvcc.MvccUpdateVersionAware;
+import org.apache.ignite.internal.processors.cache.mvcc.MvccVersionAware;
+import org.apache.ignite.internal.processors.cache.mvcc.txlog.TxState;
+import org.apache.ignite.internal.processors.cache.persistence.CacheDataRow;
+import org.apache.ignite.internal.processors.cache.persistence.RowStore;
 import org.apache.ignite.internal.processors.cache.version.GridCacheVersion;
 import org.apache.ignite.internal.processors.cacheobject.IgniteCacheObjectProcessor;
 import org.apache.ignite.internal.processors.dr.GridDrType;
@@ -120,6 +127,8 @@ import org.jetbrains.annotations.Nullable;
 import static org.apache.ignite.events.EventType.EVT_NODE_FAILED;
 import static org.apache.ignite.events.EventType.EVT_NODE_LEFT;
 import static org.apache.ignite.internal.GridTopic.TOPIC_DATASTREAM;
+import static org.apache.ignite.internal.processors.dr.GridDrType.DR_NONE;
+import static org.apache.ignite.internal.processors.dr.GridDrType.DR_PRELOAD;
 
 /**
  * Data streamer implementation.
@@ -136,7 +145,7 @@ public class DataStreamerImpl<K, V> implements IgniteDataStreamer<K, V>, Delayed
     private final Map<Long, ThreadBuffer> threadBufMap = new ConcurrentHashMap<>();
 
     /** Isolated receiver. */
-    private static final StreamReceiver ISOLATED_UPDATER = new IsolatedUpdater();
+    private static final StreamReceiver ISOLATED_UPDATER = new IsolatedUpdaterBatched(); // IsolatedUpdaterBatched(); //IsolatedUpdater();
 
     /** Amount of permissions should be available to continue new data processing. */
     private static final int REMAP_SEMAPHORE_PERMISSIONS_COUNT = Integer.MAX_VALUE;
@@ -425,7 +434,7 @@ public class DataStreamerImpl<K, V> implements IgniteDataStreamer<K, V>, Delayed
 
     /**
      * Acquires read or write lock.
-     * 
+     *
      * @param writeLock {@code True} if acquires write lock.
      */
     private void lock(boolean writeLock) {
@@ -1053,7 +1062,7 @@ public class DataStreamerImpl<K, V> implements IgniteDataStreamer<K, V>, Delayed
 
                                     if (futs != null) {
                                         Throwable ex = new ClusterTopologyCheckedException(
-                                                "Failed to wait for request completion (node has left): " + nodeId);
+                                            "Failed to wait for request completion (node has left): " + nodeId);
 
                                         for (int i = 0; i < futs.size(); i++)
                                             futs.get(i).onDone(ex);
@@ -2277,14 +2286,16 @@ public class DataStreamerImpl<K, V> implements IgniteDataStreamer<K, V>, Delayed
 
                         boolean primary = cctx.affinity().primaryByKey(cctx.localNode(), entry.key(), topVer);
 
-                        entry.initialValue(e.getValue(),
+                        if (!entry.initialValue(e.getValue(),
                             ver,
                             ttl,
                             expiryTime,
                             false,
                             topVer,
                             primary ? GridDrType.DR_LOAD : GridDrType.DR_PRELOAD,
-                            false);
+                            false)) {
+                            assert false;
+                        }
 
                         entry.touch();
 
@@ -2329,6 +2340,334 @@ public class DataStreamerImpl<K, V> implements IgniteDataStreamer<K, V>, Delayed
                     throw new IgniteException("Failed to write preloaded entries into write-ahead log.", e);
                 }
             }
+        }
+    }
+
+    protected static class IsolatedUpdaterBatched implements StreamReceiver<KeyCacheObject, CacheObject>,
+        DataStreamerCacheUpdaters.InternalUpdater {
+        /** */
+        private static final long serialVersionUID = 0L;
+
+        private Map<Integer, List<Entry<KeyCacheObject, CacheObject>>> mapByPartition(GridCacheContext<?, ?> cctx,
+            Collection<Entry<KeyCacheObject, CacheObject>> entries) {
+            Map<Integer, List<Entry<KeyCacheObject, CacheObject>>> map = new HashMap<>();
+
+            for (Entry<KeyCacheObject, CacheObject> e : entries) {
+                int p = cctx.affinity().partition(e.getKey());
+
+                map.computeIfAbsent(p, v -> new ArrayList<>()).add(e);
+            }
+
+            return map;
+        }
+
+        /** {@inheritDoc} */
+        @Override public void receive(
+            IgniteCache<KeyCacheObject, CacheObject> cache,
+            Collection<Map.Entry<KeyCacheObject, CacheObject>> entries
+        ) {
+            IgniteCacheProxy<KeyCacheObject, CacheObject> proxy = (IgniteCacheProxy<KeyCacheObject, CacheObject>)cache;
+
+            GridCacheAdapter<KeyCacheObject, CacheObject> internalCache = proxy.context().cache();
+
+            if (internalCache.isNear())
+                internalCache = internalCache.context().near().dht();
+
+            GridCacheContext<?, ?> cctx = internalCache.context();
+
+            GridDhtTopologyFuture topFut = cctx.shared().exchange().lastFinishedFuture();
+
+            AffinityTopologyVersion topVer = topFut.topologyVersion();
+
+            GridCacheVersion ver = cctx.versions().isolatedStreamerVersion();
+
+            long ttl = CU.TTL_ETERNAL;
+            long expiryTime = CU.EXPIRE_TIME_ETERNAL;
+
+            ExpiryPolicy plc = cctx.expiry();
+
+            Collection<Integer> reservedParts = new HashSet<>();
+            Collection<Integer> ignoredParts = new HashSet<>();
+
+            try {
+                Map<Integer, List<Entry<KeyCacheObject, CacheObject>>> map = mapByPartition(cctx, entries);
+
+                for (Map.Entry<Integer, List<Entry<KeyCacheObject, CacheObject>>> e : map.entrySet()) {
+                    cctx.shared().database().checkpointReadLock();
+
+                    try {
+                        for (Entry<KeyCacheObject, CacheObject> e0 : e.getValue())
+                            e0.getKey().finishUnmarshal(cctx.cacheObjectContext(), cctx.deploy().globalLoader());
+
+                        //e.getKey().finishUnmarshal(cctx.cacheObjectContext(), cctx.deploy().globalLoader());
+                        GridDhtLocalPartition part = null;
+
+                        if (!cctx.isLocal()) {
+                            int p = e.getKey();
+
+                            if (ignoredParts.contains(p))
+                                continue;
+
+                            if (!reservedParts.contains(p)) {
+                                part = cctx.topology().localPartition(p, topVer, true);
+
+                                if (!part.reserve()) {
+                                    ignoredParts.add(p);
+
+                                    continue;
+                                }
+                                else {
+                                    // We must not allow to read from RENTING partitions.
+                                    if (part.state() == GridDhtPartitionState.RENTING) {
+                                        part.release();
+
+                                        ignoredParts.add(p);
+
+                                        continue;
+                                    }
+
+                                    reservedParts.add(p);
+                                }
+                            }
+                        }
+
+                        assert part != null;
+
+                        if (plc != null) {
+                            ttl = CU.toTtl(plc.getExpiryForCreation());
+
+                            if (ttl == CU.TTL_ZERO)
+                                continue;
+                            else if (ttl == CU.TTL_NOT_CHANGED)
+                                ttl = 0;
+
+                            expiryTime = CU.toExpireTime(ttl);
+                        }
+
+                        Collection<GridCacheEntryInfo> infos = prepareList(e.getValue(), ttl, expiryTime, ver);
+
+                        System.out.println(">xxx> infossize " + infos.size());
+
+                        Iterator<CacheDataRow> rowsIter = cctx.offheap().storeAll(part, infos).iterator();
+
+                        for (GridCacheEntryInfo info : infos) {
+                            CacheDataRow row = rowsIter.next();
+                            assert row != null;
+                            try {
+                                GridCacheEntryEx entry = internalCache.entryEx(info.key(), topVer);
+
+                                if (topFut != null) {
+                                    Throwable err = topFut.validateCache(cctx, false, false, entry.key(), null);
+
+                                    if (err != null)
+                                        throw new IgniteCheckedException(err);
+                                }
+
+                                boolean primary = cctx.affinity().primaryByKey(cctx.localNode(), entry.key(), topVer);
+
+//                                entry.value(),
+//                                    entry.version(),
+//                                    cctx.mvccEnabled() ? ((MvccVersionAware)entry).mvccVersion() : null,
+//                                    cctx.mvccEnabled() ? ((MvccUpdateVersionAware)entry).newMvccVersion() : null,
+//                                    cctx.mvccEnabled() ? ((MvccVersionAware)entry).mvccTxState() : TxState.NA,
+//                                    cctx.mvccEnabled() ? ((MvccUpdateVersionAware)entry).newMvccTxState() : TxState.NA,
+//                                    entry.ttl(),
+//                                    entry.expireTime(),
+//                                    true,
+//                                    topVer,
+//                                    cctx.isDrEnabled() ? DR_PRELOAD : DR_NONE,
+//                                    false,
+//                                    row
+
+                                if (!entry.initialValue(info.value(),
+                                    ver,
+                                    cctx.mvccEnabled() ? ((MvccVersionAware)entry).mvccVersion() : null,
+                                    cctx.mvccEnabled() ? ((MvccUpdateVersionAware)entry).newMvccVersion() : null,
+                                    cctx.mvccEnabled() ? ((MvccVersionAware)entry).mvccTxState() : TxState.NA,
+                                    cctx.mvccEnabled() ? ((MvccUpdateVersionAware)entry).newMvccTxState() : TxState.NA,
+                                    ttl,
+                                    expiryTime,
+                                    false,
+                                    topVer,
+                                    primary ? GridDrType.DR_LOAD : GridDrType.DR_PRELOAD,
+                                    false,
+                                    row)) {
+                                    assert false;
+
+                                    RowStore rowStore = cctx.offheap().dataStore(cctx.topology().localPartition(row.partition())).rowStore();
+
+                                    rowStore.removeRow(row.link(), cctx.group().statisticsHolderData());
+                                }
+
+                                entry.touch();
+
+                                CU.unwindEvicts(cctx);
+
+                                entry.onUnlock();
+                            }
+                            catch (GridCacheEntryRemovedException ignored) {
+                                // No-op.
+                            }
+                            catch (IgniteCheckedException ex) {
+                                IgniteLogger log = cache.unwrap(Ignite.class).log();
+
+                                U.error(log, "Failed to set initial value for cache entry: " + e, ex);
+
+                                throw new IgniteException("Failed to set initial value for cache entry.", ex);
+                            }
+                        }
+
+
+                    }
+                    catch (GridDhtInvalidPartitionException ignored) {
+                        ignoredParts.add(cctx.affinity().partition(e.getKey()));
+                    }
+//                    catch (GridCacheEntryRemovedException ignored) {
+//                        // No-op.
+//                    }
+                    // todo
+                    catch (IgniteCheckedException ex) {
+//                        IgniteLogger log = cache.unwrap(Ignite.class).log();
+//
+//                        U.error(log, "Failed to set initial value for cache entry: " + e, ex);
+//
+                        throw new IgniteException("Failed to pre-create values.", ex);
+                    }
+                    finally {
+                        cctx.shared().database().checkpointReadUnlock();
+                    }
+
+                }
+
+//                for (Entry<KeyCacheObject, CacheObject> e : entries) {
+//                    cctx.shared().database().checkpointReadLock();
+//
+//                    try {
+//                        e.getKey().finishUnmarshal(cctx.cacheObjectContext(), cctx.deploy().globalLoader());
+//
+//                        if (!cctx.isLocal()) {
+//                            int p = cctx.affinity().partition(e.getKey());
+//
+//                            if (ignoredParts.contains(p))
+//                                continue;
+//
+//                            if (!reservedParts.contains(p)) {
+//                                GridDhtLocalPartition part = cctx.topology().localPartition(p, topVer, true);
+//
+//                                if (!part.reserve()) {
+//                                    ignoredParts.add(p);
+//
+//                                    continue;
+//                                }
+//                                else {
+//                                    // We must not allow to read from RENTING partitions.
+//                                    if (part.state() == GridDhtPartitionState.RENTING) {
+//                                        part.release();
+//
+//                                        ignoredParts.add(p);
+//
+//                                        continue;
+//                                    }
+//
+//                                    reservedParts.add(p);
+//                                }
+//                            }
+//                        }
+//
+//                        GridCacheEntryEx entry = internalCache.entryEx(e.getKey(), topVer);
+//
+//                        if (plc != null) {
+//                            ttl = CU.toTtl(plc.getExpiryForCreation());
+//
+//                            if (ttl == CU.TTL_ZERO)
+//                                continue;
+//                            else if (ttl == CU.TTL_NOT_CHANGED)
+//                                ttl = 0;
+//
+//                            expiryTime = CU.toExpireTime(ttl);
+//                        }
+//
+//                        if (topFut != null) {
+//                            Throwable err = topFut.validateCache(cctx, false, false, entry.key(), null);
+//
+//                            if (err != null)
+//                                throw new IgniteCheckedException(err);
+//                        }
+//
+//                        boolean primary = cctx.affinity().primaryByKey(cctx.localNode(), entry.key(), topVer);
+//
+//                        entry.initialValue(e.getValue(),
+//                            ver,
+//                            ttl,
+//                            expiryTime,
+//                            false,
+//                            topVer,
+//                            primary ? GridDrType.DR_LOAD : GridDrType.DR_PRELOAD,
+//                            false);
+//
+//                        entry.touch();
+//
+//                        CU.unwindEvicts(cctx);
+//
+//                        entry.onUnlock();
+//                    }
+//                    catch (GridDhtInvalidPartitionException ignored) {
+//                        ignoredParts.add(cctx.affinity().partition(e.getKey()));
+//                    }
+//                    catch (GridCacheEntryRemovedException ignored) {
+//                        // No-op.
+//                    }
+//                    catch (IgniteCheckedException ex) {
+//                        IgniteLogger log = cache.unwrap(Ignite.class).log();
+//
+//                        U.error(log, "Failed to set initial value for cache entry: " + e, ex);
+//
+//                        throw new IgniteException("Failed to set initial value for cache entry.", ex);
+//                    }
+//                    finally {
+//                        cctx.shared().database().checkpointReadUnlock();
+//                    }
+//                }
+            }
+            finally {
+                for (Integer part : reservedParts) {
+                    GridDhtLocalPartition locPart = cctx.topology().localPartition(part, topVer, false);
+
+                    assert locPart != null : "Evicted reserved partition: " + locPart;
+
+                    locPart.release();
+                }
+
+                try {
+                    if (!cctx.isNear() && cctx.shared().wal() != null)
+                        cctx.shared().wal().flush(null, false);
+                }
+                catch (IgniteCheckedException e) {
+                    U.error(log, "Failed to write preloaded entries into write-ahead log.", e);
+
+                    throw new IgniteException("Failed to write preloaded entries into write-ahead log.", e);
+                }
+            }
+        }
+
+        private Collection<GridCacheEntryInfo> prepareList(List<Entry<KeyCacheObject, CacheObject>> value, long ttl,
+            long time, GridCacheVersion ver) {
+
+            List<GridCacheEntryInfo> result = new ArrayList<>(value.size());
+
+            for (Entry<KeyCacheObject, CacheObject> e : value) {
+                GridCacheEntryInfo info = new GridCacheEntryInfo();
+
+                info.key(e.getKey());
+                info.value(e.getValue());
+                info.ttl(ttl);
+                info.expireTime(time);
+                info.version(ver);
+
+                result.add(info);
+            }
+
+            return result;
         }
     }
 

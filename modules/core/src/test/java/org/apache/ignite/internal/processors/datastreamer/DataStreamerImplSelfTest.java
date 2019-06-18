@@ -35,6 +35,7 @@ import org.apache.ignite.IgniteCache;
 import org.apache.ignite.IgniteDataStreamer;
 import org.apache.ignite.IgniteException;
 import org.apache.ignite.cache.CacheServerNotFoundException;
+import org.apache.ignite.cache.affinity.rendezvous.RendezvousAffinityFunction;
 import org.apache.ignite.cluster.ClusterNode;
 import org.apache.ignite.configuration.CacheConfiguration;
 import org.apache.ignite.configuration.IgniteConfiguration;
@@ -66,7 +67,7 @@ import static org.apache.ignite.cache.CacheWriteSynchronizationMode.FULL_SYNC;
  */
 public class DataStreamerImplSelfTest extends GridCommonAbstractTest {
     /** Number of keys to load via data streamer. */
-    private static final int KEYS_COUNT = 1000;
+    private static final int KEYS_COUNT = 500_000;
 
     /** Next nodes after MAX_CACHE_COUNT start without cache */
     private static final int MAX_CACHE_COUNT = 4;
@@ -185,7 +186,9 @@ public class DataStreamerImplSelfTest extends GridCommonAbstractTest {
     public void testAddDataFromMap() throws Exception {
         cnt = 0;
 
-        startGrids(2);
+        startGridsMultiThreaded(10);
+
+        awaitPartitionMapExchange();
 
         Ignite g0 = grid(0);
 
@@ -196,9 +199,15 @@ public class DataStreamerImplSelfTest extends GridCommonAbstractTest {
         for (int i = 0; i < KEYS_COUNT; i++)
             map.put(i, String.valueOf(i));
 
+        long startTime = U.currentTimeMillis();
+
         dataLdr.addData(map);
 
         dataLdr.close();
+
+        long totalTime = U.currentTimeMillis() - startTime;
+
+        System.out.println(">xxx> total " + totalTime);
 
         Random rnd = new Random();
 
@@ -553,6 +562,7 @@ public class DataStreamerImplSelfTest extends GridCommonAbstractTest {
         cacheCfg.setCacheMode(PARTITIONED);
         cacheCfg.setBackups(1);
         cacheCfg.setWriteSynchronizationMode(FULL_SYNC);
+        cacheCfg.setAffinity(new RendezvousAffinityFunction(false, 16));
 
         if (noNodesFilter)
             cacheCfg.setNodeFilter(F.alwaysFalse());
