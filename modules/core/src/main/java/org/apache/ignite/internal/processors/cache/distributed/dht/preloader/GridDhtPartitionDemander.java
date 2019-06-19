@@ -312,30 +312,35 @@ public class GridDhtPartitionDemander {
 
             rebalanceFut = fut;
 
-            for (final GridCacheContext cctx : grp.caches()) {
-                if (cctx.statisticsEnabled()) {
-                    final CacheMetricsImpl metrics = cctx.cache().metrics0();
-
-                    metrics.clearRebalanceCounters();
-
-                    for (GridDhtPartitionDemandMessage msg : assignments.values()) {
-                        for (Integer partId : msg.partitions().fullSet()) {
-                            metrics.onRebalancingKeysCountEstimateReceived(grp.topology().globalPartSizes().get(partId));
-                        }
-
-                        CachePartitionPartialCountersMap histMap = msg.partitions().historicalMap();
-
-                        for (int i = 0; i < histMap.size(); i++) {
-                            long from = histMap.initialUpdateCounterAt(i);
-                            long to = histMap.updateCounterAt(i);
-
-                            metrics.onRebalancingKeysCountEstimateReceived(to - from);
-                        }
-                    }
-
-                    metrics.startRebalance(0);
-                }
-            }
+//            for (final GridCacheContext cctx : grp.caches()) {
+//                if (cctx.statisticsEnabled()) {
+//                    final CacheMetricsImpl metrics = cctx.cache().metrics0();
+//
+//                    metrics.clearRebalanceCounters();
+//
+//                    for (GridDhtPartitionDemandMessage msg : assignments.values()) {
+//                        for (Integer partId : msg.partitions().fullSet()) {
+//                            //assert grp.topology().globalPartSizes().get(partId) == 0 : grp.topology().globalPartSizes().get(partId);
+//
+//                            if (grp.topology().globalPartSizes().get(partId) > 0)
+//                                log.info(">xxx> " + grp.name() + " p=" + partId + ", " + grp.topology().globalPartSizes().get(partId));
+//
+//                            metrics.onRebalancingKeysCountEstimateReceived(grp.topology().globalPartSizes().get(partId));
+//                        }
+//
+//                        CachePartitionPartialCountersMap histMap = msg.partitions().historicalMap();
+//
+//                        for (int i = 0; i < histMap.size(); i++) {
+//                            long from = histMap.initialUpdateCounterAt(i);
+//                            long to = histMap.updateCounterAt(i);
+//
+//                            metrics.onRebalancingKeysCountEstimateReceived(to - from);
+//                        }
+//                    }
+//
+//                    metrics.startRebalance(0);
+//                }
+//            }
 
             fut.sendRebalanceStartedEvent();
 
@@ -987,10 +992,11 @@ public class GridDhtPartitionDemander {
                     }
 
                     //TODO: IGNITE-11330: Update metrics for touched cache only.
-                    for (GridCacheContext ctx : grp.caches()) {
-                        if (ctx.statisticsEnabled())
-                            ctx.cache().metrics0().onRebalanceKeyReceived();
-                    }
+//                    GridCacheContext ctx = grp.shared().cacheContext()
+//                    for (GridCacheContext ctx : grp.caches()) {
+                        if (cctx.statisticsEnabled())
+                            cctx.cache().metrics0().onRebalanceKeyReceived();
+//                    }
                 }
             }
             finally {

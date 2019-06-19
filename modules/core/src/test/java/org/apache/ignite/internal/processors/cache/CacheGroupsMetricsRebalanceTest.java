@@ -162,12 +162,15 @@ public class CacheGroupsMetricsRebalanceTest extends GridCommonAbstractTest {
         assertTrue(rate1 > 0);
         assertTrue(rate2 > 0);
 
-        // rate1 has to be roughly the same as rate2
-        double ratio = ((double)rate2 / rate1);
+        System.out.println(">xxx> cache1 " + metrics1.getEstimatedRebalancingKeys() + " vs " + metrics1.getRebalancedKeys());
+        System.out.println(">xxx> cache2 " + metrics2.getEstimatedRebalancingKeys() + " vs " + metrics2.getRebalancedKeys());
+
+        // rate1 has to be roughly twice more than rate2.
+        double ratio = ((double)rate2 / rate1) * 100;
 
         log.info("Ratio: " + ratio);
 
-        assertTrue(ratio > 0.9 && ratio < 1.1);
+        assertTrue(ratio > 40 && ratio < 60);
     }
 
     /**
@@ -230,9 +233,16 @@ public class CacheGroupsMetricsRebalanceTest extends GridCommonAbstractTest {
 
                 CacheMetrics snapshot = ig.cache(CACHE1).metrics();
 
-                return snapshot.getRebalancedKeys() > snapshot.getEstimatedRebalancingKeys()
+                assert snapshot.getEstimatedRebalancingKeys() == 0;
+
+                boolean pred = snapshot.getRebalancedKeys() > snapshot.getEstimatedRebalancingKeys()
                     && res.getRebalance().get(ignite.cluster().localNode().id()) == 1.0
                     && snapshot.getRebalancingPartitionsCount() == 0;
+
+                if (pred)
+                    System.out.println(">xxx> " + snapshot.getRebalancedKeys());
+
+                return pred;
             }
         }, 5000);
     }

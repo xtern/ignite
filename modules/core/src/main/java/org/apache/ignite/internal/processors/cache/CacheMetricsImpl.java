@@ -1226,6 +1226,11 @@ public class CacheMetricsImpl implements CacheMetrics {
      * Clear rebalance counters.
      */
     public void clearRebalanceCounters() {
+        if (estimatedRebalancingKeys.get() > 0)
+            U.dumpStack(">xxx> clear " + cctx.name() + " qqq " + estimatedRebalancingKeys.get());
+//
+//        assert estimatedRebalancingKeys.get() == 0 : estimatedRebalancingKeys.get();
+
         estimatedRebalancingKeys.reset();
 
         rebalancedKeys.reset();
