@@ -145,7 +145,7 @@ public class DataStreamerImpl<K, V> implements IgniteDataStreamer<K, V>, Delayed
     private final Map<Long, ThreadBuffer> threadBufMap = new ConcurrentHashMap<>();
 
     /** Isolated receiver. */
-    private static final StreamReceiver ISOLATED_UPDATER = new IsolatedUpdaterBatched(); // IsolatedUpdaterBatched(); //IsolatedUpdater();
+    private static final StreamReceiver ISOLATED_UPDATER = new IsolatedUpdater(); // IsolatedUpdaterBatched(); //IsolatedUpdater();
 
     /** Amount of permissions should be available to continue new data processing. */
     private static final int REMAP_SEMAPHORE_PERMISSIONS_COUNT = Integer.MAX_VALUE;
@@ -812,7 +812,7 @@ public class DataStreamerImpl<K, V> implements IgniteDataStreamer<K, V>, Delayed
      * @param remapTopVer Topology version.
      */
     private void load0(
-        Collection<? extends DataStreamerEntry> entries,
+        Iterable<? extends DataStreamerEntry> entries,
         final GridFutureAdapter<Object> resFut,
         @Nullable final Collection<KeyCacheObjectWrapper> activeKeys,
         final int remaps,
@@ -839,7 +839,7 @@ public class DataStreamerImpl<K, V> implements IgniteDataStreamer<K, V>, Delayed
                 }
             }
 
-            Map<ClusterNode, Collection<DataStreamerEntry>> mappings = new HashMap<>();
+            Map<ClusterNode, Iterable<DataStreamerEntry>> mappings = new HashMap<>();
 
             boolean initPda = ctx.deploy().enabled() && jobPda == null;
 
@@ -903,23 +903,23 @@ public class DataStreamerImpl<K, V> implements IgniteDataStreamer<K, V>, Delayed
 
                     if (F.isEmpty(nodes)) {
                         resFut.onDone(new ClusterTopologyException("Failed to map key to node " +
-                            "(no nodes with cache found in topology) [infos=" + entries.size() +
+                            "(no nodes with cache found in topology) [infos=" +
                             ", cacheName=" + cacheName + ']'));
 
                         return;
                     }
 
                     for (ClusterNode node : nodes) {
-                        Collection<DataStreamerEntry> col = mappings.get(node);
+                        Iterable<DataStreamerEntry> col = mappings.get(node);
 
                         if (col == null)
                             mappings.put(node, col = new ArrayList<>());
 
-                        col.add(entry);
+                        ((ArrayList)col).add(entry);
                     }
                 }
 
-                for (final Map.Entry<ClusterNode, Collection<DataStreamerEntry>> e : mappings.entrySet()) {
+                for (final Map.Entry<ClusterNode, Iterable<DataStreamerEntry>> e : mappings.entrySet()) {
                     final ClusterNode node = e.getKey();
                     final UUID nodeId = e.getKey().id();
 
@@ -932,7 +932,7 @@ public class DataStreamerImpl<K, V> implements IgniteDataStreamer<K, V>, Delayed
                             buf = old;
                     }
 
-                    final Collection<DataStreamerEntry> entriesForNode = e.getValue();
+                    final Iterable<DataStreamerEntry> entriesForNode = e.getValue();
 
                     IgniteInClosure<IgniteInternalFuture<?>> lsnr = new IgniteInClosure<IgniteInternalFuture<?>>() {
                         @Override public void apply(IgniteInternalFuture<?> t) {
@@ -947,7 +947,7 @@ public class DataStreamerImpl<K, V> implements IgniteDataStreamer<K, V>, Delayed
                                         resFut.onDone();
                                 }
                                 else {
-                                    assert entriesForNode.size() == 1;
+//                                    assert entriesForNode.size() == 1;
 
                                     // That has been a single key,
                                     // so complete result future right away.

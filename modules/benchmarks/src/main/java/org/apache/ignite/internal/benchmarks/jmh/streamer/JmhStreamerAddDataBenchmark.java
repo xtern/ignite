@@ -184,17 +184,17 @@ public class JmhStreamerAddDataBenchmark {
         streamer.dataLdr.addData(data.streamingCol);
     }
 
-    /**
-     * Test addData(Key, Value).
-     *
-     * @param data Data that will be streamed.
-     * @param streamer Data loader.
-     */
-    @Benchmark
-    public void addDataKeyValue(StreamingData data, DataStreamer streamer) {
-        for (Map.Entry<Integer, Integer> entry : data.streamingCol)
-            streamer.dataLdr.addData(entry.getKey(), entry.getValue());
-    }
+//    /**
+//     * Test addData(Key, Value).
+//     *
+//     * @param data Data that will be streamed.
+//     * @param streamer Data loader.
+//     */
+//    @Benchmark
+//    public void addDataKeyValue(StreamingData data, DataStreamer streamer) {
+//        for (Map.Entry<Integer, Integer> entry : data.streamingCol)
+//            streamer.dataLdr.addData(entry.getKey(), entry.getValue());
+//    }
 
     /**
      * @return Synchronization mode.
