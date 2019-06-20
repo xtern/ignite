@@ -18,6 +18,7 @@
 package org.apache.ignite.thread;
 
 import java.util.concurrent.atomic.AtomicLong;
+import org.apache.ignite.internal.InternalThreadLocalMap;
 import org.apache.ignite.internal.managers.communication.GridIoPolicy;
 import org.apache.ignite.internal.util.typedef.internal.A;
 import org.apache.ignite.internal.util.typedef.internal.S;
@@ -61,6 +62,27 @@ public class IgniteThread extends Thread {
 
     /** */
     private boolean forbiddenToRequestBinaryMetadata;
+
+    /** */
+    private InternalThreadLocalMap threadLocalMap;
+
+    private boolean cleanupFastThreadLocals;
+
+    public InternalThreadLocalMap threadLocalMap() {
+        return threadLocalMap;
+    }
+
+    /**
+     * Sets the internal data structure that keeps the thread-local variables bound to this thread.
+     * Note that this method is for internal use only, and thus is subject to change at any time.
+     */
+    public final void setThreadLocalMap(InternalThreadLocalMap threadLocalMap) {
+        this.threadLocalMap = threadLocalMap;
+    }
+
+    public boolean willCleanupFastThreadLocals() {
+        return cleanupFastThreadLocals;
+    }
 
     /**
      * Creates thread with given worker.

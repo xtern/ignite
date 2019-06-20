@@ -31,6 +31,7 @@ import java.util.function.Consumer;
 import java.util.stream.Collectors;
 import org.apache.ignite.IgniteException;
 import org.apache.ignite.IgniteInterruptedException;
+import org.apache.ignite.internal.FastThreadLocal;
 import org.apache.ignite.internal.processors.cache.persistence.diagnostic.pagelocktracker.PageLockTrackerManager.MemoryCalculator;
 import org.apache.ignite.internal.processors.cache.persistence.tree.util.PageLockListener;
 import org.apache.ignite.internal.util.typedef.F;
@@ -102,10 +103,16 @@ public class SharedPageLockTracker implements LifecycleAware, PageLockListener, 
      */
     private final Consumer<Set<SharedPageLockTracker.State>> hangThreadsCallBack;
 
-    /**
-     *
-     */
-    private final ThreadLocal<PageLockTracker> lockTracker = ThreadLocal.withInitial(this::createTracker);
+//    /**
+//     *
+//     */
+//    private final ThreadLocal<PageLockTracker> lockTracker = ThreadLocal.withInitial(this::createTracker);
+
+    private final FastThreadLocal<PageLockTracker> lockTracker = new FastThreadLocal<PageLockTracker>() {
+        @Override protected PageLockTracker initialValue() throws Exception {
+            return createTracker();
+        }
+    };
 
     /**
      *
