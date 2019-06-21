@@ -169,7 +169,7 @@ public class JmhStreamerAddDataBenchmark {
             Ignition.ignite(IGNITE_CLIENT_INSTANCE_NAME).dataStreamer(IGNITE_CLIENT_CACHE_NAME);
 
         {
-            dataLdr.perNodeBufferSize(4096);
+            dataLdr.perNodeBufferSize(512);
         }
     }
 

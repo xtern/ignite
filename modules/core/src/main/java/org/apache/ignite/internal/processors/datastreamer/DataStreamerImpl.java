@@ -26,7 +26,6 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
@@ -104,6 +103,8 @@ import org.apache.ignite.internal.util.GridSpinReadWriteLock;
 import org.apache.ignite.internal.util.future.GridCompoundFuture;
 import org.apache.ignite.internal.util.future.GridFutureAdapter;
 import org.apache.ignite.internal.util.lang.GridPeerDeployAware;
+import org.apache.ignite.internal.util.lang.gridfunc.MultiIterable;
+import org.apache.ignite.internal.util.lang.gridfunc.MultiListReadOnly;
 import org.apache.ignite.internal.util.tostring.GridToStringExclude;
 import org.apache.ignite.internal.util.tostring.GridToStringInclude;
 import org.apache.ignite.internal.util.typedef.CI1;
@@ -127,8 +128,6 @@ import org.jetbrains.annotations.Nullable;
 import static org.apache.ignite.events.EventType.EVT_NODE_FAILED;
 import static org.apache.ignite.events.EventType.EVT_NODE_LEFT;
 import static org.apache.ignite.internal.GridTopic.TOPIC_DATASTREAM;
-import static org.apache.ignite.internal.processors.dr.GridDrType.DR_NONE;
-import static org.apache.ignite.internal.processors.dr.GridDrType.DR_PRELOAD;
 
 /**
  * Data streamer implementation.
@@ -1579,7 +1578,7 @@ public class DataStreamerImpl<K, V> implements IgniteDataStreamer<K, V>, Delayed
             stripes = (PerStripeBuffer[])Array.newInstance(PerStripeBuffer.class, streamerPoolSize);
 
             for (int i = 0; i < stripes.length; i++)
-                stripes[i] = new PerStripeBuffer(i, signalC);
+                stripes[i] = new PerStripeBuffer(i, signalC, stripes.length);
         }
 
         /**
@@ -1601,7 +1600,7 @@ public class DataStreamerImpl<K, V> implements IgniteDataStreamer<K, V>, Delayed
             GridFutureAdapter[] futs = new GridFutureAdapter[stripes.length];
 
             for (DataStreamerEntry entry : newEntries) {
-                List<DataStreamerEntry> entries0 = null;
+                MultiListReadOnly<DataStreamerEntry> entries0 = null;
                 AffinityTopologyVersion curBatchTopVer;
 
                 // Init buffer.
@@ -1639,7 +1638,7 @@ public class DataStreamerImpl<K, V> implements IgniteDataStreamer<K, V>, Delayed
 
                     curBatchTopVer = b.batchTopVer;
 
-                    b.entries.add(entry);
+                    b.entries.add(part / stripes.length, entry);
 
                     if (b.entries.size() >= bufSize) {
                         entries0 = b.entries;
@@ -1697,7 +1696,7 @@ public class DataStreamerImpl<K, V> implements IgniteDataStreamer<K, V>, Delayed
 
             for (PerStripeBuffer b : stripes) {
                 AffinityTopologyVersion batchTopVer = null;
-                List<DataStreamerEntry> entries0 = null;
+                Collection<DataStreamerEntry> entries0 = null;
                 GridFutureAdapter<Object> curFut0 = null;
 
                 synchronized (b) {
@@ -2651,7 +2650,7 @@ public class DataStreamerImpl<K, V> implements IgniteDataStreamer<K, V>, Delayed
         private final int partId;
 
         /** */
-        private List<DataStreamerEntry> entries;
+        private MultiListReadOnly<DataStreamerEntry> entries;
 
         /** */
         private GridFutureAdapter<Object> curFut;
@@ -2665,16 +2664,20 @@ public class DataStreamerImpl<K, V> implements IgniteDataStreamer<K, V>, Delayed
         /** Batch assignments */
         public List<List<ClusterNode>> assignments;
 
+        private final int stripesCount;
+
         /**
          * @param partId Partition ID.
          * @param c Signal closure.
          */
         public PerStripeBuffer(
             int partId,
-            IgniteInClosure<? super IgniteInternalFuture<Object>> c
+            IgniteInClosure<? super IgniteInternalFuture<Object>> c,
+            int cnt
         ) {
             this.partId = partId;
             signalC = c;
+            stripesCount = cnt;
 
             renewBatch(false);
         }
@@ -2695,8 +2698,8 @@ public class DataStreamerImpl<K, V> implements IgniteDataStreamer<K, V>, Delayed
         /**
          * @return Fresh collection with some space for outgrowth.
          */
-        private List<DataStreamerEntry> newEntries() {
-            return new ArrayList<>((int)(bufSize * 1.2));
+        private MultiListReadOnly<DataStreamerEntry> newEntries() {
+            return new MultiListReadOnly<>(stripesCount);//(int)(bufSize * 1.2));
         }
 
         /** {@inheritDoc} */
