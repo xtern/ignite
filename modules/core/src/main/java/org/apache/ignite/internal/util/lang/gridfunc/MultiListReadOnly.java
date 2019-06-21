@@ -19,7 +19,7 @@ public class MultiListReadOnly<T> implements Collection<T> {
 
         // todo lazy
         for (int i = 0; i < segments; i++)
-            cols.add(new ArrayList<>());
+            cols.add(new ArrayList<>(4096/segments));
     }
 
     @Override public int size() {

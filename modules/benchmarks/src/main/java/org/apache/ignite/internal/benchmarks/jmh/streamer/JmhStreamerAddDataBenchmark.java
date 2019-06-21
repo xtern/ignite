@@ -169,7 +169,8 @@ public class JmhStreamerAddDataBenchmark {
             Ignition.ignite(IGNITE_CLIENT_INSTANCE_NAME).dataStreamer(IGNITE_CLIENT_CACHE_NAME);
 
         {
-            dataLdr.perNodeBufferSize(512);
+            dataLdr.perNodeBufferSize(4096);
+//            dataLdr.perNodeParallelOperations(32);
         }
     }
 
@@ -207,7 +208,7 @@ public class JmhStreamerAddDataBenchmark {
      * @return Node amount.
      */
     protected int gridCnt() {
-        return 3;
+        return 2;
     }
 
     /**
