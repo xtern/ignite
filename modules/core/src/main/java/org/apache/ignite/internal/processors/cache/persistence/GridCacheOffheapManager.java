@@ -2377,6 +2377,15 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
         }
 
         /** {@inheritDoc} */
+        @Override public void removeRow(CacheDataRow row) throws IgniteCheckedException {
+            assert ctx.database().checkpointLockIsHeldByThread();
+
+            CacheDataStore delegate = init0(false);
+
+            delegate.removeRow(row);
+        }
+
+        /** {@inheritDoc} */
         @Override public int cleanup(GridCacheContext cctx,
             @Nullable List<MvccLinkAwareSearchRow> cleanupRows) throws IgniteCheckedException {
             CacheDataStore delegate = init0(false);
@@ -2402,14 +2411,14 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
         }
 
         /** {@inheritDoc} */
-        @Override public Collection<CacheDataRow> insertAll(
-            Collection<GridCacheEntryInfo> entries
+        @Override public Collection<? extends CacheDataRow> createRows(
+            Collection<GridCacheEntryInfo> infos
         ) throws IgniteCheckedException {
             assert ctx.database().checkpointLockIsHeldByThread();
 
             CacheDataStore delegate = init0(false);
 
-            return delegate.insertAll(entries);
+            return delegate.createRows(infos);
         }
 
         /** {@inheritDoc} */
