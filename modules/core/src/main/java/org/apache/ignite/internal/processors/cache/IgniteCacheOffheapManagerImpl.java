@@ -26,6 +26,7 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
+import java.util.Objects;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
@@ -41,6 +42,7 @@ import org.apache.ignite.IgniteSystemProperties;
 import org.apache.ignite.failure.FailureContext;
 import org.apache.ignite.failure.FailureType;
 import org.apache.ignite.internal.NodeStoppingException;
+import org.apache.ignite.internal.metric.IoStatisticsHolder;
 import org.apache.ignite.internal.pagemem.FullPageId;
 import org.apache.ignite.internal.pagemem.wal.record.delta.DataPageMvccMarkUpdatedRecord;
 import org.apache.ignite.internal.pagemem.wal.record.delta.DataPageMvccUpdateNewTxStateHintRecord;
@@ -94,7 +96,6 @@ import org.apache.ignite.internal.processors.cache.tree.mvcc.search.MvccSnapshot
 import org.apache.ignite.internal.processors.cache.tree.mvcc.search.MvccTreeClosure;
 import org.apache.ignite.internal.processors.cache.version.GridCacheVersion;
 import org.apache.ignite.internal.processors.query.GridQueryRowCacheCleaner;
-import org.apache.ignite.internal.metric.IoStatisticsHolder;
 import org.apache.ignite.internal.transactions.IgniteTxUnexpectedStateCheckedException;
 import org.apache.ignite.internal.util.GridAtomicLong;
 import org.apache.ignite.internal.util.GridCloseableIteratorAdapter;
@@ -1731,28 +1732,30 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
         ) throws IgniteCheckedException {
             Collection<DataRow> rows = new ArrayList<>(infos.size());
 
-            // Skipping infos with null values.
-            Collection<GridCacheEntryInfo> nonNullInfos = F.view(infos, info -> info.value() != null);
-
-            for (GridCacheEntryInfo info : nonNullInfos) {
-                rows.add(makeDataRow(info.key(),
-                    info.value(),
-                    info.version(),
-                    info.expireTime(),
-                    grp.storeCacheIdInDataPage() ? info.cacheId() : CU.UNDEFINED_CACHE_ID));
+            for (GridCacheEntryInfo info : infos) {
+                rows.add(info.value() == null ? null :
+                    makeDataRow(info.key(),
+                        info.value(),
+                        info.version(),
+                        info.expireTime(),
+                        grp.storeCacheIdInDataPage() ? info.cacheId() : CU.UNDEFINED_CACHE_ID));
             }
 
             if (!busyLock.enterBusy())
                 throw new NodeStoppingException("Operation has been cancelled (node is stopping).");
 
             try {
-                rowStore.addRows(rows, grp.statisticsHolderData());
+                rowStore.addRows(F.view(rows, Objects::nonNull), grp.statisticsHolderData());
 
-                Iterator<GridCacheEntryInfo> iter = nonNullInfos.iterator();
+                Iterator<GridCacheEntryInfo> iter = infos.iterator();
 
                 if (grp.sharedGroup() && !grp.storeCacheIdInDataPage()) {
-                    for (DataRow row : rows)
-                        row.cacheId(iter.next().cacheId());
+                    for (DataRow row : rows) {
+                        GridCacheEntryInfo info = iter.next();
+
+                        if (row != null)
+                            row.cacheId(info.cacheId());
+                    }
                 }
             }
             finally {
@@ -1764,13 +1767,11 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
                 private final Iterator<GridCacheEntryInfo> infosIter = infos.iterator();
 
                 @Override protected IgniteBiTuple<GridCacheEntryInfo, CacheDataRow> onNext() {
-                    GridCacheEntryInfo info = infosIter.next();
-
-                    return new IgniteBiTuple<>(info, info.value() == null ? null : rowsIter.next());
+                    return new IgniteBiTuple<>(infosIter.next(), rowsIter.next());
                 }
 
                 @Override protected boolean onHasNext() {
-                    return infosIter.hasNext();
+                    return rowsIter.hasNext() && infosIter.hasNext();
                 }
 
                 @Override protected void onClose() throws IgniteCheckedException {
