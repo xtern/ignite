@@ -28,6 +28,7 @@ import org.apache.ignite.internal.processors.cache.GridCacheSharedContext;
 import org.apache.ignite.internal.processors.cache.persistence.freelist.FreeList;
 import org.apache.ignite.internal.processors.cache.persistence.tree.util.PageHandler;
 import org.apache.ignite.internal.processors.query.GridQueryRowCacheCleaner;
+import org.apache.ignite.internal.util.typedef.CAX;
 import org.apache.ignite.internal.util.typedef.internal.U;
 
 /**
@@ -123,10 +124,10 @@ public class RowStore {
      * @param statHolder Statistics holder to track IO operations.
      * @throws IgniteCheckedException If failed.
      */
-    public void addRows(Collection<? extends CacheDataRow> rows, IoStatisticsHolder statHolder) throws IgniteCheckedException {
+    public void addRows(Collection<? extends CacheDataRow> rows, IoStatisticsHolder statHolder, CAX clo) throws IgniteCheckedException {
         assert ctx.database().checkpointLockIsHeldByThread();
 
-        freeList.insertDataRows(rows, statHolder);
+        freeList.insertDataRows(rows, statHolder, clo);
     }
 
     /**

@@ -48,6 +48,7 @@ import org.apache.ignite.internal.util.lang.GridCloseableIterator;
 import org.apache.ignite.internal.util.lang.GridCursor;
 import org.apache.ignite.internal.util.lang.GridIterator;
 import org.apache.ignite.internal.util.lang.IgniteInClosure2X;
+import org.apache.ignite.internal.util.lang.IgnitePredicate2X;
 import org.apache.ignite.lang.IgniteBiTuple;
 import org.jetbrains.annotations.Nullable;
 
@@ -695,22 +696,8 @@ public interface IgniteCacheOffheapManager {
             long expireTime,
             @Nullable CacheDataRow oldRow) throws IgniteCheckedException;
 
-        /**
-         * @param row Row removed from cache.
-         */
-        public void removeRow(CacheDataRow row) throws IgniteCheckedException;
-
-        /**
-         * Create a batch of data rows in page memory which is not associated with the cache entries.
-         *
-         * @param infos Entry infos.
-         * @return {@link AutoCloseable} iterator with the mapping of source entry info to created cache data row (row
-         * can be {@code null} if the source value is {@code null}). Iterator automatically removes unprocessed data
-         * rows from page memory on close.
-         * @throws IgniteCheckedException If failed.
-         */
-        public GridCloseableIterator<IgniteBiTuple<GridCacheEntryInfo, CacheDataRow>> allocateRows(
-            Collection<GridCacheEntryInfo> infos
+        /** */
+        public void createRows(Collection<GridCacheEntryInfo> infos, IgnitePredicate2X<GridCacheEntryInfo, CacheDataRow> pred
         ) throws IgniteCheckedException;
 
         /**

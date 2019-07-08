@@ -23,6 +23,7 @@ import org.apache.ignite.IgniteLogger;
 import org.apache.ignite.internal.processors.cache.persistence.Storable;
 import org.apache.ignite.internal.processors.cache.persistence.tree.util.PageHandler;
 import org.apache.ignite.internal.metric.IoStatisticsHolder;
+import org.apache.ignite.internal.util.typedef.CAX;
 
 /**
  */
@@ -37,9 +38,11 @@ public interface FreeList<T extends Storable> {
     /**
      * @param rows Rows.
      * @param statHolder Statistics holder to track IO operations.
+     * @param clo
      * @throws IgniteCheckedException If failed.
      */
-    public void insertDataRows(Collection<T> rows, IoStatisticsHolder statHolder) throws IgniteCheckedException;
+    public void insertDataRows(Collection<T> rows, IoStatisticsHolder statHolder,
+        CAX clo) throws IgniteCheckedException;
 
     /**
      * @param link Row link.

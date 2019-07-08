@@ -68,8 +68,8 @@ import org.apache.ignite.internal.processors.timeout.GridTimeoutObjectAdapter;
 import org.apache.ignite.internal.util.future.GridCompoundFuture;
 import org.apache.ignite.internal.util.future.GridFinishedFuture;
 import org.apache.ignite.internal.util.future.GridFutureAdapter;
-import org.apache.ignite.internal.util.lang.GridCloseableIterator;
 import org.apache.ignite.internal.util.lang.IgniteInClosureX;
+import org.apache.ignite.internal.util.lang.IgnitePredicate2X;
 import org.apache.ignite.internal.util.tostring.GridToStringExclude;
 import org.apache.ignite.internal.util.tostring.GridToStringInclude;
 import org.apache.ignite.internal.util.typedef.CI1;
@@ -77,7 +77,6 @@ import org.apache.ignite.internal.util.typedef.internal.CU;
 import org.apache.ignite.internal.util.typedef.internal.LT;
 import org.apache.ignite.internal.util.typedef.internal.S;
 import org.apache.ignite.internal.util.typedef.internal.U;
-import org.apache.ignite.lang.IgniteBiTuple;
 import org.apache.ignite.lang.IgniteInClosure;
 import org.apache.ignite.lang.IgnitePredicate;
 import org.apache.ignite.spi.IgniteSpiException;
@@ -794,11 +793,8 @@ public class GridDhtPartitionDemander {
                                 try {
                                     if (grp.mvccEnabled())
                                         mvccPreloadEntries(topVer, node, p, infos);
-                                    else if (CU.isEvictionDisabled(grp.dataRegion().config()) ||
-                                        isEnoughSpace(grp.dataRegion(), supplyMsg.messageSize()))
-                                        preloadEntriesBatched(topVer, node, p, infos);
                                     else
-                                        preloadEntries(topVer, node, p, infos);
+                                        preloadEntriesBatched(topVer, node, p, infos);
                                 }
                                 catch (GridDhtInvalidPartitionException ignored) {
                                     if (log.isDebugEnabled())
@@ -1001,8 +997,6 @@ public class GridDhtPartitionDemander {
                     }
 
                     preloadEntry(node, p, entry, topVer, cctx, null);
-
-                    updateCacheMetrics();
                 }
             }
             finally {
@@ -1035,27 +1029,13 @@ public class GridDhtPartitionDemander {
             try {
                 GridDhtLocalPartition part = grp.topology().localPartition(p);
 
-                // Create data rows on data pages before getting locks on cache entries.
-                try (GridCloseableIterator<IgniteBiTuple<GridCacheEntryInfo, CacheDataRow>> iter =
-                         part.dataStore().allocateRows(batch)) {
-                    while (iter.hasNext()) {
-                        IgniteBiTuple<GridCacheEntryInfo, CacheDataRow> tup = iter.next();
-
-                        GridCacheEntryInfo info = tup.get1();
-                        CacheDataRow row = tup.get2();
-
+                part.dataStore().createRows(batch, new IgnitePredicate2X<GridCacheEntryInfo, CacheDataRow>() {
+                    @Override public boolean applyx(GridCacheEntryInfo info, CacheDataRow row) throws IgniteCheckedException {
                         GridCacheContext cctx = resolveCacheContext(info);
 
-                        if (cctx == null)
-                            part.dataStore().removeRow(row);
-                        else {
-                            if (!preloadEntry(from, p, info, topVer, cctx, row))
-                                part.dataStore().removeRow(row);
-
-                            updateCacheMetrics();
-                        }
+                        return cctx != null && preloadEntry(from, p, info, topVer, cctx, row);
                     }
-                }
+                });
             }
             finally {
                 ctx.database().checkpointReadUnlock();
@@ -1128,6 +1108,8 @@ public class GridDhtPartitionDemander {
                             log.trace("Rebalancing entry is already in cache (will ignore) [key=" + cached.key() +
                                 ", part=" + p + ']');
                     }
+
+                    updateCacheMetrics();
                 }
             }
             catch (GridCacheEntryRemovedException ignored) {

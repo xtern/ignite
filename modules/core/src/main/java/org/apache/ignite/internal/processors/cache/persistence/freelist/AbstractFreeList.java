@@ -44,6 +44,7 @@ import org.apache.ignite.internal.processors.cache.persistence.tree.util.PageHan
 import org.apache.ignite.internal.processors.cache.persistence.tree.util.PageLockListener;
 import org.apache.ignite.internal.metric.IoStatisticsHolder;
 import org.apache.ignite.internal.metric.IoStatisticsHolderNoOp;
+import org.apache.ignite.internal.util.typedef.CAX;
 import org.apache.ignite.internal.util.typedef.internal.U;
 
 /**
@@ -553,10 +554,11 @@ public abstract class AbstractFreeList<T extends Storable> extends PagesList imp
      *
      * @param rows Rows.
      * @param statHolder Statistics holder to track IO operations.
+     * @param clo
      * @throws IgniteCheckedException If failed.
      */
     @Override public void insertDataRows(Collection<T> rows,
-        IoStatisticsHolder statHolder) throws IgniteCheckedException {
+        IoStatisticsHolder statHolder, CAX clo) throws IgniteCheckedException {
         try {
             Iterator<T> iter = rows.iterator();
 
@@ -565,6 +567,8 @@ public abstract class AbstractFreeList<T extends Storable> extends PagesList imp
             int written = COMPLETE;
 
             while (iter.hasNext() || written != COMPLETE) {
+                clo.applyx();
+
                 if (written == COMPLETE) {
                     row = iter.next();
 
