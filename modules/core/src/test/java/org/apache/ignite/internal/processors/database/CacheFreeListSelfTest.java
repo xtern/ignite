@@ -18,9 +18,11 @@
 package org.apache.ignite.internal.processors.database;
 
 import java.nio.ByteBuffer;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Iterator;
+import java.util.List;
 import java.util.Map;
 import java.util.Random;
 import java.util.concurrent.Callable;
@@ -48,6 +50,7 @@ import org.apache.ignite.internal.processors.cache.persistence.freelist.FreeList
 import org.apache.ignite.internal.processors.cache.persistence.tree.io.CacheVersionIO;
 import org.apache.ignite.internal.processors.cache.version.GridCacheVersion;
 import org.apache.ignite.internal.metric.IoStatisticsHolderNoOp;
+import org.apache.ignite.internal.util.typedef.CAX;
 import org.apache.ignite.plugin.extensions.communication.MessageReader;
 import org.apache.ignite.plugin.extensions.communication.MessageWriter;
 import org.apache.ignite.testframework.GridTestUtils;
@@ -66,6 +69,9 @@ public class CacheFreeListSelfTest extends GridCommonAbstractTest {
     private static final long MB = 1024L * 1024L;
 
     /** */
+    private static final int BATCH_SIZE = 100;
+
+    /** */
     private PageMemory pageMem;
 
     /** {@inheritDoc} */
@@ -76,6 +82,46 @@ public class CacheFreeListSelfTest extends GridCommonAbstractTest {
             pageMem.stop(true);
 
         pageMem = null;
+    }
+
+    /**
+     * @throws Exception if failed.
+     */
+    @Test
+    public void testInsertDeleteSingleThreaded_batched_1024() throws Exception {
+        checkInsertDeleteSingleThreaded(1024, true);
+    }
+
+    /**
+     * @throws Exception if failed.
+     */
+    @Test
+    public void testInsertDeleteSingleThreaded_batched_2048() throws Exception {
+        checkInsertDeleteSingleThreaded(2048, true);
+    }
+
+    /**
+     * @throws Exception if failed.
+     */
+    @Test
+    public void testInsertDeleteSingleThreaded_batched_4096() throws Exception {
+        checkInsertDeleteSingleThreaded(4096, true);
+    }
+
+    /**
+     * @throws Exception if failed.
+     */
+    @Test
+    public void testInsertDeleteSingleThreaded_batched_8192() throws Exception {
+        checkInsertDeleteSingleThreaded(8192, true);
+    }
+
+    /**
+     * @throws Exception if failed.
+     */
+    @Test
+    public void testInsertDeleteSingleThreaded_batched_16384() throws Exception {
+        checkInsertDeleteSingleThreaded(16384, true);
     }
 
     /**
@@ -159,10 +205,59 @@ public class CacheFreeListSelfTest extends GridCommonAbstractTest {
     }
 
     /**
+     * @throws Exception if failed.
+     */
+    @Test
+    public void testInsertDeleteMultiThreaded_batched_1024() throws Exception {
+        checkInsertDeleteMultiThreaded(1024, true);
+    }
+
+    /**
+     * @throws Exception if failed.
+     */
+    @Test
+    public void testInsertDeleteMultiThreaded_batched_2048() throws Exception {
+        checkInsertDeleteMultiThreaded(2048, true);
+    }
+
+    /**
+     * @throws Exception if failed.
+     */
+    @Test
+    public void testInsertDeleteMultiThreaded_batched_4096() throws Exception {
+        checkInsertDeleteMultiThreaded(4096, true);
+    }
+
+    /**
+     * @throws Exception if failed.
+     */
+    @Test
+    public void testInsertDeleteMultiThreaded_batched_8192() throws Exception {
+        checkInsertDeleteMultiThreaded(8192, true);
+    }
+
+    /**
+     * @throws Exception if failed.
+     */
+    @Test
+    public void testInsertDeleteMultiThreaded_batched_16384() throws Exception {
+        checkInsertDeleteMultiThreaded(16384, true);
+    }
+
+    /**
      * @param pageSize Page size.
      * @throws Exception If failed.
      */
-    protected void checkInsertDeleteMultiThreaded(final int pageSize) throws Exception {
+    protected void checkInsertDeleteMultiThreaded(int pageSize) throws Exception {
+        checkInsertDeleteMultiThreaded(pageSize, false);
+    }
+
+    /**
+     * @param pageSize Page size.
+     * @param batched Batch mode flag.
+     * @throws Exception If failed.
+     */
+    protected void checkInsertDeleteMultiThreaded(final int pageSize, final boolean batched) throws Exception {
         final FreeList list = createFreeList(pageSize);
 
         Random rnd = new Random();
@@ -188,6 +283,8 @@ public class CacheFreeListSelfTest extends GridCommonAbstractTest {
 
         GridTestUtils.runMultiThreaded(new Callable<Object>() {
             @Override public Object call() throws Exception {
+                List<TestDataRow> rows = new ArrayList<>(BATCH_SIZE);
+
                 Random rnd = ThreadLocalRandom.current();
 
                 for (int i = 0; i < 200_000; i++) {
@@ -218,16 +315,38 @@ public class CacheFreeListSelfTest extends GridCommonAbstractTest {
 
                         TestDataRow row = new TestDataRow(keySize, valSize);
 
-                        list.insertDataRow(row, IoStatisticsHolderNoOp.INSTANCE);
+                        if (batched)
+                            rows.add(row);
+                        else {
+                            list.insertDataRow(row, IoStatisticsHolderNoOp.INSTANCE);
 
-                        assertTrue(row.link() != 0L);
+                            assertTrue(row.link() != 0L);
 
-                        TestDataRow old = stored.put(row.link(), row);
+                            TestDataRow old = stored.put(row.link(), row);
 
-                        assertNull(old);
+                            assertNull(old);
+                        }
+
+                        if (rows.size() == BATCH_SIZE) {
+                            list.insertDataRows(rows, IoStatisticsHolderNoOp.INSTANCE, new CAX() {
+                                @Override public void applyx() {
+                                    // No-op.
+                                }
+                            });
+
+                            for (TestDataRow row0 : rows) {
+                                assertTrue(row0.link() != 0L);
+
+                                TestDataRow old = stored.put(row0.link(), row0);
+
+                                assertNull(old);
+                            }
+
+                            rows.clear();
+                        }
                     }
                     else {
-                        while (true) {
+                        while (!stored.isEmpty()) {
                             Iterator<TestDataRow> it = stored.values().iterator();
 
                             if (it.hasNext()) {
@@ -251,9 +370,19 @@ public class CacheFreeListSelfTest extends GridCommonAbstractTest {
     }
 
     /**
-     * @throws Exception if failed.
+     * @param pageSize Page size.
+     * @throws Exception If failed.
      */
     protected void checkInsertDeleteSingleThreaded(int pageSize) throws Exception {
+        checkInsertDeleteSingleThreaded(pageSize, false);
+    }
+
+    /**
+     * @param pageSize Page size.
+     * @param batched Batch mode flag.
+     * @throws Exception if failed.
+     */
+    protected void checkInsertDeleteSingleThreaded(int pageSize, boolean batched) throws Exception {
         FreeList list = createFreeList(pageSize);
 
         Random rnd = new Random();
@@ -276,6 +405,8 @@ public class CacheFreeListSelfTest extends GridCommonAbstractTest {
         }
 
         boolean grow = true;
+
+        List<TestDataRow> rows = new ArrayList<>(BATCH_SIZE);
 
         for (int i = 0; i < 1_000_000; i++) {
             if (grow) {
@@ -301,13 +432,35 @@ public class CacheFreeListSelfTest extends GridCommonAbstractTest {
 
                 TestDataRow row = new TestDataRow(keySize, valSize);
 
-                list.insertDataRow(row, IoStatisticsHolderNoOp.INSTANCE);
+                if (batched)
+                    rows.add(row);
+                else {
+                    list.insertDataRow(row, IoStatisticsHolderNoOp.INSTANCE);
 
-                assertTrue(row.link() != 0L);
+                    assertTrue(row.link() != 0L);
 
-                TestDataRow old = stored.put(row.link(), row);
+                    TestDataRow old = stored.put(row.link(), row);
 
-                assertNull(old);
+                    assertNull(old);
+                }
+
+                if (rows.size() == BATCH_SIZE) {
+                    list.insertDataRows(rows, IoStatisticsHolderNoOp.INSTANCE, new CAX() {
+                        @Override public void applyx() throws IgniteCheckedException {
+                            // No-op.
+                        }
+                    });
+
+                    for (TestDataRow row0 : rows) {
+                        assertTrue(row0.link() != 0L);
+
+                        TestDataRow old = stored.put(row0.link(), row0);
+
+                        assertNull(old);
+                    }
+
+                    rows.clear();
+                }
             }
             else {
                 Iterator<TestDataRow> it = stored.values().iterator();
