@@ -1770,6 +1770,7 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
                 }
             }
             finally {
+                // Clean up unprocessed rows.
                 while (iter.hasNext())
                     rowStore.removeRow(iter.next().link(), grp.statisticsHolderData());
             }

@@ -38,11 +38,11 @@ public interface FreeList<T extends Storable> {
     /**
      * @param rows Rows.
      * @param statHolder Statistics holder to track IO operations.
-     * @param clo
+     * @param checkFreeSpace
      * @throws IgniteCheckedException If failed.
      */
     public void insertDataRows(Collection<T> rows, IoStatisticsHolder statHolder,
-        CAX clo) throws IgniteCheckedException;
+        CAX checkFreeSpace) throws IgniteCheckedException;
 
     /**
      * @param link Row link.

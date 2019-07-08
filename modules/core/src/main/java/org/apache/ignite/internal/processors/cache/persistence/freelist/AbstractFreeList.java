@@ -554,11 +554,11 @@ public abstract class AbstractFreeList<T extends Storable> extends PagesList imp
      *
      * @param rows Rows.
      * @param statHolder Statistics holder to track IO operations.
-     * @param clo
+     * @param checkFreeSpace
      * @throws IgniteCheckedException If failed.
      */
     @Override public void insertDataRows(Collection<T> rows,
-        IoStatisticsHolder statHolder, CAX clo) throws IgniteCheckedException {
+        IoStatisticsHolder statHolder, CAX checkFreeSpace) throws IgniteCheckedException {
         try {
             Iterator<T> iter = rows.iterator();
 
@@ -567,7 +567,7 @@ public abstract class AbstractFreeList<T extends Storable> extends PagesList imp
             int written = COMPLETE;
 
             while (iter.hasNext() || written != COMPLETE) {
-                clo.applyx();
+                checkFreeSpace.applyx();
 
                 if (written == COMPLETE) {
                     row = iter.next();
