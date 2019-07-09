@@ -50,7 +50,6 @@ import org.apache.ignite.internal.processors.cache.persistence.freelist.FreeList
 import org.apache.ignite.internal.processors.cache.persistence.tree.io.CacheVersionIO;
 import org.apache.ignite.internal.processors.cache.version.GridCacheVersion;
 import org.apache.ignite.internal.metric.IoStatisticsHolderNoOp;
-import org.apache.ignite.internal.util.typedef.CAX;
 import org.apache.ignite.plugin.extensions.communication.MessageReader;
 import org.apache.ignite.plugin.extensions.communication.MessageWriter;
 import org.apache.ignite.testframework.GridTestUtils;
@@ -328,11 +327,7 @@ public class CacheFreeListSelfTest extends GridCommonAbstractTest {
                         }
 
                         if (rows.size() == BATCH_SIZE) {
-                            list.insertDataRows(rows, new CAX() {
-                                @Override public void applyx() {
-                                    // No-op.
-                                }
-                            }, IoStatisticsHolderNoOp.INSTANCE);
+                            list.insertDataRows(rows, IoStatisticsHolderNoOp.INSTANCE);
 
                             for (TestDataRow row0 : rows) {
                                 assertTrue(row0.link() != 0L);
@@ -445,11 +440,7 @@ public class CacheFreeListSelfTest extends GridCommonAbstractTest {
                 }
 
                 if (rows.size() == BATCH_SIZE) {
-                    list.insertDataRows(rows, new CAX() {
-                        @Override public void applyx() {
-                            // No-op.
-                        }
-                    }, IoStatisticsHolderNoOp.INSTANCE);
+                    list.insertDataRows(rows, IoStatisticsHolderNoOp.INSTANCE);
 
                     for (TestDataRow row0 : rows) {
                         assertTrue(row0.link() != 0L);
