@@ -1728,7 +1728,7 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
         }
 
         /** {@inheritDoc} */
-        @Override public void allocateRows(Collection<GridCacheEntryInfo> infos,
+        @Override public void insertRows(Collection<GridCacheEntryInfo> infos,
             IgnitePredicate2X<GridCacheEntryInfo, CacheDataRow> rmvPred) throws IgniteCheckedException {
             Collection<DataRow> rows = new ArrayList<>(infos.size());
 
@@ -1760,7 +1760,7 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
                     if (row != null && grp.sharedGroup() && row.cacheId() == CU.UNDEFINED_CACHE_ID)
                         row.cacheId(info.cacheId());
 
-                    if (!rmvPred.apply(info, row) && row != null)
+                    if (rmvPred.apply(info, row) && row != null)
                         rowStore.removeRow(row.link(), grp.statisticsHolderData());
                 }
             }
