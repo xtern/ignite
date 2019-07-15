@@ -17,8 +17,11 @@
 
 package org.apache.ignite.internal.processors.cache.distributed.dht.topology;
 
+import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedDeque;
 import java.util.concurrent.ConcurrentMap;
@@ -36,6 +39,7 @@ import org.apache.ignite.failure.FailureContext;
 import org.apache.ignite.failure.FailureType;
 import org.apache.ignite.internal.IgniteFutureTimeoutCheckedException;
 import org.apache.ignite.internal.IgniteInternalFuture;
+import org.apache.ignite.internal.IgniteInterruptedCheckedException;
 import org.apache.ignite.internal.NodeStoppingException;
 import org.apache.ignite.internal.pagemem.wal.record.delta.PartitionMetaStateRecord;
 import org.apache.ignite.internal.processors.affinity.AffinityTopologyVersion;
@@ -44,6 +48,8 @@ import org.apache.ignite.internal.processors.cache.GridCacheAdapter;
 import org.apache.ignite.internal.processors.cache.GridCacheConcurrentMapImpl;
 import org.apache.ignite.internal.processors.cache.GridCacheContext;
 import org.apache.ignite.internal.processors.cache.GridCacheEntryEx;
+import org.apache.ignite.internal.processors.cache.GridCacheEntryInfo;
+import org.apache.ignite.internal.processors.cache.GridCacheEntryRemovedException;
 import org.apache.ignite.internal.processors.cache.GridCacheMapEntry;
 import org.apache.ignite.internal.processors.cache.GridCacheMapEntryFactory;
 import org.apache.ignite.internal.processors.cache.GridCacheSharedContext;
@@ -53,25 +59,34 @@ import org.apache.ignite.internal.processors.cache.distributed.dht.GridReservabl
 import org.apache.ignite.internal.processors.cache.distributed.dht.preloader.GridDhtPartitionDemander;
 import org.apache.ignite.internal.processors.cache.distributed.dht.preloader.GridDhtPreloader;
 import org.apache.ignite.internal.processors.cache.extras.GridCacheObsoleteEntryExtras;
+import org.apache.ignite.internal.processors.cache.mvcc.MvccUpdateVersionAware;
+import org.apache.ignite.internal.processors.cache.mvcc.MvccVersionAware;
+import org.apache.ignite.internal.processors.cache.mvcc.txlog.TxState;
 import org.apache.ignite.internal.processors.cache.persistence.CacheDataRow;
 import org.apache.ignite.internal.processors.cache.transactions.IgniteInternalTx;
 import org.apache.ignite.internal.processors.cache.transactions.TxCounters;
+import org.apache.ignite.internal.processors.cache.tree.DataRow;
 import org.apache.ignite.internal.processors.cache.version.GridCacheVersion;
+import org.apache.ignite.internal.processors.dr.GridDrType;
 import org.apache.ignite.internal.processors.query.GridQueryRowCacheCleaner;
 import org.apache.ignite.internal.util.GridLongList;
 import org.apache.ignite.internal.util.future.GridFutureAdapter;
 import org.apache.ignite.internal.util.lang.GridIterator;
 import org.apache.ignite.internal.util.tostring.GridToStringExclude;
+import org.apache.ignite.internal.util.typedef.F;
+import org.apache.ignite.internal.util.typedef.internal.CU;
 import org.apache.ignite.internal.util.typedef.internal.LT;
 import org.apache.ignite.internal.util.typedef.internal.S;
 import org.apache.ignite.internal.util.typedef.internal.U;
 import org.apache.ignite.lang.IgniteInClosure;
+import org.apache.ignite.lang.IgnitePredicate;
 import org.apache.ignite.util.deque.FastSizeDeque;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import static org.apache.ignite.IgniteSystemProperties.IGNITE_ATOMIC_CACHE_DELETE_HISTORY_SIZE;
 import static org.apache.ignite.IgniteSystemProperties.IGNITE_CACHE_REMOVED_ENTRIES_TTL;
+import static org.apache.ignite.events.EventType.EVT_CACHE_REBALANCE_OBJECT_LOADED;
 import static org.apache.ignite.events.EventType.EVT_CACHE_REBALANCE_OBJECT_UNLOADED;
 import static org.apache.ignite.internal.processors.cache.IgniteCacheOffheapManager.CacheDataStore;
 import static org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtPartitionState.EVICTED;
@@ -1286,6 +1301,162 @@ public class GridDhtLocalPartition extends GridCacheConcurrentMapImpl implements
             finally {
                 ctx.database().checkpointReadUnlock();
             }
+        }
+    }
+
+    private boolean preloadEntry(
+//        ClusterNode from,
+//        int p,
+        GridCacheEntryInfo entry,
+        AffinityTopologyVersion topVer,
+        @Nullable CacheDataRow row,
+        boolean preload,
+        GridDrType drType
+    ) throws IgniteCheckedException {
+        assert ctx.database().checkpointLockIsHeldByThread();
+
+        try {
+            GridCacheContext cctx = resolveCacheContext(entry);
+
+            if (cctx == null)
+                return false;
+
+            GridCacheEntryEx cached = cctx.cache().entryEx(entry.key(), topVer);
+
+//            if (log.isTraceEnabled()) {
+//                log.trace("Rebalancing key [key=" + entry.key() + ", part=" + p + ", fromNode=" +
+//                    from.id() + ", grpId=" + grp.groupId() + ']');
+//            }
+
+            try {
+//                if (preloadPred == null || preloadPred.apply(entry)) {
+                    if (cached.initialValue(
+                        entry.value(),
+                        entry.version(),
+                        cctx.mvccEnabled() ? ((MvccVersionAware)entry).mvccVersion() : null,
+                        cctx.mvccEnabled() ? ((MvccUpdateVersionAware)entry).newMvccVersion() : null,
+                        cctx.mvccEnabled() ? ((MvccVersionAware)entry).mvccTxState() : TxState.NA,
+                        cctx.mvccEnabled() ? ((MvccUpdateVersionAware)entry).newMvccTxState() : TxState.NA,
+                        entry.ttl(),
+                        entry.expireTime(),
+                        preload,
+                        topVer,
+                        drType,
+                        false,
+                        row
+                    )) {
+                        cached.touch(); // Start tracking.
+
+                        if (preload && cctx.events().isRecordable(EVT_CACHE_REBALANCE_OBJECT_LOADED) && !cached.isInternal())
+                            cctx.events().addEvent(cached.partition(), cached.key(), cctx.localNodeId(), null,
+                                null, null, EVT_CACHE_REBALANCE_OBJECT_LOADED, entry.value(), true, null,
+                                false, null, null, null, true);
+
+                        return true;
+                    }
+                    else {
+                        cached.touch(); // Start tracking.
+
+                        if (log.isTraceEnabled())
+                            log.trace("Rebalancing entry is already in cache (will ignore) [key=" + cached.key() +
+                                ", part=" + id + ']');
+                    }
+//                }
+            }
+            catch (GridCacheEntryRemovedException ignored) {
+                if (log.isTraceEnabled())
+                    log.trace("Entry has been concurrently removed while rebalancing (will ignore) [key=" +
+                        cached.key() + ", part=" + id + ']');
+            }
+        }
+        catch (IgniteInterruptedCheckedException e) {
+            throw e;
+        }
+        catch (IgniteCheckedException e) {
+            throw new IgniteCheckedException("Failed to preload cache entry [local=" +
+                ctx.localNode() + ", key=" + entry.key() + ", part=" + id + ']', e);
+            //", node=" + from.id() +
+        } finally {
+            updateCacheMetrics();
+        }
+
+        return false;
+    }
+
+
+    public void preloadEntries(Collection<GridCacheEntryInfo> infos0, IgnitePredicate<GridCacheEntryInfo> pred, AffinityTopologyVersion topVer, boolean preload, GridDrType drType) throws IgniteCheckedException {
+        Collection<DataRow> rows = new ArrayList<>(infos0.size());
+
+        Collection<GridCacheEntryInfo> infos = infos0;
+//            F.view(infos0, (e) -> {
+//
+//
+//            return pred.apply(e);
+//        });
+
+        // todo log trace
+//        if (log.isTraceEnabled())
+//            log.trace("Preloading key [key=" + e.key() + ", part=" + id + ", grpId=" + grp.groupId() + ']');
+
+        for (GridCacheEntryInfo info : infos) {
+            if (info.key().partition() == -1)
+                info.key().partition(id);
+
+            rows.add((pred != null && !pred.apply(info)) || info.value() == null ? null :
+                new DataRow(info.key(),
+                    info.value(),
+                    info.version(),
+                    id,
+                    info.expireTime(),
+                    grp.storeCacheIdInDataPage() ? info.cacheId() : CU.UNDEFINED_CACHE_ID));
+        }
+
+//        if (!busyLock.enterBusy())
+//            throw new NodeStoppingException("Operation has been cancelled (node is stopping).");
+
+        //todo cachedatastore.createRows with bust lock
+        dataStore().rowStore().addRows(F.view(rows, Objects::nonNull), grp.statisticsHolderData());
+
+        Iterator<DataRow> iter = rows.iterator();
+
+        try {
+            for (GridCacheEntryInfo info : infos) {
+                DataRow row = iter.next();
+
+                if (row != null && grp.sharedGroup() && row.cacheId() == CU.UNDEFINED_CACHE_ID)
+                    row.cacheId(info.cacheId());
+
+                if ((pred == null || pred.apply(info)) && !preloadEntry(info, topVer, row, preload, drType) && row != null)
+                    dataStore().rowStore().removeRow(row.link(), grp.statisticsHolderData());
+            }
+        }
+        finally {
+            // Clean up unprocessed rows.
+            while (iter.hasNext()) {
+                DataRow row = iter.next();
+
+                if (row != null)
+                    dataStore().rowStore().removeRow(row.link(), grp.statisticsHolderData());
+            }
+        }
+    }
+
+    private GridCacheContext resolveCacheContext(GridCacheEntryInfo info) {
+        GridCacheContext cctx = grp.sharedGroup() ? ctx.cacheContext(info.cacheId()) : grp.singleCacheContext();
+
+        if (cctx == null)
+            return null;
+
+        return cctx.isNear() ? cctx.dhtCache().context() : cctx;
+    }
+
+    private void updateCacheMetrics() {
+        // TODO: IGNITE-11330: Update metrics for touched cache only.
+        // Due to historical rebalancing "EstimatedRebalancingKeys" metric is currently calculated for the whole cache
+        // group (by partition counters), so "RebalancedKeys" and "RebalancingKeysRate" is calculated in the same way.
+        for (GridCacheContext cctx0 : grp.caches()) {
+            if (cctx0.statisticsEnabled())
+                cctx0.cache().metrics0().onRebalanceKeyReceived();
         }
     }
 

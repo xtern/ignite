@@ -984,12 +984,16 @@ public class GridDhtPartitionDemander {
             try {
                 GridDhtLocalPartition part = grp.topology().localPartition(p);
 
-                part.dataStore().createRows(batch, new IgnitePredicate2X<GridCacheEntryInfo, CacheDataRow>() {
-                    @Override public boolean applyx(GridCacheEntryInfo info, CacheDataRow row)
-                        throws IgniteCheckedException {
-                        return !preloadEntry(from, p, info, topVer, resolveCacheContext(info), row);
-                    }
-                });
+                //cctx.isDrEnabled() ? DR_PRELOAD : DR_NONE
+
+                part.preloadEntries(batch, preloadPred, topVer, true, DR_PRELOAD);
+
+//                part.dataStore().createRows(batch, new IgnitePredicate2X<GridCacheEntryInfo, CacheDataRow>() {
+//                    @Override public boolean applyx(GridCacheEntryInfo info, CacheDataRow row)
+//                        throws IgniteCheckedException {
+//                        return !preloadEntry(from, p, info, topVer, resolveCacheContext(info), row);
+//                    }
+//                });
             }
             finally {
                 ctx.database().checkpointReadUnlock();
