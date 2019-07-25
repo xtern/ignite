@@ -1804,9 +1804,9 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
 
         /** {@inheritDoc} */
         @Override public void createRows(Iterator<GridCacheEntryInfo> infos, AffinityTopologyVersion topVer) throws IgniteCheckedException {
-            int batchSize = 100;
+            int checkpointThreshold = 100;
 
-            List<DataRowStoreAware> rows = new ArrayList<>(batchSize);
+            List<DataRowStoreAware> rows = new ArrayList<>(checkpointThreshold);
 
             while (infos.hasNext()) {
                 ctx.database().checkpointReadLock();
@@ -1832,7 +1832,7 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
                                 info.cacheId()), grp.storeCacheIdInDataPage()));
                         }
                     }
-                    while (rows.size() < batchSize && infos.hasNext());
+                    while (rows.size() < checkpointThreshold && infos.hasNext());
 
                     if (!busyLock.enterBusy())
                         throw new NodeStoppingException("Operation has been cancelled (node is stopping).");
@@ -1841,7 +1841,8 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
                         rowStore.addRows(rows, grp.statisticsHolderData());
 
                         for (DataRowStoreAware row : rows) {
-                            if (!preloadEntry(row.key(), row.value(), row.version(), row.expireTime(), topVer, row.delegate().cacheId(), row))
+                            if (!preloadEntry(row.key(), row.value(), row.version(), row.expireTime(), topVer,
+                                row.delegate().cacheId(), row))
                                 rowStore.removeRow(row.link(), grp.statisticsHolderData());
                         }
                     }
@@ -1853,7 +1854,6 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
                 } finally {
                     ctx.database().checkpointReadUnlock();
                 }
-
             }
         }
 

@@ -765,13 +765,11 @@ public class GridDhtPartitionDemander {
                             part.beforeApplyBatch(last);
 
                             try {
-                                Iterator<GridCacheEntryInfo> infos = e.getValue().infos().iterator();
-
                                 try {
                                     if (grp.mvccEnabled())
-                                        mvccPreloadEntries(topVer, node, p, infos);
+                                        mvccPreloadEntries(topVer, node, p, e.getValue().infos().iterator());
                                     else
-                                        preloadEntries(topVer, p, infos);
+                                        preloadEntries(topVer, p, e.getValue().infos());
                                 }
                                 catch (GridDhtInvalidPartitionException ignored) {
                                     if (log.isDebugEnabled())
@@ -917,7 +915,11 @@ public class GridDhtPartitionDemander {
                         if (cctx != null) {
                             mvccPreloadEntry(cctx, node, entryHist, topVer, p);
 
-                            updateCacheMetrics();
+                            // TODO: IGNITE-11330: Update metrics for touched cache only.
+                            for (GridCacheContext cctx0 : grp.caches()) {
+                                if (cctx0.statisticsEnabled())
+                                    cctx0.cache().metrics0().onRebalanceKeyReceived();
+                            }
                         }
 
                         if (!hasMore)
@@ -946,22 +948,25 @@ public class GridDhtPartitionDemander {
     private void preloadEntries(
         AffinityTopologyVersion topVer,
         int p,
-        Iterator<GridCacheEntryInfo> infos
+        List<GridCacheEntryInfo> infos
     ) throws IgniteCheckedException {
         try {
             GridDhtLocalPartition part = grp.topology().localPartition(p);
 
-            part.dataStore().createRows(infos, topVer);
+            part.dataStore().createRows(infos.iterator(), topVer);
+
+            // TODO: IGNITE-11330: Update metrics for touched cache only.
+            for (GridCacheContext cctx : grp.caches()) {
+                if (cctx.statisticsEnabled())
+                    cctx.cache().metrics0().onRebalanceKeysReceived(infos.size());
+            }
         }
         catch (IgniteCheckedException e) {
             throw new IgniteCheckedException("Preloading failed - stopping rebalancing [p=" + p + "]");
         }
 
-        // todo update metrics in batch
-        while (infos.hasNext()) {
-            GridCacheEntryInfo entry = infos.next();
-
-            if (grp.eventRecordable(EVT_CACHE_REBALANCE_OBJECT_LOADED)) {
+        if (grp.eventRecordable(EVT_CACHE_REBALANCE_OBJECT_LOADED)) {
+            for (GridCacheEntryInfo entry : infos) {
                 GridCacheContext cctx = grp.sharedGroup() ? ctx.cacheContext(entry.cacheId()) : grp.singleCacheContext();
 
                 if (cctx == null)
@@ -974,8 +979,6 @@ public class GridDhtPartitionDemander {
                         null, null, EVT_CACHE_REBALANCE_OBJECT_LOADED, entry.value(), true, null,
                         false, null, null, null, true);
             }
-
-            updateCacheMetrics();
         }
     }
 
@@ -1057,19 +1060,6 @@ public class GridDhtPartitionDemander {
      */
     private String demandRoutineInfo(int topicId, UUID supplier, GridDhtPartitionSupplyMessage supplyMsg) {
         return "grp=" + grp.cacheOrGroupName() + ", topVer=" + supplyMsg.topologyVersion() + ", supplier=" + supplier + ", topic=" + topicId;
-    }
-
-    /**
-     * Update rebalancing metrics.
-     */
-    private void updateCacheMetrics() {
-        // TODO: IGNITE-11330: Update metrics for touched cache only.
-        // Due to historical rebalancing "EstimatedRebalancingKeys" metric is currently calculated for the whole cache
-        // group (by partition counters), so "RebalancedKeys" and "RebalancingKeysRate" is calculated in the same way.
-        for (GridCacheContext cctx0 : grp.caches()) {
-            if (cctx0.statisticsEnabled())
-                cctx0.cache().metrics0().onRebalanceKeyReceived();
-        }
     }
 
     /** {@inheritDoc} */

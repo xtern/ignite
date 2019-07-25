@@ -1294,6 +1294,17 @@ public class CacheMetricsImpl implements CacheMetrics {
     }
 
     /**
+     * Rebalance entry store callback.
+     *
+     * @param keysCnt Count of received keys.
+     */
+    public void onRebalanceKeysReceived(int keysCnt) {
+        rebalancedKeys.add(keysCnt);
+
+        rebalancingKeysRate.add(keysCnt);
+    }
+
+    /**
      * Rebalance supply message callback.
      *
      * @param batchSize Batch size in bytes.
