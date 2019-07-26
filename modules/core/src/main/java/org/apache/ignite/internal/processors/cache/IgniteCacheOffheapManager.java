@@ -575,6 +575,14 @@ public interface IgniteCacheOffheapManager {
 
     /**
      *
+     * @param part
+     * @param topVer
+     * @param info
+     */
+    public void preload(int part, AffinityTopologyVersion topVer, Iterator<GridCacheEntryInfo> info)
+
+    /**
+     *
      */
     interface OffheapInvokeClosure extends IgniteTree.InvokeClosure<CacheDataRow> {
         /**

@@ -895,6 +895,59 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
         return iterator(CU.UNDEFINED_CACHE_ID, singletonIterator(data), null, null);
     }
 
+    /** {@inheritDoc} */
+    @Override public void preload(int part, AffinityTopologyVersion topVer, Iterator<GridCacheEntryInfo> info) throws IgniteCheckedException {
+        int batchSize = 100;
+
+        List<DataRowStoreAware> rows = new ArrayList<>(batchSize);
+
+        while (infos.hasNext()) {
+            ctx.database().checkpointReadLock();
+
+            try {
+                do {
+                    GridCacheEntryInfo info = infos.next();
+
+                    if (info.value() == null) {
+                        preloadEntry(info.key(), null, info.version(), info.expireTime(), topVer,
+                            info.cacheId(), null);
+
+                        continue;
+                    }
+
+                    boolean storeCacheId = grp.storeCacheIdInDataPage();
+
+                    rows.add(new DataRowStoreAware(makeDataRow(info.key(),
+                        info.value(),
+                        info.version(),
+                        info.expireTime(),
+                        grp.sharedGroup() || storeCacheId ? info.cacheId() : CU.UNDEFINED_CACHE_ID), storeCacheId));
+                }
+                while (rows.size() < batchSize && infos.hasNext());
+
+                if (!busyLock.enterBusy())
+                    throw new NodeStoppingException("Operation has been cancelled (node is stopping).");
+
+                try {
+                    rowStore.addRows(rows, grp.statisticsHolderData());
+
+                    for (DataRowStoreAware row : rows) {
+                        if (!preloadEntry(row.key(), row.value(), row.version(), row.expireTime(), topVer, row.delegate().cacheId(), row.delegate()))
+                            rowStore.removeRow(row.link(), grp.statisticsHolderData());
+                    }
+                }
+                finally {
+                    busyLock.leaveBusy();
+                }
+
+                rows.clear();
+            } finally {
+                ctx.database().checkpointReadUnlock();
+            }
+
+        }
+    }
+
     /**
      *
      * @param cacheId Cache ID.
