@@ -2859,7 +2859,7 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
             KeyCacheObject key,
             int partId
         ) throws IgniteCheckedException {
-
+            System.out.println(">xxx> " + cctx.localNodeId() + " key = " + key.value(cctx.cacheObjectContext(), false));
         }
 
         /** {@inheritDoc} */
@@ -2877,7 +2877,7 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
 
             DataRow dataRow = makeDataRow(key, val, ver, expireTime, cctx.cacheId());
 
-            System.out.println(">xxx> catched " + key.value(cctx.cacheObjectContext(), false));
+//            System.out.println(">xxx> catched " + key.value(cctx.cacheObjectContext(), false));
 
             // Log to the temporary store.
             catchLog.log(new DataRecord(new DataEntry(

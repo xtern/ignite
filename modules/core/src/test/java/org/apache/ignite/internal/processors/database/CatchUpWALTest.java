@@ -161,6 +161,11 @@ public class CatchUpWALTest extends GridCommonAbstractTest {
 
         fillCache(primaryNode, 100, 100);
 
+//        IgniteCache cache = node.cache(DEFAULT_CACHE_NAME);
+
+        for (int i = 0; i < 100; i+=10)
+            primaryNode.cache(DEFAULT_CACHE_NAME).remove(i);
+
         assert backupPart.state() == MOVING : backupPart.state();
 
         U.sleep(1_000);
@@ -189,7 +194,16 @@ public class CatchUpWALTest extends GridCommonAbstractTest {
 
         size = backupCache.localSize(new CachePeekMode[] {CachePeekMode.ALL});
 
-        assert size == 200 : size;
+        System.out.println("backup size=" + size);
+
+        IgniteInternalCache primaryCache = primaryNode.cachex(DEFAULT_CACHE_NAME);
+
+        size = primaryCache.localSize(new CachePeekMode[] {CachePeekMode.ALL});
+
+        System.out.println("primary size=" + size);
+
+        //assert size == 200 : size;
+
     }
 
 
