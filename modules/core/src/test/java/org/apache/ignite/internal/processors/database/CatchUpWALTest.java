@@ -129,10 +129,6 @@ public class CatchUpWALTest extends GridCommonAbstractTest {
         //System.out.println("xxx> " + map.get(0));
 
         primaryNode.cachex(DEFAULT_CACHE_NAME).context().topology().update(null, bacupPartsMap, true);
-
-        System.out.println(">xx> h state " + primaryNode.cachex(DEFAULT_CACHE_NAME).context().topology().partitionState(backupNode.localNode().id(), 0));
-
-
 //
 //        primaryNode.cachex(DEFAULT_CACHE_NAME).context().topology().partitionState()
 
@@ -169,13 +165,31 @@ public class CatchUpWALTest extends GridCommonAbstractTest {
 
         U.sleep(1_000);
 
-        backupPart.dataStoreMode(CacheDataStoreEx.StorageMode.FULL);
+        log.info(">xxx> switching mode back");
+
+        backupNode.context().cache().context().database().checkpointReadLock();
+
+        try {
+            // Switching mode under the write lock.
+            backupPart.dataStoreMode(CacheDataStoreEx.StorageMode.FULL);
+        } finally {
+            backupNode.context().cache().context().database().checkpointReadUnlock();
+        }
+
+        log.info(">xxx> switching state back");
+
+        backupPart.own();
+
+        bacupPartsMap = backupNode.cachex(DEFAULT_CACHE_NAME).context().topology().localPartitionMap();
+        //System.out.println("xxx> " + map.get(0));
+
+        primaryNode.cachex(DEFAULT_CACHE_NAME).context().topology().update(null, bacupPartsMap, true);
+
+        log.info(">xxx> getting size");
 
         size = backupCache.localSize(new CachePeekMode[] {CachePeekMode.ALL});
 
         assert size == 200 : size;
-
-
     }
 
 

@@ -2871,7 +2871,7 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
             long expireTime,
             @Nullable CacheDataRow oldRow
         ) throws IgniteCheckedException {
-            assert false : "Shouldn't be here";
+//            assert false : "Shouldn't be here";
 
             assert oldRow == null;
 
@@ -2902,6 +2902,11 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
             // Assume we've performed an invoke operation on the B+ Tree and find nothing.
             // Emulating that always inserting/removing a new value.
             clo.call(null);
+        }
+
+        /** {@inheritDoc} */
+        @Override public CacheDataRow find(GridCacheContext cctx, KeyCacheObject key) throws IgniteCheckedException {
+            return null;
         }
 
         /**
