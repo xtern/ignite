@@ -26,10 +26,12 @@ import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.IgniteException;
 import org.apache.ignite.IgniteLogger;
 import org.apache.ignite.internal.pagemem.wal.IgnitePartitionCatchUpLog;
+import org.apache.ignite.internal.pagemem.wal.WALIterator;
 import org.apache.ignite.internal.processors.cache.mvcc.MvccSnapshot;
 import org.apache.ignite.internal.processors.cache.mvcc.MvccVersion;
 import org.apache.ignite.internal.processors.cache.persistence.CacheDataRow;
 import org.apache.ignite.internal.processors.cache.persistence.CacheSearchRow;
+import org.apache.ignite.internal.processors.cache.persistence.GridCacheDatabaseSharedManager;
 import org.apache.ignite.internal.processors.cache.persistence.RowStore;
 import org.apache.ignite.internal.processors.cache.persistence.freelist.SimpleDataRow;
 import org.apache.ignite.internal.processors.cache.persistence.partstorage.PartitionMetaStorage;
@@ -120,6 +122,31 @@ public class CacheDataStoreExImpl implements CacheDataStoreEx {
         assert storageMap.get(mode) != null;
 
         currMode = mode;
+
+        if (currMode == StorageMode.FULL) {
+            // restore data
+            try {
+                restoreMemory();
+            }
+            catch (IgniteCheckedException e) {
+                throw new IgniteException(e);
+            }
+        }
+
+
+    }
+
+    private void restoreMemory() throws IgniteCheckedException {
+        System.out.println(">xxx> restoring memory");
+
+        WALIterator iter = catchLog.replay();
+
+        ((GridCacheDatabaseSharedManager)cctx.database()).applyFastUpdates(iter,
+            (ptr, rec) -> true,
+            (entry) -> true,
+            true);
+
+        //assert catchLog.catched();
     }
 
     /** {@inheritDoc} */

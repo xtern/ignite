@@ -29,7 +29,6 @@ import org.apache.ignite.internal.pagemem.wal.WALIterator;
 import org.apache.ignite.internal.pagemem.wal.WALPointer;
 import org.apache.ignite.internal.pagemem.wal.record.WALRecord;
 import org.apache.ignite.internal.processors.cache.CacheGroupContext;
-import org.apache.ignite.internal.processors.cache.persistence.GridCacheDatabaseSharedManager;
 import org.apache.ignite.internal.util.GridCloseableIteratorAdapterEx;
 import org.apache.ignite.internal.util.typedef.internal.S;
 import org.apache.ignite.lang.IgniteBiTuple;
@@ -132,41 +131,49 @@ public class InMemoryPartitionCatchUpLog implements IgnitePartitionCatchUpLog {
 
         /** {@inheritDoc} */
         @Override protected IgniteBiTuple<WALPointer, WALRecord> onNext() throws IgniteCheckedException {
-            return lastRead;
-        }
-
-        /** {@inheritDoc} */
-        @Override protected boolean onHasNext() throws IgniteCheckedException {
-            assert lastRead == null || ((QueueWALPointer)lastRead.get1()).index() <= savedPtr.get() : lastRead;
 
             IgniteBiTuple<WALPointer, WALRecord> rec;
 
             rec = savedRecs.poll();
 
-            if (rec == null) {
-                if (lock.isWriteLockedByCurrentThread()) {
-                    cathed = true;
+            return rec;
 
-                    lock.writeLock().unlock();
-                }
-                else {
-                    lock.writeLock().tryLock();
+//            U.dumpStack(cnt++ + " >>> rec = " + rec);
+//
+//            if (rec == null) {
+//                if (lock.isWriteLockedByCurrentThread()) {
+//                    cathed = true;
+//
+//                    lock.writeLock().unlock();
+//                }
+//                else {
+//                    lock.writeLock().tryLock();
+//
+//                    rec = savedRecs.poll();
+//
+//                    if (rec == null) {
+//                        cathed = true;
+//
+//                        lock.writeLock().unlock();
+//                    }
+//                    else
+//                        lastRead = rec;
+//                }
+//            }
+//            else
+//                lastRead = rec;
 
-                    rec = savedRecs.poll();
+        }
 
-                    if (rec == null) {
-                        cathed = true;
+        int cnt = 0;
 
-                        lock.writeLock().unlock();
-                    }
-                    else
-                        lastRead = rec;
-                }
-            }
-            else
-                lastRead = rec;
+        /** {@inheritDoc} */
+        @Override protected boolean onHasNext() throws IgniteCheckedException {
+            //assert lastRead == null || ((QueueWALPointer)lastRead.get1()).index() <= savedPtr.get() : lastRead;
 
-            return !cathed;
+            return savedRecs.size() > 0;
+
+
         }
 
         /** {@inheritDoc} */
