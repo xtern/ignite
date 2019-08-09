@@ -1219,8 +1219,8 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
     }
 
     /** {@inheritDoc} */
-    @Override public final CacheDataStore createCacheDataStore(int p) throws IgniteCheckedException {
-        CacheDataStore dataStore;
+    @Override public final CacheDataStoreEx createCacheDataStore(int p) throws IgniteCheckedException {
+        CacheDataStoreEx dataStore;
 
         partStoreLock.lock(p);
 
@@ -1243,7 +1243,7 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
      * @return Cache data store.
      * @throws IgniteCheckedException If failed.
      */
-    protected CacheDataStore createCacheDataStore0(int p) throws IgniteCheckedException {
+    protected CacheDataStoreEx createCacheDataStore0(int p) throws IgniteCheckedException {
         final long rootPage = allocateForTree();
 
         CacheDataRowStore rowStore = new CacheDataRowStore(grp, grp.freeList(), p);
@@ -1262,7 +1262,18 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
             lsnr
         );
 
-        return new CacheDataStoreImpl(p, rowStore, dataTree);
+        //return new CacheDataStoreImpl(p, rowStore, dataTree);
+        String treeName = treeName(p);
+        //grp,
+
+        return new CacheDataStoreExImpl(grp.shared(),
+            new CacheDataStoreImpl(
+                p,
+                rowStore,
+                dataTree),
+            null,
+            null,
+            log);
     }
 
     /** {@inheritDoc} */
@@ -1278,7 +1289,7 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
     }
 
     /** {@inheritDoc} */
-    @Override public final void destroyCacheDataStore(CacheDataStore store) throws IgniteCheckedException {
+    @Override public void destroyCacheDataStore(CacheDataStore store) throws IgniteCheckedException {
         int p = store.partId();
 
         partStoreLock.lock(p);
@@ -1310,7 +1321,7 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
      * @param p Partition.
      * @return Tree name for given partition.
      */
-    protected final String treeName(int p) {
+    protected static final String treeName(int p) {
         return BPlusTree.treeName("p-" + p, "CacheData");
     }
 
@@ -1401,6 +1412,417 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
     /**
      *
      */
+    protected abstract static class AbstractCacheDataStore implements CacheDataStore {
+        /** */
+        private static final String UNSUPPORTED_MSG = "The store doesn't support this operation";
+
+        /** The partition identifier. */
+        protected final int partId;
+
+        /** Tree name. */
+        protected final String name;
+
+        /** Context */
+        protected final CacheGroupContext grp;
+
+        /** Logger */
+        protected final IgniteLogger log;
+
+        /** Update counter. */
+        private final PartitionUpdateCounter pCntr;
+
+        /** Partition size. */
+        private final AtomicLong storageSize = new AtomicLong();
+
+        /** The map of cache sizes per each cache id. */
+        private final ConcurrentMap<Integer, AtomicLong> cacheSizes = new ConcurrentHashMap<>();
+
+        /**
+         * @param grp Cache group context to work with.
+         * @param partId The partition id.
+         * @param name The cache store tree name.
+         */
+        protected AbstractCacheDataStore(
+            CacheGroupContext grp,
+            int partId,
+            String name
+        ) {
+            this.grp = grp;
+            this.partId = partId;
+            this.name = name;
+
+            log = grp.shared().kernalContext().log(getClass());
+
+
+            if (grp.mvccEnabled())
+                pCntr = new PartitionMvccTxUpdateCounterImpl();
+            else if (grp.hasAtomicCaches() || !grp.persistenceEnabled())
+                pCntr = new PartitionAtomicUpdateCounterImpl();
+            else
+                pCntr = new PartitionTxUpdateCounterImpl();
+        }
+
+        /**
+         * @param cacheId Cache ID.
+         */
+        protected void incrementSize(int cacheId) {
+            updateSize(cacheId, 1);
+        }
+
+        /**
+         * @param cacheId Cache ID.
+         */
+        protected void decrementSize(int cacheId) {
+            updateSize(cacheId, -1);
+        }
+
+        /** {@inheritDoc} */
+        @Override public int partId() {
+            return partId;
+        }
+
+//        /** {@inheritDoc} */
+//        @Override public String name() {
+//            return name;
+//        }
+
+        /** {@inheritDoc} */
+        @Override public void init(long size, long updCntr, Map<Integer, Long> cacheSizes) {
+            pCntr.init(updCntr, null);
+
+            storageSize.set(size);
+
+            this.cacheSizes.clear();
+
+            if (cacheSizes != null) {
+                for (Map.Entry<Integer, Long> e : cacheSizes.entrySet())
+                    this.cacheSizes.put(e.getKey(), new AtomicLong(e.getValue()));
+            }
+        }
+
+        /** {@inheritDoc} */
+        @Override public boolean isEmpty() {
+            return storageSize.get() == 0;
+        }
+
+        /** {@inheritDoc} */
+        @Override public long cacheSize(int cacheId) {
+            if (grp.sharedGroup()) {
+                AtomicLong size = cacheSizes.get(cacheId);
+
+                return size != null ? (int)size.get() : 0;
+            }
+
+            return storageSize.get();
+        }
+
+        /** {@inheritDoc} */
+        @Override public Map<Integer, Long> cacheSizes() {
+            if (!grp.sharedGroup())
+                return null;
+
+            Map<Integer, Long> res = new HashMap<>();
+
+            for (Map.Entry<Integer, AtomicLong> e : cacheSizes.entrySet())
+                res.put(e.getKey(), e.getValue().longValue());
+
+            return res;
+        }
+
+        /** {@inheritDoc} */
+        @Override public long fullSize() {
+            return storageSize.get();
+        }
+
+        /** {@inheritDoc} */
+        @Override public void updateSize(int cacheId, long delta) {
+            storageSize.addAndGet(delta);
+
+            if (grp.sharedGroup()) {
+                AtomicLong size = cacheSizes.get(cacheId);
+
+                if (size == null) {
+                    AtomicLong old = cacheSizes.putIfAbsent(cacheId, size = new AtomicLong());
+
+                    if (old != null)
+                        size = old;
+                }
+
+                size.addAndGet(delta);
+            }
+        }
+
+        /** {@inheritDoc} */
+        @Override public long nextUpdateCounter() {
+            return pCntr.next();
+        }
+
+        /** {@inheritDoc} */
+        @Override public long initialUpdateCounter() {
+            return pCntr.initial();
+        }
+
+        @Override public boolean init() {
+            return false;
+        }
+
+        @Override public long reservedCounter() {
+            return pCntr.reserved();
+        }
+
+        @Override public @Nullable PartitionUpdateCounter partUpdateCounter() {
+            return pCntr;
+        }
+
+        @Override public long reserve(long delta) {
+            return pCntr.reserve(delta);
+        }
+
+//        /** {@inheritDoc} */
+//        @Override public RowStore rowStore() {
+//            return null;
+//        }
+
+        @Override public void updateInitialCounter(long start, long delta) {
+            pCntr.update(start, delta);
+        }
+
+//        /** {@inheritDoc} */
+//        @Override public PendingEntriesTree pendingTree() {
+//            return null;
+//        }
+
+        @Override public void resetUpdateCounter() {
+            pCntr.reset();
+        }
+
+        @Override public PartitionMetaStorage<SimpleDataRow> partStorage() {
+            return null;
+        }
+
+//        /** {@inheritDoc} */
+//        @Override public void updateInitialCounter(long cntr) {
+//            pCntr.updateInitial(cntr);
+//        }
+
+        /** {@inheritDoc} */
+        @Override public long getAndIncrementUpdateCounter(long delta) {
+            return pCntr.reserve(delta);
+        }
+
+        /** {@inheritDoc} */
+        @Override public long updateCounter() {
+            return pCntr.get();
+        }
+
+        /** {@inheritDoc} */
+        @Override public void updateCounter(long val) {
+            try {
+                pCntr.update(val);
+            }
+            catch (IgniteCheckedException e) {
+                throw new IgniteException(e);
+            }
+        }
+
+        /** {@inheritDoc} */
+        @Override public boolean updateCounter(long start, long delta) {
+            return pCntr.update(start, delta);
+        }
+
+        /** {@inheritDoc} */
+        @Override public GridLongList finalizeUpdateCounters() {
+            return pCntr.finalizeUpdateCounters();
+        }
+
+        /** {@inheritDoc} */
+        @Override public CacheDataRow createRow(GridCacheContext cctx, KeyCacheObject key, CacheObject val,
+            GridCacheVersion ver, long expireTime, @Nullable CacheDataRow oldRow) throws IgniteCheckedException {
+            throw new UnsupportedOperationException(UNSUPPORTED_MSG);
+        }
+
+        /** {@inheritDoc} */
+        @Override public int cleanup(GridCacheContext cctx,
+            @Nullable List<MvccLinkAwareSearchRow> cleanupRows) throws IgniteCheckedException {
+            throw new UnsupportedOperationException(UNSUPPORTED_MSG);
+        }
+
+        /** {@inheritDoc} */
+        @Override public void updateTxState(GridCacheContext cctx, CacheSearchRow row) throws IgniteCheckedException {
+            throw new UnsupportedOperationException(UNSUPPORTED_MSG);
+        }
+
+        /** {@inheritDoc} */
+        @Override public void update(GridCacheContext cctx, KeyCacheObject key, CacheObject val, GridCacheVersion ver,
+            long expireTime, @Nullable CacheDataRow oldRow) throws IgniteCheckedException {
+            throw new UnsupportedOperationException(UNSUPPORTED_MSG);
+        }
+
+        /** {@inheritDoc} */
+        @Override public boolean mvccInitialValue(GridCacheContext cctx, KeyCacheObject key, @Nullable CacheObject val,
+            GridCacheVersion ver, long expireTime, MvccVersion mvccVer,
+            MvccVersion newMvccVer) throws IgniteCheckedException {
+            throw new UnsupportedOperationException(UNSUPPORTED_MSG);
+        }
+
+        /** {@inheritDoc} */
+        @Override public boolean mvccApplyHistoryIfAbsent(GridCacheContext cctx, KeyCacheObject key,
+            List<GridCacheMvccEntryInfo> hist) throws IgniteCheckedException {
+            throw new UnsupportedOperationException(UNSUPPORTED_MSG);
+        }
+
+        /** {@inheritDoc} */
+        @Override public boolean mvccUpdateRowWithPreloadInfo(GridCacheContext cctx, KeyCacheObject key,
+            @Nullable CacheObject val, GridCacheVersion ver, long expireTime, MvccVersion mvccVer, MvccVersion newMvccVer,
+            byte mvccTxState, byte newMvccTxState) throws IgniteCheckedException {
+            throw new UnsupportedOperationException(UNSUPPORTED_MSG);
+        }
+
+        /** {@inheritDoc} */
+        @Override public MvccUpdateResult mvccUpdate(GridCacheContext cctx, KeyCacheObject key, CacheObject val,
+            GridCacheVersion ver, long expireTime, MvccSnapshot mvccSnapshot, @Nullable CacheEntryPredicate filter,
+            EntryProcessor entryProc, Object[] invokeArgs, boolean primary, boolean needHist, boolean noCreate,
+            boolean needOldVal, boolean retVal, boolean keepBinary) throws IgniteCheckedException {
+            throw new UnsupportedOperationException(UNSUPPORTED_MSG);
+        }
+
+        /** {@inheritDoc} */
+        @Override public MvccUpdateResult mvccRemove(GridCacheContext cctx, KeyCacheObject key, MvccSnapshot mvccSnapshot,
+            @Nullable CacheEntryPredicate filter, boolean primary, boolean needHistory, boolean needOldVal,
+            boolean retVal) throws IgniteCheckedException {
+            throw new UnsupportedOperationException(UNSUPPORTED_MSG);
+        }
+
+        /** {@inheritDoc} */
+        @Override public MvccUpdateResult mvccLock(GridCacheContext cctx, KeyCacheObject key,
+            MvccSnapshot mvccSnapshot) throws IgniteCheckedException {
+            throw new UnsupportedOperationException(UNSUPPORTED_MSG);
+        }
+
+        /** {@inheritDoc} */
+        @Override public void mvccRemoveAll(GridCacheContext cctx, KeyCacheObject key) throws IgniteCheckedException {
+            throw new UnsupportedOperationException(UNSUPPORTED_MSG);
+        }
+
+        /** {@inheritDoc} */
+        @Override public void invoke(GridCacheContext cctx, KeyCacheObject key,
+            IgniteCacheOffheapManager.OffheapInvokeClosure c) throws IgniteCheckedException {
+            throw new UnsupportedOperationException(UNSUPPORTED_MSG);
+        }
+
+        /** {@inheritDoc} */
+        @Override public void mvccApplyUpdate(GridCacheContext cctx, KeyCacheObject key, CacheObject val,
+            GridCacheVersion ver, long expireTime, MvccVersion mvccVer) throws IgniteCheckedException {
+            throw new UnsupportedOperationException(UNSUPPORTED_MSG);
+        }
+
+        /** {@inheritDoc} */
+        @Override public void remove(GridCacheContext cctx, KeyCacheObject key, int partId) throws IgniteCheckedException {
+            throw new UnsupportedOperationException(UNSUPPORTED_MSG);
+        }
+
+        /** {@inheritDoc} */
+        @Override public CacheDataRow find(GridCacheContext cctx, KeyCacheObject key) throws IgniteCheckedException {
+            throw new UnsupportedOperationException(UNSUPPORTED_MSG);
+        }
+
+        /** {@inheritDoc} */
+        @Override public GridCursor<CacheDataRow> mvccAllVersionsCursor(GridCacheContext cctx, KeyCacheObject key,
+            Object x) throws IgniteCheckedException {
+            throw new UnsupportedOperationException(UNSUPPORTED_MSG);
+        }
+
+        /** {@inheritDoc} */
+        @Override public CacheDataRow mvccFind(GridCacheContext cctx, KeyCacheObject key,
+            MvccSnapshot snapshot) throws IgniteCheckedException {
+            throw new UnsupportedOperationException(UNSUPPORTED_MSG);
+        }
+
+        /** {@inheritDoc} */
+        @Override public List<IgniteBiTuple<Object, MvccVersion>> mvccFindAllVersions(GridCacheContext cctx,
+            KeyCacheObject key) throws IgniteCheckedException {
+            throw new UnsupportedOperationException(UNSUPPORTED_MSG);
+        }
+
+        /** {@inheritDoc} */
+        @Override public GridCursor<? extends CacheDataRow> cursor() throws IgniteCheckedException {
+            throw new UnsupportedOperationException(UNSUPPORTED_MSG);
+        }
+
+        /** {@inheritDoc} */
+        @Override public GridCursor<? extends CacheDataRow> cursor(Object x) throws IgniteCheckedException {
+            throw new UnsupportedOperationException(UNSUPPORTED_MSG);
+        }
+
+        /** {@inheritDoc} */
+        @Override public GridCursor<? extends CacheDataRow> cursor(
+            MvccSnapshot mvccSnapshot) throws IgniteCheckedException {
+            throw new UnsupportedOperationException(UNSUPPORTED_MSG);
+        }
+
+        /** {@inheritDoc} */
+        @Override public GridCursor<? extends CacheDataRow> cursor(int cacheId) throws IgniteCheckedException {
+            throw new UnsupportedOperationException(UNSUPPORTED_MSG);
+        }
+
+        /** {@inheritDoc} */
+        @Override public GridCursor<? extends CacheDataRow> cursor(int cacheId,
+            MvccSnapshot mvccSnapshot) throws IgniteCheckedException {
+            throw new UnsupportedOperationException(UNSUPPORTED_MSG);
+        }
+
+        /** {@inheritDoc} */
+        @Override public GridCursor<? extends CacheDataRow> cursor(int cacheId, KeyCacheObject lower,
+            KeyCacheObject upper) throws IgniteCheckedException {
+            throw new UnsupportedOperationException(UNSUPPORTED_MSG);
+        }
+
+        /** {@inheritDoc} */
+        @Override public GridCursor<? extends CacheDataRow> cursor(int cacheId, KeyCacheObject lower, KeyCacheObject upper,
+            Object x) throws IgniteCheckedException {
+            throw new UnsupportedOperationException(UNSUPPORTED_MSG);
+        }
+
+        /** {@inheritDoc} */
+        @Override public GridCursor<? extends CacheDataRow> cursor(int cacheId, KeyCacheObject lower, KeyCacheObject upper,
+            Object x, MvccSnapshot snapshot) throws IgniteCheckedException {
+            throw new UnsupportedOperationException(UNSUPPORTED_MSG);
+        }
+
+        /** {@inheritDoc} */
+        @Override public void destroy() throws IgniteCheckedException {
+            throw new UnsupportedOperationException(UNSUPPORTED_MSG);
+        }
+
+        /** {@inheritDoc} */
+        @Override public void clear(int cacheId) throws IgniteCheckedException {
+            throw new UnsupportedOperationException(UNSUPPORTED_MSG);
+        }
+
+        /** {@inheritDoc} */
+        @Override public RowStore rowStore() {
+            throw new UnsupportedOperationException(UNSUPPORTED_MSG);
+        }
+
+        /** {@inheritDoc} */
+        @Override public void setRowCacheCleaner(GridQueryRowCacheCleaner rowCacheCleaner) {
+            throw new UnsupportedOperationException(UNSUPPORTED_MSG);
+        }
+
+        /** {@inheritDoc} */
+        @Override public PendingEntriesTree pendingTree() {
+            throw new UnsupportedOperationException(UNSUPPORTED_MSG);
+        }
+
+        /** {@inheritDoc} */
+        @Override public void preload() throws IgniteCheckedException {
+            throw new UnsupportedOperationException(UNSUPPORTED_MSG);
+        }
+    }
+
+    /**
+     *
+     */
     protected class CacheDataStoreImpl implements CacheDataStore {
         /** */
         private final int partId;
@@ -1469,6 +1891,19 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
         /** {@inheritDoc} */
         @Override public boolean init() {
             return false;
+        }
+
+        @Override public void init(long size, long updCntr, @Nullable Map<Integer, Long> cacheSizes) {
+            pCntr.init(updCntr, null);
+
+            storageSize.set(size);
+
+            this.cacheSizes.clear();
+
+            if (cacheSizes != null) {
+                for (Map.Entry<Integer, Long> e : cacheSizes.entrySet())
+                    this.cacheSizes.put(e.getKey(), new AtomicLong(e.getValue()));
+            }
         }
 
         /** {@inheritDoc} */

@@ -138,7 +138,7 @@ public interface IgniteCacheOffheapManager {
      * @return Data store.
      * @throws IgniteCheckedException If failed.
      */
-    public CacheDataStore createCacheDataStore(int p) throws IgniteCheckedException;
+    public CacheDataStoreEx createCacheDataStore(int p) throws IgniteCheckedException;
 
     /**
      * @return Iterable over all existing cache data stores.
@@ -591,6 +591,13 @@ public interface IgniteCacheOffheapManager {
          * @return {@code True} if initialized.
          */
         boolean init();
+
+        /**
+         * @param size Size to init.
+         * @param updCntr Update counter to init.
+         * @param cacheSizes Cache sizes if store belongs to group containing multiple caches.
+         */
+        void init(long size, long updCntr, @Nullable Map<Integer, Long> cacheSizes);
 
         /**
          * @return Partition ID.
