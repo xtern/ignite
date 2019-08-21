@@ -19,6 +19,7 @@ package org.apache.ignite.internal.processors.cache.tree;
 
 import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.internal.metric.IoStatisticsHolder;
+import org.apache.ignite.internal.pagemem.PageIdUtils;
 import org.apache.ignite.internal.pagemem.PageUtils;
 import org.apache.ignite.internal.pagemem.store.PageStore;
 import org.apache.ignite.internal.processors.cache.CacheGroupContext;
@@ -271,6 +272,8 @@ public class CacheDataTree extends BPlusTree<CacheSearchRow, CacheDataRow> {
                                         rowData,
                                         skipVer
                                     );
+
+                                    row.link(PageIdUtils.link(pageId, i));
 
                                     rows[r++] = row;
                                 }

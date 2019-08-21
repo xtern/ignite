@@ -32,6 +32,7 @@ import org.apache.ignite.configuration.DataRegionConfiguration;
 import org.apache.ignite.configuration.DataStorageConfiguration;
 import org.apache.ignite.configuration.IgniteConfiguration;
 import org.apache.ignite.configuration.WALMode;
+import org.apache.ignite.internal.IgniteEx;
 import org.apache.ignite.internal.util.typedef.internal.U;
 import org.apache.ignite.testframework.GridTestUtils.SF;
 import org.apache.ignite.testframework.junits.common.GridCommonAbstractTest;
@@ -56,7 +57,7 @@ public class IgnitePdsRebalancingOnNotStableTopologyTest extends GridCommonAbstr
      */
     @Test
     public void test() throws Exception {
-        Ignite ex = startGrid(0);
+        IgniteEx ex = startGrid(0);
 
         ex.active(true);
 
@@ -145,6 +146,8 @@ public class IgnitePdsRebalancingOnNotStableTopologyTest extends GridCommonAbstr
 
         for (int i = 0; i < keyCnt.get(); i++)
             assertEquals(-i, cache1.get(i));
+
+        assertNoMemoryLeakOnDataPages(ex.cachex(DEFAULT_CACHE_NAME).context());
 
         System.out.println("Test finished with total keys count = " + keyCnt.get());
     }

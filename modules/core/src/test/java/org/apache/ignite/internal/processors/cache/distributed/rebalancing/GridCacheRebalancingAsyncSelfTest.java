@@ -48,6 +48,10 @@ public class GridCacheRebalancingAsyncSelfTest extends GridCacheRebalancingSyncS
     public void testNodeFailedAtRebalancing() throws Exception {
         IgniteEx ignite = startGrid(0);
 
+        ignite.cluster().active(true);
+
+        ignite.cluster().baselineAutoAdjustTimeout(0);
+
         generateData(ignite, 0, 0);
 
         log.info("Preloading started.");

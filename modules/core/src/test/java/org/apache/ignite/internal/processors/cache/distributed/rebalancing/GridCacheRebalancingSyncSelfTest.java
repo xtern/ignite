@@ -248,6 +248,8 @@ public class GridCacheRebalancingSyncSelfTest extends GridCommonAbstractTest {
                     cache.get(i).intValue(), i + name.hashCode() + iter);
             }
         }
+
+        assertNoMemoryLeakOnDataPages(((IgniteEx)ignite).cachex(name).context());
     }
 
     /** {@inheritDoc} */
@@ -263,6 +265,10 @@ public class GridCacheRebalancingSyncSelfTest extends GridCommonAbstractTest {
     @Test
     public void testSimpleRebalancing() throws Exception {
         IgniteKernal ignite = (IgniteKernal)startGrid(0);
+
+        ignite.cluster().active(true);
+
+        ignite.cluster().baselineAutoAdjustTimeout(0);
 
         generateData(ignite, 0, 0);
 
@@ -315,6 +321,10 @@ public class GridCacheRebalancingSyncSelfTest extends GridCommonAbstractTest {
     @Test
     public void testLoadRebalancing() throws Exception {
         final Ignite ignite = startGrid(0);
+
+        ignite.cluster().active(true);
+
+        ignite.cluster().baselineAutoAdjustTimeout(0);
 
         startGrid(1);
 
@@ -503,6 +513,10 @@ public class GridCacheRebalancingSyncSelfTest extends GridCommonAbstractTest {
     @Test
     public void testComplexRebalancing() throws Exception {
         final Ignite ignite = startGrid(0);
+
+        ignite.cluster().active(true);
+
+        ignite.cluster().baselineAutoAdjustTimeout(0);
 
         generateData(ignite, 0, 0);
 

@@ -71,6 +71,7 @@ import org.apache.ignite.internal.IgniteEx;
 import org.apache.ignite.internal.IgniteInternalFuture;
 import org.apache.ignite.internal.IgniteInterruptedCheckedException;
 import org.apache.ignite.internal.IgniteKernal;
+import org.apache.ignite.internal.pagemem.PageIdUtils;
 import org.apache.ignite.internal.processors.affinity.AffinityTopologyVersion;
 import org.apache.ignite.internal.processors.affinity.GridAffinityFunctionContextImpl;
 import org.apache.ignite.internal.processors.cache.CacheGroupDescriptor;
@@ -81,6 +82,7 @@ import org.apache.ignite.internal.processors.cache.GridCacheExplicitLockSpan;
 import org.apache.ignite.internal.processors.cache.GridCacheFuture;
 import org.apache.ignite.internal.processors.cache.GridCachePartitionExchangeManager;
 import org.apache.ignite.internal.processors.cache.GridCacheSharedContext;
+import org.apache.ignite.internal.processors.cache.IgniteCacheOffheapManager;
 import org.apache.ignite.internal.processors.cache.IgniteCacheProxy;
 import org.apache.ignite.internal.processors.cache.IgniteCacheProxyImpl;
 import org.apache.ignite.internal.processors.cache.PartitionUpdateCounter;
@@ -92,12 +94,16 @@ import org.apache.ignite.internal.processors.cache.distributed.dht.topology.Grid
 import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtPartitionTopology;
 import org.apache.ignite.internal.processors.cache.distributed.near.GridNearCacheAdapter;
 import org.apache.ignite.internal.processors.cache.local.GridLocalCache;
+import org.apache.ignite.internal.processors.cache.persistence.CacheDataRow;
 import org.apache.ignite.internal.processors.cache.persistence.GridCacheDatabaseSharedManager;
 import org.apache.ignite.internal.processors.cache.transactions.IgniteInternalTx;
 import org.apache.ignite.internal.processors.cache.transactions.IgniteTxManager;
+import org.apache.ignite.internal.processors.cache.tree.CacheDataTree;
 import org.apache.ignite.internal.processors.cache.verify.IdleVerifyResultV2;
 import org.apache.ignite.internal.processors.service.IgniteServiceProcessor;
+import org.apache.ignite.internal.util.IgniteTree;
 import org.apache.ignite.internal.util.lang.GridAbsPredicate;
+import org.apache.ignite.internal.util.lang.GridCursor;
 import org.apache.ignite.internal.util.typedef.F;
 import org.apache.ignite.internal.util.typedef.G;
 import org.apache.ignite.internal.util.typedef.PA;
@@ -133,6 +139,8 @@ import static org.apache.ignite.internal.processors.cache.distributed.dht.topolo
 import static org.apache.ignite.internal.processors.cache.persistence.file.FilePageStoreManager.DFLT_STORE_DIR;
 import static org.apache.ignite.transactions.TransactionConcurrency.PESSIMISTIC;
 import static org.apache.ignite.transactions.TransactionIsolation.REPEATABLE_READ;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
 
 /**
  * Super class for all common tests.
@@ -2315,6 +2323,99 @@ public abstract class GridCommonAbstractTest extends GridAbstractTest {
             }
 
             cntr0 = cntr;
+        }
+    }
+
+    protected void assertNoMemoryLeakOnDataPages(GridCacheContext cctx) throws IgniteException {
+        if (!cctx.group().persistenceEnabled() || cctx.group().mvccEnabled())
+            return;
+
+        Set<Long> treeLinks = new HashSet<>();
+
+        try {
+            for (GridDhtLocalPartition part : cctx.topology().localPartitions()) {
+                cctx.shared().database().checkpointReadLock();
+
+                CacheDataTree.setDataPageScanEnabled(true);
+
+                try {
+                    GridCursor<? extends CacheDataRow> cur = part.dataStore().cursor(cctx.cacheId());
+
+                    while (cur.next()) {
+                        CacheDataRow row = cur.get();
+
+                        part.dataStore().invoke(cctx, row.key(), new IgniteCacheOffheapManager.OffheapInvokeClosure() {
+                            @Override public void call(@Nullable CacheDataRow oldRow) {
+                                assert oldRow != null;
+
+                                if (row.link() != oldRow.link()) {
+                                    long oldPageId = PageIdUtils.pageId(oldRow.link());
+                                    long newPageId = PageIdUtils.pageId(row.link());
+
+                                    assertEquals("Duplicate links for key=" +
+                                        row.key().value(cctx.cacheObjectContext(), false), oldPageId, newPageId);
+
+                                    int itemIdOld = PageIdUtils.itemId(oldRow.link());
+                                    int itemId = PageIdUtils.itemId(row.link());
+
+                                    // Item id from page scan iterator uses direct counter, but old one can use indirect.
+                                    boolean idCheck = itemIdOld > itemId;
+
+                                    assertTrue("Leaked row [valid link=" + oldRow.link() + ", invalid link=" +
+                                        row.link() + " valid id=" + itemIdOld + ", invalid id=" + itemId + "]", idCheck);
+
+                                    treeLinks.add(oldRow.link());
+                                }
+                            }
+
+                            @Override public @Nullable CacheDataRow oldRow() {
+                                return null;
+                            }
+
+                            @Override public CacheDataRow newRow() {
+                                return null;
+                            }
+
+                            @Override public IgniteTree.OperationType operationType() {
+                                return IgniteTree.OperationType.NOOP;
+                            }
+                        });
+                    }
+                }
+                finally {
+                    CacheDataTree.setDataPageScanEnabled(false);
+
+                    cctx.shared().database().checkpointReadUnlock();
+                }
+            }
+
+            if (treeLinks.isEmpty())
+                return;
+
+            for (GridDhtLocalPartition part : cctx.topology().localPartitions()) {
+                cctx.shared().database().checkpointReadLock();
+
+                CacheDataTree.setDataPageScanEnabled(true);
+
+                try {
+                    GridCursor<? extends CacheDataRow> cur = part.dataStore().cursor(cctx.cacheId());
+
+                    while (cur.next()) {
+                        CacheDataRow row = cur.get();
+
+                        assertFalse("Found duplicate for key: " +
+                            row.key().value(cctx.cacheObjectContext(), false), treeLinks.contains(row.link()));
+                    }
+                }
+                finally {
+                    CacheDataTree.setDataPageScanEnabled(false);
+
+                    cctx.shared().database().checkpointReadUnlock();
+                }
+            }
+        }
+        catch (IgniteCheckedException e) {
+            throw new IgniteException(e);
         }
     }
 }

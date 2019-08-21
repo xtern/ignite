@@ -1763,6 +1763,8 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
                 for (DataRowStoreAware row : rows) {
                     row.storeCacheId(cacheIdAwareGrp);
 
+//                    initPred.apply(row);
+
                     if (!initPred.apply(row) && row.value() != null)
                         rowStore.removeRow(row.link(), grp.statisticsHolderData());
                 }
