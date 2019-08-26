@@ -38,6 +38,7 @@ import org.apache.ignite.internal.IgniteInternalFuture;
 import org.apache.ignite.internal.NodeStoppingException;
 import org.apache.ignite.internal.pagemem.wal.record.delta.PartitionMetaStateRecord;
 import org.apache.ignite.internal.processors.affinity.AffinityTopologyVersion;
+import org.apache.ignite.internal.processors.cache.CacheDataStoreEx;
 import org.apache.ignite.internal.processors.cache.CacheGroupContext;
 import org.apache.ignite.internal.processors.cache.GridCacheAdapter;
 import org.apache.ignite.internal.processors.cache.GridCacheConcurrentMapImpl;
@@ -46,6 +47,7 @@ import org.apache.ignite.internal.processors.cache.GridCacheEntryEx;
 import org.apache.ignite.internal.processors.cache.GridCacheMapEntry;
 import org.apache.ignite.internal.processors.cache.GridCacheMapEntryFactory;
 import org.apache.ignite.internal.processors.cache.GridCacheSharedContext;
+import org.apache.ignite.internal.processors.cache.IgniteCacheOffheapManager;
 import org.apache.ignite.internal.processors.cache.KeyCacheObject;
 import org.apache.ignite.internal.processors.cache.distributed.dht.GridDhtCacheEntry;
 import org.apache.ignite.internal.processors.cache.distributed.dht.GridReservable;
@@ -158,7 +160,7 @@ public class GridDhtLocalPartition extends GridCacheConcurrentMapImpl implements
 
     /** */
     @GridToStringExclude
-    private volatile CacheDataStore store;
+    private volatile CacheDataStoreEx store;
 
     /** Set if failed to move partition to RENTING state due to reservations, to be checked when
      * reservation is released. */
@@ -440,6 +442,42 @@ public class GridDhtLocalPartition extends GridCacheConcurrentMapImpl implements
         cleanupRemoveQueue();
 
         rmvQueue.add(new RemovedEntryHolder(cacheId, key, ver, rmvdEntryTtl));
+    }
+
+    /**
+     * Set {@link CacheDataStoreEx.StorageMode} to the corresponding local partition storage.
+     */
+    public void dataStoreMode(CacheDataStoreEx.StorageMode mode) {
+        if (state() != MOVING)
+            return;
+
+        store.storeMode(mode);
+    }
+
+    /**
+     * @return The curretly active storage mode.
+     */
+    public CacheDataStoreEx.StorageMode dataStoreMode() {
+        return store.storeMode();
+    }
+
+//    /**
+//     * @param mode The mode to associate with data storage instance.
+//     * @param storage The cache data storage instance to set to.
+//     */
+//    public void dataStore(CacheDataStoreEx.StorageMode mode, IgniteCacheOffheapManager.CacheDataStore storage) {
+//        if (state() != MOVING)
+//            return;
+//
+//        store.store(mode, storage);
+//    }
+
+    /**
+     * @param mode The storage mode.
+     * @return The storage intance for the given mode.
+     */
+    public IgniteCacheOffheapManager.CacheDataStore dataStore(CacheDataStoreEx.StorageMode mode) {
+        return store.store(mode);
     }
 
     /**

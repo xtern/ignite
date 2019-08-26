@@ -43,6 +43,7 @@ import org.apache.ignite.internal.pagemem.PageIdUtils;
 import org.apache.ignite.internal.pagemem.PageMemory;
 import org.apache.ignite.internal.pagemem.PageSupport;
 import org.apache.ignite.internal.pagemem.store.IgnitePageStoreManager;
+import org.apache.ignite.internal.pagemem.wal.IgnitePartitionCatchUpLog;
 import org.apache.ignite.internal.pagemem.wal.IgniteWriteAheadLogManager;
 import org.apache.ignite.internal.pagemem.wal.WALIterator;
 import org.apache.ignite.internal.pagemem.wal.WALPointer;
@@ -55,6 +56,8 @@ import org.apache.ignite.internal.pagemem.wal.record.delta.MetaPageInitRecord;
 import org.apache.ignite.internal.pagemem.wal.record.delta.MetaPageUpdatePartitionDataRecordV2;
 import org.apache.ignite.internal.pagemem.wal.record.delta.PartitionDestroyRecord;
 import org.apache.ignite.internal.processors.affinity.AffinityTopologyVersion;
+import org.apache.ignite.internal.processors.cache.CacheDataStoreEx;
+import org.apache.ignite.internal.processors.cache.CacheDataStoreExImpl;
 import org.apache.ignite.internal.processors.cache.CacheDiagnosticManager;
 import org.apache.ignite.internal.processors.cache.CacheEntryPredicate;
 import org.apache.ignite.internal.processors.cache.CacheGroupContext;
@@ -62,7 +65,9 @@ import org.apache.ignite.internal.processors.cache.CacheObject;
 import org.apache.ignite.internal.processors.cache.GridCacheContext;
 import org.apache.ignite.internal.processors.cache.GridCacheEntryEx;
 import org.apache.ignite.internal.processors.cache.GridCacheMvccEntryInfo;
+import org.apache.ignite.internal.processors.cache.GridCacheOperation;
 import org.apache.ignite.internal.processors.cache.GridCacheTtlManager;
+import org.apache.ignite.internal.processors.cache.IgniteCacheOffheapManager;
 import org.apache.ignite.internal.processors.cache.IgniteCacheOffheapManagerImpl;
 import org.apache.ignite.internal.processors.cache.KeyCacheObject;
 import org.apache.ignite.internal.processors.cache.PartitionUpdateCounter;
@@ -91,8 +96,10 @@ import org.apache.ignite.internal.processors.cache.persistence.tree.reuse.ReuseL
 import org.apache.ignite.internal.processors.cache.persistence.tree.reuse.ReuseListImpl;
 import org.apache.ignite.internal.processors.cache.persistence.tree.util.PageHandler;
 import org.apache.ignite.internal.processors.cache.persistence.wal.FileWALPointer;
+import org.apache.ignite.internal.processors.cache.persistence.wal.InMemoryPartitionCatchUpLog;
 import org.apache.ignite.internal.processors.cache.tree.CacheDataRowStore;
 import org.apache.ignite.internal.processors.cache.tree.CacheDataTree;
+import org.apache.ignite.internal.processors.cache.tree.DataRow;
 import org.apache.ignite.internal.processors.cache.tree.PendingEntriesTree;
 import org.apache.ignite.internal.processors.cache.tree.PendingRow;
 import org.apache.ignite.internal.processors.cache.tree.mvcc.data.MvccUpdateResult;
@@ -110,6 +117,8 @@ import org.apache.ignite.internal.util.typedef.internal.U;
 import org.apache.ignite.lang.IgniteBiTuple;
 import org.jetbrains.annotations.Nullable;
 
+import static java.util.Optional.ofNullable;
+import static org.apache.ignite.internal.processors.cache.GridCacheOperation.DELETE;
 import static org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtPartitionState.MOVING;
 import static org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtPartitionState.OWNING;
 import static org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtPartitionState.RENTING;
@@ -191,13 +200,19 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
     }
 
     /** {@inheritDoc} */
-    @Override protected CacheDataStore createCacheDataStore0(int p) throws IgniteCheckedException {
+    @Override protected CacheDataStoreEx createCacheDataStore0(int p) throws IgniteCheckedException {
         if (ctx.database() instanceof GridCacheDatabaseSharedManager)
             ((GridCacheDatabaseSharedManager) ctx.database()).cancelOrWaitPartitionDestroy(grp.groupId(), p);
 
         boolean exists = ctx.pageStore() != null && ctx.pageStore().exists(grp.groupId(), p);
 
-        return new GridCacheDataStore(p, exists);
+        IgnitePartitionCatchUpLog catchLog = new InMemoryPartitionCatchUpLog(grp, p);
+
+        return new CacheDataStoreExImpl(grp.shared(),
+            new GridCacheDataStore(p, exists),
+            new ExposureCacheDataStore(grp, p, catchLog),
+            catchLog,
+            log);
     }
 
     /** {@inheritDoc} */
@@ -1059,6 +1074,11 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
 
         return size;
     }
+
+//    @Override public void invoke(GridCacheContext cctx, KeyCacheObject key, GridDhtLocalPartition part,
+//        OffheapInvokeClosure c) throws IgniteCheckedException {
+//
+//    }
 
     /** {@inheritDoc} */
     @Override public void preloadPartition(int part) throws IgniteCheckedException {
@@ -2010,6 +2030,27 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
             }
         }
 
+        @Override public void init(long size, long updCntr, @Nullable Map<Integer, Long> cacheSizes) {
+            try {
+                // TODO add test when the storage is not inited at the current method called
+                CacheDataStore delegate0 = init0(true);
+
+                ofNullable(delegate0)
+                    .orElseThrow(() -> new IgniteCheckedException("The storage must be present at inital phase"));
+
+                assert delegate0.fullSize() == size :
+                    "oldSize=" + delegate0.fullSize() + ", newSize=" + size;
+                assert delegate0.updateCounter() == updCntr :
+                    "oldUpdCntr=" + delegate0.updateCounter() + ", newUpdCntr=" + updCntr;
+                assert (delegate0.cacheSizes() == null && cacheSizes == null) ||
+                    ofNullable(cacheSizes).orElse(new HashMap<>()).equals(delegate0.cacheSizes()) :
+                    "oldCacheSizes=" + delegate0.cacheSizes() + ", newCacheSizes=" + cacheSizes;
+            }
+            catch (IgniteCheckedException e) {
+                throw new IgniteException(e);
+            }
+        }
+
         /** {@inheritDoc} */
         @Override public int partId() {
             return partId;
@@ -2051,7 +2092,13 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
             try {
                 CacheDataStore delegate0 = init0(true);
 
-                return delegate0 == null ? 0 : delegate0.cacheSize(cacheId);
+                //System.out.println("delegate0 " + delegate0.getClass().getName());
+
+                long size = delegate0 == null ? 0 : delegate0.cacheSize(cacheId);
+
+                System.out.println("size: " + size + " class=" + delegate0.getClass().getName());
+
+                return size;
             }
             catch (IgniteCheckedException e) {
                 throw new IgniteException(e);
@@ -2790,4 +2837,116 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
             return null;
         }
     };
+
+    /**
+     *
+     */
+    public static class ExposureCacheDataStore extends AbstractCacheDataStore {
+        /** */
+        private final IgnitePartitionCatchUpLog catchLog;
+
+        /**
+         * @param grp Cache group context.
+         * @param partId Partition id.
+         */
+        public ExposureCacheDataStore(CacheGroupContext grp, int partId, IgnitePartitionCatchUpLog catchLog) {
+            super(grp, partId,treeName(partId) + "-logging");
+
+            this.catchLog = catchLog;
+
+            assert grp.persistenceEnabled();
+        }
+
+        /** {@inheritDoc} */
+        @Override public void init(long size, long updCntr, Map<Integer, Long> cacheSizes) {
+            try {
+                catchLog.clear();
+            }
+            catch (IgniteCheckedException e) {
+                throw new IgniteException(e);
+            }
+
+            super.init(size, updCntr, cacheSizes);
+        }
+
+        /** {@inheritDoc} */
+        @Override public void remove(
+            GridCacheContext cctx,
+            KeyCacheObject key,
+            int partId
+        ) throws IgniteCheckedException {
+            System.out.println(">xxx> " + cctx.localNodeId() + " key = " + key.value(cctx.cacheObjectContext(), false));
+        }
+
+        /** {@inheritDoc} */
+        @Override public CacheDataRow createRow(
+            GridCacheContext cctx,
+            KeyCacheObject key,
+            CacheObject val,
+            GridCacheVersion ver,
+            long expireTime,
+            @Nullable CacheDataRow oldRow
+        ) throws IgniteCheckedException {
+//            assert false : "Shouldn't be here";
+
+            assert oldRow == null;
+
+            DataRow dataRow = makeDataRow(key, val, ver, expireTime, cctx.cacheId());
+
+//            System.out.println(">xxx> catched " + key.value(cctx.cacheObjectContext(), false));
+
+            // Log to the temporary store.
+            catchLog.log(new DataRecord(new DataEntry(
+                cctx.cacheId(),
+                key,
+                val,
+                val == null ? DELETE : GridCacheOperation.UPDATE,
+                null,
+                ver,
+                expireTime,
+                partId,
+                updateCounter()
+            )));
+
+            return dataRow;
+        }
+
+        /** {@inheritDoc} */
+        @Override public void invoke(
+            GridCacheContext cctx,
+            KeyCacheObject key,
+            IgniteCacheOffheapManager.OffheapInvokeClosure clo
+        ) throws IgniteCheckedException {
+            // Assume we've performed an invoke operation on the B+ Tree and find nothing.
+            // Emulating that always inserting/removing a new value.
+            clo.call(null);
+        }
+
+        /** {@inheritDoc} */
+        @Override public CacheDataRow find(GridCacheContext cctx, KeyCacheObject key) throws IgniteCheckedException {
+            return null;
+        }
+
+        /**
+         * @param key Cache key.
+         * @param val Cache value.
+         * @param ver Version.
+         * @param expireTime Expired time.
+         * @param cacheId Cache id.
+         * @return Made data row.
+         */
+        private DataRow makeDataRow(
+            KeyCacheObject key,
+            CacheObject val,
+            GridCacheVersion ver,
+            long expireTime,
+            int cacheId
+        ) {
+            if (key.partition() < 0)
+                key.partition(partId);
+
+            return new DataRow(key, val, ver, partId, expireTime, cacheId);
+        }
+    }
+
 }

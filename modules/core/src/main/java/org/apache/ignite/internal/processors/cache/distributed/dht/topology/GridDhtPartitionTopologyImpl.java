@@ -2368,8 +2368,11 @@ public class GridDhtPartitionTopologyImpl implements GridDhtPartitionTopology {
         if (part.state() != MOVING)
             part.moving();
 
-        if (!clear)
+        if (!clear) {
+            U.dumpStack(ctx.localNodeId() + " >xxx> add historical part=" + p);
+
             exchFut.addHistoryPartition(grp, part.id());
+        }
 
         assert part.state() == MOVING : part;
 
