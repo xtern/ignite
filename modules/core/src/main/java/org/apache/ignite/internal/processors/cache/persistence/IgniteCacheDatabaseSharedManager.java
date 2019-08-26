@@ -967,6 +967,8 @@ public class IgniteCacheDatabaseSharedManager extends GridCacheSharedManagerAdap
         // No-op
     }
 
+    public void
+
     /**
      * Reserve update history for preloading.
      * @param grpId Cache group ID.

@@ -70,7 +70,10 @@ public enum IgniteFeatures {
     CHANNEL_COMMUNICATION(12),
 
     /** Replacing TcpDiscoveryNode field with nodeId field in discovery messages. */
-    TCP_DISCOVERY_MESSAGE_NODE_COMPACT_REPRESENTATION(14);
+    TCP_DISCOVERY_MESSAGE_NODE_COMPACT_REPRESENTATION(14),
+
+    /** */
+    CACHE_PARTITION_FILE_REBALANCE(13);
 
     /**
      * Unique feature identifier.

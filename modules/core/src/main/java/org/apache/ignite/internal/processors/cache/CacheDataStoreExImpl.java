@@ -25,6 +25,7 @@ import javax.cache.processor.EntryProcessor;
 import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.IgniteException;
 import org.apache.ignite.IgniteLogger;
+import org.apache.ignite.internal.IgniteInternalFuture;
 import org.apache.ignite.internal.pagemem.wal.IgnitePartitionCatchUpLog;
 import org.apache.ignite.internal.pagemem.wal.WALIterator;
 import org.apache.ignite.internal.processors.cache.mvcc.MvccSnapshot;
@@ -132,8 +133,6 @@ public class CacheDataStoreExImpl implements CacheDataStoreEx {
                 throw new IgniteException(e);
             }
         }
-
-
     }
 
     private void restoreMemory() throws IgniteCheckedException {

@@ -17,6 +17,7 @@
 
 package org.apache.ignite.internal.processors.cache;
 
+import org.apache.ignite.internal.IgniteInternalFuture;
 import org.apache.ignite.internal.pagemem.wal.IgnitePartitionCatchUpLog;
 
 /**
@@ -39,6 +40,11 @@ public interface CacheDataStoreEx extends IgniteCacheOffheapManager.CacheDataSto
      * @param mode The mode to switch to.
      */
     public void storeMode(StorageMode mode);
+//
+//    /**
+//     * @param mode The mode to switch to.
+//     */
+//    public IgniteInternalFuture<Void> storeModeAsync(StorageMode mode);
 
     /**
      * @return The currently used storage mode. Some of the long-running threads will remain to use
