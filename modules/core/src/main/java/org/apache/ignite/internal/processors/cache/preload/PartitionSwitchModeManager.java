@@ -80,12 +80,12 @@ public class PartitionSwitchModeManager implements DbCheckpointListener {
     }
 
     /** {@inheritDoc} */
-    @Override public void onCheckpointBegin(Context ctx) throws IgniteCheckedException {
+    @Override public void onCheckpointBegin(Context ctx) {
         // No-op.
     }
 
     /** {@inheritDoc} */
-    @Override public void beforeCheckpointBegin(Context ctx) throws IgniteCheckedException {
+    @Override public void beforeCheckpointBegin(Context ctx) {
         // No-op.
     }
 

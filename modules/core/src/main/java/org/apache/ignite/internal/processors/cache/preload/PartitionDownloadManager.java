@@ -1,30 +1,11 @@
 package org.apache.ignite.internal.processors.cache.preload;
 
-import java.io.File;
-import java.io.IOException;
-import java.nio.ByteBuffer;
-import java.util.Map;
-import java.util.Set;
-import java.util.UUID;
-import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.IgniteLogger;
 import org.apache.ignite.internal.GridKernalContext;
-import org.apache.ignite.internal.pagemem.store.PageStore;
-import org.apache.ignite.internal.processors.affinity.AffinityAssignment;
-import org.apache.ignite.internal.processors.affinity.AffinityTopologyVersion;
-import org.apache.ignite.internal.processors.cache.CacheDataStoreEx;
-import org.apache.ignite.internal.processors.cache.CacheGroupContext;
 import org.apache.ignite.internal.processors.cache.GridCacheSharedContext;
-import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtLocalPartition;
-import org.apache.ignite.internal.processors.cache.persistence.file.FilePageStore;
 import org.apache.ignite.internal.processors.cache.persistence.file.FilePageStoreManager;
-import org.apache.ignite.internal.processors.cache.persistence.tree.io.PageIO;
-import org.apache.ignite.internal.util.future.GridFutureAdapter;
 import org.apache.ignite.internal.util.typedef.internal.CU;
 import org.apache.ignite.internal.util.typedef.internal.S;
-import org.apache.ignite.internal.util.typedef.internal.U;
-
-import static org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtPartitionState.MOVING;
 
 public class PartitionDownloadManager {
     /** */
@@ -181,51 +162,52 @@ public class PartitionDownloadManager {
 //        }
 //    }
 
-    /**
-     * @param ftMgr The manager handles channel.
-     * @param store Cache partition store.
-     * @param size Expected size of bytes in channel.
-     * @throws IgniteCheckedException If fails.
-     */
-    private void applyPartitionDeltaPages(
-        FileTransferManager<PartitionFileMetaInfo> ftMgr,
-        PageStore store,
-        long size
-    ) throws IgniteCheckedException {
-        // There is no delta file to apply.
-        if (size <= 0)
-            return;
-
-        ByteBuffer pageBuff = ByteBuffer.allocate(store.getPageSize());
-
-        long readed;
-        long position = 0;
-
-        while ((readed = ftMgr.readInto(pageBuff)) > 0 && position < size) {
-            position += readed;
-
-            pageBuff.flip();
-
-            long pageId = PageIO.getPageId(pageBuff);
-            long pageOffset = store.pageOffset(pageId);
-
-            if (log.isDebugEnabled())
-                log.debug("Page delta [pageId=" + pageId +
-                    ", pageOffset=" + pageOffset +
-                    ", partSize=" + store.size() +
-                    ", skipped=" + (pageOffset >= store.size()) +
-                    ", position=" + position +
-                    ", size=" + size + ']');
-
-            pageBuff.rewind();
-
-            assert pageOffset < store.size();
-
-            store.write(pageId, pageBuff, Integer.MAX_VALUE, false);
-
-            pageBuff.clear();
-        }
-    }
+    // todo
+//    /**
+//     * @param ftMgr The manager handles channel.
+//     * @param store Cache partition store.
+//     * @param size Expected size of bytes in channel.
+//     * @throws IgniteCheckedException If fails.
+//     */
+//    private void applyPartitionDeltaPages(
+//        FileTransferManager<PartitionFileMetaInfo> ftMgr,
+//        PageStore store,
+//        long size
+//    ) throws IgniteCheckedException {
+//        // There is no delta file to apply.
+//        if (size <= 0)
+//            return;
+//
+//        ByteBuffer pageBuff = ByteBuffer.allocate(store.getPageSize());
+//
+//        long readed;
+//        long position = 0;
+//
+//        while ((readed = ftMgr.readInto(pageBuff)) > 0 && position < size) {
+//            position += readed;
+//
+//            pageBuff.flip();
+//
+//            long pageId = PageIO.getPageId(pageBuff);
+//            long pageOffset = store.pageOffset(pageId);
+//
+//            if (log.isDebugEnabled())
+//                log.debug("Page delta [pageId=" + pageId +
+//                    ", pageOffset=" + pageOffset +
+//                    ", partSize=" + store.size() +
+//                    ", skipped=" + (pageOffset >= store.size()) +
+//                    ", position=" + position +
+//                    ", size=" + size + ']');
+//
+//            pageBuff.rewind();
+//
+//            assert pageOffset < store.size();
+//
+//            store.write(pageId, pageBuff, Integer.MAX_VALUE, false);
+//
+//            pageBuff.clear();
+//        }
+//    }
 
     /** {@inheritDoc} */
     @Override public String toString() {
