@@ -403,8 +403,8 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
 
                 final Map<Integer, Set<Integer>> assigns = rebFut.nodeAssigns;
 
-                IgniteInternalFuture<Boolean> switchFut = cctx.preloader()
-                    .switchPartitionsMode(CacheDataStoreEx.StorageMode.LOG_ONLY, assigns);
+                IgniteInternalFuture<Void> switchFut = cctx.preloader()
+                    .changePartitionsModeAsync(CacheDataStoreEx.StorageMode.LOG_ONLY, assigns);
 
                 switchFut.listen(new IgniteInClosure<IgniteInternalFuture>() {
                     @Override public void apply(IgniteInternalFuture fut) {
@@ -537,7 +537,7 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
      * @param parts The set of partitions to change storage mode.
      * @return The future which will be completed when request is done.
      */
-    public IgniteInternalFuture<Boolean> switchPartitionsMode(
+    public IgniteInternalFuture<Void> changePartitionsModeAsync(
         CacheDataStoreEx.StorageMode mode,
         Map<Integer, Set<Integer>> parts
     ) {

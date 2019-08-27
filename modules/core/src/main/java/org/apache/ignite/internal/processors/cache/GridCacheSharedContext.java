@@ -232,7 +232,8 @@ public class GridCacheSharedContext<K, V> {
         Collection<CacheStoreSessionListener> storeSesLsnrs,
         MvccCachingManager mvccCachingMgr,
         DeadlockDetectionManager deadlockDetectionMgr,
-        CacheDiagnosticManager diagnosticMgr
+        CacheDiagnosticManager diagnosticMgr,
+        GridCachePreloadSharedManager preloadMgr
     ) {
         this.kernalCtx = kernalCtx;
 
@@ -255,7 +256,8 @@ public class GridCacheSharedContext<K, V> {
             evictMgr,
             mvccCachingMgr,
             deadlockDetectionMgr,
-            diagnosticMgr
+            diagnosticMgr,
+            preloadMgr
         );
 
         this.storeSesLsnrs = storeSesLsnrs;
@@ -426,7 +428,8 @@ public class GridCacheSharedContext<K, V> {
             evictMgr,
             mvccCachingMgr,
             deadlockDetectionMgr,
-            diagnosticMgr
+            diagnosticMgr,
+            preloadMgr
         );
 
         this.mgrs = mgrs;
@@ -475,7 +478,8 @@ public class GridCacheSharedContext<K, V> {
         PartitionsEvictManager evictMgr,
         MvccCachingManager mvccCachingMgr,
         DeadlockDetectionManager deadlockDetectionMgr,
-        CacheDiagnosticManager diagnosticMgr
+        CacheDiagnosticManager diagnosticMgr,
+        GridCachePreloadSharedManager preloadMgr
     ) {
         this.diagnosticMgr = add(mgrs, diagnosticMgr);
         this.mvccMgr = add(mgrs, mvccMgr);
@@ -495,6 +499,9 @@ public class GridCacheSharedContext<K, V> {
         this.evictMgr = add(mgrs, evictMgr);
         this.mvccCachingMgr = add(mgrs, mvccCachingMgr);
         this.deadlockDetectionMgr = add(mgrs, deadlockDetectionMgr);
+
+        // todo think about usages
+        this.preloadMgr = add(mgrs, preloadMgr);
     }
 
     /**

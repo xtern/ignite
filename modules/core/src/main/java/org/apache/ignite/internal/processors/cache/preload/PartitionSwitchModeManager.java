@@ -3,8 +3,6 @@ package org.apache.ignite.internal.processors.cache.preload;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentLinkedQueue;
-import java.util.function.Predicate;
-import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.IgniteLogger;
 import org.apache.ignite.internal.processors.cache.CacheDataStoreEx;
 import org.apache.ignite.internal.processors.cache.CacheGroupContext;
@@ -75,7 +73,7 @@ public class PartitionSwitchModeManager implements DbCheckpointListener {
                 }
             }
 
-            rq.rqFut.onDone(true);
+            rq.rqFut.onDone();
         }
     }
 
@@ -94,7 +92,7 @@ public class PartitionSwitchModeManager implements DbCheckpointListener {
      * @param parts The set of partitions to change storage mode.
      * @return The future which will be completed when request is done.
      */
-    public GridFutureAdapter<Boolean> offerSwitchRequest(
+    public GridFutureAdapter<Void> offerSwitchRequest(
         CacheDataStoreEx.StorageMode mode,
         Map<Integer, Set<Integer>> parts
     ) {
@@ -120,7 +118,7 @@ public class PartitionSwitchModeManager implements DbCheckpointListener {
         private final Map<Integer, Set<Integer>> parts;
 
         /** The future will be completed when the request has been processed. */
-        private final GridFutureAdapter<Boolean> rqFut = new GridFutureAdapter<>();
+        private final GridFutureAdapter<Void> rqFut = new GridFutureAdapter<>();
 
         /**
          * @param nextMode The mode to set to.

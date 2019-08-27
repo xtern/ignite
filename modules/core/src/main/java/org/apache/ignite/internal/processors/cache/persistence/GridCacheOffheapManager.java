@@ -37,6 +37,7 @@ import org.apache.ignite.IgniteLogger;
 import org.apache.ignite.IgniteSystemProperties;
 import org.apache.ignite.failure.FailureContext;
 import org.apache.ignite.failure.FailureType;
+import org.apache.ignite.internal.metric.IoStatisticsHolder;
 import org.apache.ignite.internal.pagemem.FullPageId;
 import org.apache.ignite.internal.pagemem.PageIdAllocator;
 import org.apache.ignite.internal.pagemem.PageIdUtils;
@@ -79,6 +80,7 @@ import org.apache.ignite.internal.processors.cache.mvcc.MvccSnapshot;
 import org.apache.ignite.internal.processors.cache.mvcc.MvccVersion;
 import org.apache.ignite.internal.processors.cache.persistence.freelist.AbstractFreeList;
 import org.apache.ignite.internal.processors.cache.persistence.freelist.CacheFreeList;
+import org.apache.ignite.internal.processors.cache.persistence.freelist.FreeList;
 import org.apache.ignite.internal.processors.cache.persistence.freelist.SimpleDataRow;
 import org.apache.ignite.internal.processors.cache.persistence.migration.UpgradePendingTreeToPerPartitionTask;
 import org.apache.ignite.internal.processors.cache.persistence.pagemem.PageMemoryEx;
@@ -95,6 +97,7 @@ import org.apache.ignite.internal.processors.cache.persistence.tree.io.PageParti
 import org.apache.ignite.internal.processors.cache.persistence.tree.reuse.ReuseList;
 import org.apache.ignite.internal.processors.cache.persistence.tree.reuse.ReuseListImpl;
 import org.apache.ignite.internal.processors.cache.persistence.tree.util.PageHandler;
+import org.apache.ignite.internal.processors.cache.persistence.tree.util.PageLockListener;
 import org.apache.ignite.internal.processors.cache.persistence.wal.FileWALPointer;
 import org.apache.ignite.internal.processors.cache.persistence.wal.InMemoryPartitionCatchUpLog;
 import org.apache.ignite.internal.processors.cache.tree.CacheDataRowStore;
@@ -2845,6 +2848,8 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
         /** */
         private final IgnitePartitionCatchUpLog catchLog;
 
+        private final NoopRowStore rowStore;
+
         /**
          * @param grp Cache group context.
          * @param partId Partition id.
@@ -2855,6 +2860,15 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
             this.catchLog = catchLog;
 
             assert grp.persistenceEnabled();
+
+            try {
+                this.rowStore = new NoopRowStore(grp, new NoopFreeList(grp.dataRegion()));
+            }
+            catch (IgniteCheckedException e) {
+                throw new RuntimeException(e);
+
+//                rowStore = null;
+            }
         }
 
         /** {@inheritDoc} */
@@ -2946,6 +2960,83 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
                 key.partition(partId);
 
             return new DataRow(key, val, ver, partId, expireTime, cacheId);
+        }
+
+        @Override public RowStore rowStore() {
+            return rowStore;
+        }
+
+        private static class NoopRowStore extends RowStore {
+            /**
+             * @param grp Cache group.
+             * @param freeList Free list.
+             */
+            public NoopRowStore(CacheGroupContext grp, FreeList freeList) {
+                super(grp,freeList);
+            }
+
+
+
+            @Override public void removeRow(long link, IoStatisticsHolder statHolder) throws IgniteCheckedException {
+                // No-op.
+            }
+
+            @Override public void addRow(CacheDataRow row, IoStatisticsHolder statHolder) throws IgniteCheckedException {
+                // No-op.
+            }
+
+            @Override public boolean updateRow(long link, CacheDataRow row,
+                IoStatisticsHolder statHolder) throws IgniteCheckedException {
+                return true;
+            }
+
+            @Override public <S, R> void updateDataRow(long link, PageHandler<S, R> pageHnd, S arg,
+                IoStatisticsHolder statHolder) throws IgniteCheckedException {
+                // No-op.
+            }
+
+            @Override public FreeList freeList() {
+                // todo
+                return super.freeList();
+            }
+
+            @Override public void setRowCacheCleaner(GridQueryRowCacheCleaner rowCacheCleaner) {
+                // No-op.
+            }
+        }
+
+        private static class NoopFreeList extends CacheFreeList {
+            public NoopFreeList(DataRegion region) throws IgniteCheckedException {
+                super(0, null, null, region, null, null, 0, false, null);
+            }
+
+            @Override
+            public void insertDataRow(CacheDataRow row, IoStatisticsHolder statHolder) throws IgniteCheckedException {
+
+            }
+
+            @Override public boolean updateDataRow(long link, CacheDataRow row,
+                IoStatisticsHolder statHolder) throws IgniteCheckedException {
+                return true;
+            }
+
+            @Override
+            public void removeDataRowByLink(long link, IoStatisticsHolder statHolder) throws IgniteCheckedException {
+
+            }
+
+            @Override public void dumpStatistics(IgniteLogger log) {
+
+            }
+
+            @Override public Object updateDataRow(long link, PageHandler pageHnd, Object arg,
+                IoStatisticsHolder statHolder) throws IgniteCheckedException {
+                return null;
+            }
+
+            @Override public void saveMetadata() throws IgniteCheckedException {
+                // No-op.
+            }
         }
     }
 
