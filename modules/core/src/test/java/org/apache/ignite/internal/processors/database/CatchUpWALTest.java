@@ -18,6 +18,7 @@
 package org.apache.ignite.internal.processors.database;
 
 import java.util.Collections;
+import javax.cache.Cache;
 import org.apache.ignite.Ignite;
 import org.apache.ignite.IgniteCache;
 import org.apache.ignite.cache.CacheAtomicityMode;
@@ -128,11 +129,12 @@ public class CatchUpWALTest extends GridCommonAbstractTest {
 
         assert backupPart.state() == MOVING : backupPart.state();
 
-        GridDhtPartitionMap bacupPartsMap = backupNode.cachex(DEFAULT_CACHE_NAME).context().topology().localPartitionMap();
+        GridDhtPartitionMap backupPartsMap =
+            backupNode.cachex(DEFAULT_CACHE_NAME).context().topology().localPartitionMap();
 
         //System.out.println("xxx> " + map.get(0));
 
-        primaryNode.cachex(DEFAULT_CACHE_NAME).context().topology().update(null, bacupPartsMap, true);
+        primaryNode.cachex(DEFAULT_CACHE_NAME).context().topology().update(null, backupPartsMap, true);
 
         GridCachePreloadSharedManager preloader = backupNode.context().cache().context().preloader();
 
@@ -140,6 +142,12 @@ public class CatchUpWALTest extends GridCommonAbstractTest {
             F.asMap(backupCache.context().group().groupId(), Collections.singleton(0)));
 
         fut.get();
+
+        Iterable<Cache.Entry> it = backupCache.localEntries(new CachePeekMode[]{CachePeekMode.ALL});
+
+        for (Cache.Entry e : it) {
+            System.out.println(">xx> " + e.getKey());
+        }
 
         System.out.println(">xxx> parts switched");
 
