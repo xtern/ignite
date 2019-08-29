@@ -546,7 +546,7 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
     }
 
     /**
-     * @param fut Before exchange for the given discovery event.
+     * @param fut Exchange future.
      */
     public void onExchangeDone(GridDhtPartitionsExchangeFuture fut) {
         //

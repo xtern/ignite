@@ -17,7 +17,7 @@
 
 package org.apache.ignite.internal.processors.database;
 
-import java.util.Collections;
+import java.util.concurrent.atomic.AtomicBoolean;
 import javax.cache.Cache;
 import org.apache.ignite.Ignite;
 import org.apache.ignite.IgniteCache;
@@ -31,16 +31,15 @@ import org.apache.ignite.configuration.DataRegionConfiguration;
 import org.apache.ignite.configuration.DataStorageConfiguration;
 import org.apache.ignite.configuration.IgniteConfiguration;
 import org.apache.ignite.internal.IgniteEx;
-import org.apache.ignite.internal.IgniteInternalFuture;
+import org.apache.ignite.internal.IgniteInterruptedCheckedException;
 import org.apache.ignite.internal.processors.affinity.AffinityTopologyVersion;
 import org.apache.ignite.internal.processors.cache.CacheDataStoreEx;
 import org.apache.ignite.internal.processors.cache.IgniteCacheOffheapManager;
 import org.apache.ignite.internal.processors.cache.IgniteInternalCache;
 import org.apache.ignite.internal.processors.cache.distributed.dht.preloader.GridDhtPartitionMap;
 import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtLocalPartition;
-import org.apache.ignite.internal.processors.cache.preload.GridCachePreloadSharedManager;
-import org.apache.ignite.internal.util.typedef.F;
 import org.apache.ignite.internal.util.typedef.internal.U;
+import org.apache.ignite.testframework.GridTestUtils;
 import org.apache.ignite.testframework.junits.common.GridCommonAbstractTest;
 import org.junit.After;
 import org.junit.Before;
@@ -99,7 +98,7 @@ public class CatchUpWALTest extends GridCommonAbstractTest {
     }
 
     @Test
-    public void checkPartitionSwitch() throws Exception {
+    public void checkPartitionSwitchUnderConstantLoad() throws Exception {
         Ignite node = startGrids(2);
 
         node.cluster().active(true);
@@ -110,7 +109,11 @@ public class CatchUpWALTest extends GridCommonAbstractTest {
 
         AffinityTopologyVersion topVer = grid(0).context().cache().context().exchange().readyAffinityVersion();
 
-        fillCache(node, 0, 100);
+//        fillCache(node, 0, 100);
+
+        AtomicBoolean stopper = new AtomicBoolean();
+
+        GridTestUtils.runAsync(new ConstantLoader(stopper, node));
 
         int primaryIdx =
             grid(0).cachex(DEFAULT_CACHE_NAME).context().topology().localPartition(0).primary(topVer) ? 0 : 1;
@@ -132,103 +135,60 @@ public class CatchUpWALTest extends GridCommonAbstractTest {
         GridDhtPartitionMap backupPartsMap =
             backupNode.cachex(DEFAULT_CACHE_NAME).context().topology().localPartitionMap();
 
-        //System.out.println("xxx> " + map.get(0));
-
         primaryNode.cachex(DEFAULT_CACHE_NAME).context().topology().update(null, backupPartsMap, true);
 
-        GridCachePreloadSharedManager preloader = backupNode.context().cache().context().preloader();
+//        GridCachePreloadSharedManager preloader = backupNode.context().cache().context().preloader();
 
-        IgniteInternalFuture fut = preloader.changePartitionsModeAsync(CacheDataStoreEx.StorageMode.READ_ONLY,
-            F.asMap(backupCache.context().group().groupId(), Collections.singleton(0)));
+//        IgniteInternalFuture fut = preloader.changePartitionsModeAsync(CacheDataStoreEx.StorageMode.READ_ONLY,
+//            F.asMap(backupCache.context().group().groupId(), Collections.singleton(0)));
 
-        fut.get();
+        U.sleep(200);
+
+        backupNode.context().cache().context().database().checkpointReadLock();
+
+        try {
+            // Switching mode under the write lock.
+            backupPart.dataStoreMode(CacheDataStoreEx.StorageMode.READ_ONLY);
+        } finally {
+            backupNode.context().cache().context().database().checkpointReadUnlock();
+        }
+
+        System.out.println(">xxx> switched to full");
+
+        U.sleep(200);
+
+        System.out.println("--- local entries: ");
 
         Iterable<Cache.Entry> it = backupCache.localEntries(new CachePeekMode[]{CachePeekMode.ALL});
 
-        for (Cache.Entry e : it) {
+        for (Cache.Entry e : it)
             System.out.println(">xx> " + e.getKey());
+
+        backupNode.context().cache().context().database().checkpointReadLock();
+
+        try {
+            // Switching mode under the write lock.
+            backupPart.dataStoreMode(CacheDataStoreEx.StorageMode.FULL);
+        } finally {
+            backupNode.context().cache().context().database().checkpointReadUnlock();
         }
 
-        System.out.println(">xxx> parts switched");
+        System.out.println("swicth to write");
+
+        U.sleep(200);
+
+        System.out.println("--- local entries2: ");
+
+        it = backupCache.localEntries(new CachePeekMode[]{CachePeekMode.ALL});
+
+        for (Cache.Entry e : it)
+            System.out.println(">xx> " + e.getKey());
+
+        stopper.set(true);
 
         U.sleep(1_000);
 
         System.out.println("Shutting down");
-
-////
-////        primaryNode.cachex(DEFAULT_CACHE_NAME).context().topology().partitionState()
-//
-//        int size = backupCache.localSize(new CachePeekMode[] {CachePeekMode.ALL});
-//
-//        log.info(">xxx> validating initial size");
-//
-//        assertEquals(100, size);
-//
-//        log.info(">xxx> initiating storage swithc to LOG_ONLY");
-//
-//        IgniteCacheOffheapManager.CacheDataStore currStore = backupPart.dataStore(CacheDataStoreEx.StorageMode.FULL);
-//
-//        // Pre-init the new storage.
-//        backupPart.dataStore(CacheDataStoreEx.StorageMode.LOG_ONLY)
-//            .init(currStore.fullSize(), currStore.updateCounter(), currStore.cacheSizes());
-//
-//        backupNode.context().cache().context().database().checkpointReadLock();
-//
-//        try {
-//            // Switching mode under the write lock.
-//            backupPart.dataStoreMode(CacheDataStoreEx.StorageMode.LOG_ONLY);
-//        } finally {
-//            backupNode.context().cache().context().database().checkpointReadUnlock();
-//        }
-//
-//        assert backupPart.state() == MOVING : backupPart.state();
-//
-//        log.info(">xxx> adding more entries to cache");
-//
-//        fillCache(primaryNode, 100, 100);
-//
-////        IgniteCache cache = node.cache(DEFAULT_CACHE_NAME);
-//
-//        for (int i = 0; i < 100; i+=10)
-//            primaryNode.cache(DEFAULT_CACHE_NAME).remove(i);
-//
-//        assert backupPart.state() == MOVING : backupPart.state();
-//
-//        U.sleep(1_000);
-//
-//        log.info(">xxx> switching mode back");
-//
-//        backupNode.context().cache().context().database().checkpointReadLock();
-//
-//        try {
-//            // Switching mode under the write lock.
-//            backupPart.dataStoreMode(CacheDataStoreEx.StorageMode.FULL);
-//        } finally {
-//            backupNode.context().cache().context().database().checkpointReadUnlock();
-//        }
-//
-//        log.info(">xxx> switching state back");
-//
-//        backupPart.own();
-//
-//        bacupPartsMap = backupNode.cachex(DEFAULT_CACHE_NAME).context().topology().localPartitionMap();
-//        //System.out.println("xxx> " + map.get(0));
-//
-//        primaryNode.cachex(DEFAULT_CACHE_NAME).context().topology().update(null, bacupPartsMap, true);
-//
-//        log.info(">xxx> getting size");
-//
-//        size = backupCache.localSize(new CachePeekMode[] {CachePeekMode.ALL});
-//
-//        System.out.println("backup size=" + size);
-//
-//        IgniteInternalCache primaryCache = primaryNode.cachex(DEFAULT_CACHE_NAME);
-//
-//        size = primaryCache.localSize(new CachePeekMode[] {CachePeekMode.ALL});
-//
-//        System.out.println("primary size=" + size);
-
-        //assert size == 200 : size;
     }
 
     /** */
@@ -354,5 +314,38 @@ public class CatchUpWALTest extends GridCommonAbstractTest {
 
         for (int i = off; i < off + cnt; i++)
             cache.put(i, i);
+    }
+
+    private class ConstantLoader implements Runnable {
+
+        private final AtomicBoolean stopper;
+        private final Ignite node;
+
+        public ConstantLoader(AtomicBoolean stopper, Ignite node) {
+            this.stopper = stopper;
+            this.node = node;
+        }
+
+        @Override public void run() {
+            int n = 0;
+            int cnt = 10;
+
+            while (!stopper.get()) {
+                fillCache(node, n, cnt);
+
+                n += cnt;
+
+                try {
+                    U.sleep(100);
+                }
+                catch (IgniteInterruptedCheckedException e) {
+                    e.printStackTrace();
+
+                    break;
+                }
+            }
+
+            System.out.println("finished on " + (n-1));
+        }
     }
 }
