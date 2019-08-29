@@ -1605,19 +1605,9 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
             return pCntr.reserve(delta);
         }
 
-//        /** {@inheritDoc} */
-//        @Override public RowStore rowStore() {
-//            return null;
-//        }
-
         @Override public void updateInitialCounter(long start, long delta) {
             pCntr.update(start, delta);
         }
-
-//        /** {@inheritDoc} */
-//        @Override public PendingEntriesTree pendingTree() {
-//            return null;
-//        }
 
         @Override public void resetUpdateCounter() {
             pCntr.reset();
@@ -1626,11 +1616,6 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
         @Override public PartitionMetaStorage<SimpleDataRow> partStorage() {
             return null;
         }
-
-//        /** {@inheritDoc} */
-//        @Override public void updateInitialCounter(long cntr) {
-//            pCntr.updateInitial(cntr);
-//        }
 
         /** {@inheritDoc} */
         @Override public long getAndIncrementUpdateCounter(long delta) {

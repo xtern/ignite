@@ -27,9 +27,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 import javax.cache.processor.EntryProcessor;
 import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.IgniteException;
@@ -71,6 +74,9 @@ import org.apache.ignite.internal.processors.cache.GridCacheTtlManager;
 import org.apache.ignite.internal.processors.cache.IgniteCacheOffheapManager;
 import org.apache.ignite.internal.processors.cache.IgniteCacheOffheapManagerImpl;
 import org.apache.ignite.internal.processors.cache.KeyCacheObject;
+import org.apache.ignite.internal.processors.cache.PartitionAtomicUpdateCounterImpl;
+import org.apache.ignite.internal.processors.cache.PartitionMvccTxUpdateCounterImpl;
+import org.apache.ignite.internal.processors.cache.PartitionTxUpdateCounterImpl;
 import org.apache.ignite.internal.processors.cache.PartitionUpdateCounter;
 import org.apache.ignite.internal.processors.cache.distributed.dht.preloader.CachePartitionPartialCountersMap;
 import org.apache.ignite.internal.processors.cache.distributed.dht.preloader.IgniteHistoricalIterator;
@@ -213,7 +219,7 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
 
         return new CacheDataStoreExImpl(grp.shared(),
             new GridCacheDataStore(p, exists),
-            new ExposureCacheDataStore(grp, p, catchLog),
+            new ReadOnlyCacheDataStore(p, exists),
             catchLog,
             log);
     }
@@ -1589,12 +1595,349 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
         }
     }
 
+    protected class ReadOnlyCacheDataStore extends GridCacheDataStore {
+        /** Update counter. */
+        private final PartitionUpdateCounter pCntr;
+
+        /** Partition size. */
+        private final AtomicLong storageSize = new AtomicLong();
+
+        /** The map of cache sizes per each cache id. */
+        private final ConcurrentMap<Integer, AtomicLong> cacheSizes = new ConcurrentHashMap<>();
+
+        /**
+         * @param partId Partition.
+         * @param exists {@code True} if store for this index exists.
+         */
+        private ReadOnlyCacheDataStore(int partId, boolean exists) {
+            super(partId, exists);
+
+            try {
+                this.rowStore = new NoopRowStore(grp, new NoopFreeList(grp.dataRegion()));
+            }
+            catch (IgniteCheckedException e) {
+                throw new RuntimeException(e);
+
+//                rowStore = null;
+            }
+
+            if (grp.mvccEnabled())
+                pCntr = new PartitionMvccTxUpdateCounterImpl();
+            else if (grp.hasAtomicCaches() || !grp.persistenceEnabled())
+                pCntr = new PartitionAtomicUpdateCounterImpl();
+            else
+                pCntr = new PartitionTxUpdateCounterImpl();
+        }
+
+        private final NoopRowStore rowStore;
+
+        /** {@inheritDoc} */
+        @Override public void init(long size, long updCntr, Map<Integer, Long> cacheSizes) {
+            pCntr.init(updCntr, null);
+
+            storageSize.set(size);
+
+            this.cacheSizes.clear();
+
+            if (cacheSizes != null) {
+                for (Map.Entry<Integer, Long> e : cacheSizes.entrySet())
+                    this.cacheSizes.put(e.getKey(), new AtomicLong(e.getValue()));
+            }
+        }
+
+        /** {@inheritDoc} */
+        @Override public boolean isEmpty() {
+            return storageSize.get() == 0;
+        }
+
+        /** {@inheritDoc} */
+        @Override public long cacheSize(int cacheId) {
+            if (grp.sharedGroup()) {
+                AtomicLong size = cacheSizes.get(cacheId);
+
+                return size != null ? (int)size.get() : 0;
+            }
+
+            return storageSize.get();
+        }
+
+        /** {@inheritDoc} */
+        @Override public Map<Integer, Long> cacheSizes() {
+            if (!grp.sharedGroup())
+                return null;
+
+            Map<Integer, Long> res = new HashMap<>();
+
+            for (Map.Entry<Integer, AtomicLong> e : cacheSizes.entrySet())
+                res.put(e.getKey(), e.getValue().longValue());
+
+            return res;
+        }
+
+        /** {@inheritDoc} */
+        @Override public long fullSize() {
+            return storageSize.get();
+        }
+
+        /** {@inheritDoc} */
+        @Override public void updateSize(int cacheId, long delta) {
+            storageSize.addAndGet(delta);
+
+            if (grp.sharedGroup()) {
+                AtomicLong size = cacheSizes.get(cacheId);
+
+                if (size == null) {
+                    AtomicLong old = cacheSizes.putIfAbsent(cacheId, size = new AtomicLong());
+
+                    if (old != null)
+                        size = old;
+                }
+
+                size.addAndGet(delta);
+            }
+        }
+
+        /** {@inheritDoc} */
+        @Override public long nextUpdateCounter() {
+            return pCntr.next();
+        }
+
+        /** {@inheritDoc} */
+        @Override public long initialUpdateCounter() {
+            return pCntr.initial();
+        }
+
+        @Override public boolean init() {
+            return false;
+        }
+
+        @Override public long reservedCounter() {
+            return pCntr.reserved();
+        }
+
+        @Override public @Nullable PartitionUpdateCounter partUpdateCounter() {
+            return pCntr;
+        }
+
+        @Override public long reserve(long delta) {
+            return pCntr.reserve(delta);
+        }
+
+        @Override public void updateInitialCounter(long start, long delta) {
+            pCntr.update(start, delta);
+        }
+
+        @Override public void resetUpdateCounter() {
+            pCntr.reset();
+        }
+
+        @Override public PartitionMetaStorage<SimpleDataRow> partStorage() {
+            return null;
+        }
+
+        /** {@inheritDoc} */
+        @Override public long getAndIncrementUpdateCounter(long delta) {
+            return pCntr.reserve(delta);
+        }
+
+        /** {@inheritDoc} */
+        @Override public long updateCounter() {
+            return pCntr.get();
+        }
+
+        /** {@inheritDoc} */
+        @Override public void updateCounter(long val) {
+            try {
+                pCntr.update(val);
+            }
+            catch (IgniteCheckedException e) {
+                throw new IgniteException(e);
+            }
+        }
+
+        /** {@inheritDoc} */
+        @Override public boolean updateCounter(long start, long delta) {
+            return pCntr.update(start, delta);
+        }
+
+        /** {@inheritDoc} */
+        @Override public GridLongList finalizeUpdateCounters() {
+            return pCntr.finalizeUpdateCounters();
+        }
+
+        /** {@inheritDoc} */
+        @Override public void remove(
+            GridCacheContext cctx,
+            KeyCacheObject key,
+            int partId
+        ) throws IgniteCheckedException {
+            System.out.println(">xxx> " + cctx.localNodeId() + " key = " + key.value(cctx.cacheObjectContext(), false));
+        }
+
+        /** {@inheritDoc} */
+        @Override public CacheDataRow createRow(
+            GridCacheContext cctx,
+            KeyCacheObject key,
+            CacheObject val,
+            GridCacheVersion ver,
+            long expireTime,
+            @Nullable CacheDataRow oldRow
+        ) throws IgniteCheckedException {
+//            assert false : "Shouldn't be here";
+
+            assert oldRow == null;
+
+            DataRow dataRow = makeDataRow(key, val, ver, expireTime, cctx.cacheId());
+
+//            System.out.println(">xxx> catched " + key.value(cctx.cacheObjectContext(), false));
+
+            // Log to the temporary store.
+//            catchLog.log(new DataRecord(new DataEntry(
+//                cctx.cacheId(),
+//                key,
+//                val,
+//                val == null ? DELETE : GridCacheOperation.UPDATE,
+//                null,
+//                ver,
+//                expireTime,
+//                partId,
+//                updateCounter()
+//            )));
+
+            return dataRow;
+        }
+
+        @Override public void insertRows(Collection<DataRowCacheAware> rows,
+            IgnitePredicateX<CacheDataRow> initPred) throws IgniteCheckedException {
+
+        }
+
+        /** {@inheritDoc} */
+        @Override public void invoke(
+            GridCacheContext cctx,
+            KeyCacheObject key,
+            IgniteCacheOffheapManager.OffheapInvokeClosure clo
+        ) throws IgniteCheckedException {
+            // Assume we've performed an invoke operation on the B+ Tree and find nothing.
+            // Emulating that always inserting/removing a new value.
+            clo.call(null);
+        }
+
+        /** {@inheritDoc} */
+        @Override public CacheDataRow find(GridCacheContext cctx, KeyCacheObject key) throws IgniteCheckedException {
+            return null;
+        }
+
+        /**
+         * @param key Cache key.
+         * @param val Cache value.
+         * @param ver Version.
+         * @param expireTime Expired time.
+         * @param cacheId Cache id.
+         * @return Made data row.
+         */
+        private DataRow makeDataRow(
+            KeyCacheObject key,
+            CacheObject val,
+            GridCacheVersion ver,
+            long expireTime,
+            int cacheId
+        ) {
+            if (key.partition() < 0)
+                key.partition(partId);
+
+            return new DataRow(key, val, ver, partId, expireTime, cacheId);
+        }
+
+        @Override public RowStore rowStore() {
+            return rowStore;
+        }
+
+        private class NoopRowStore extends RowStore {
+            /**
+             * @param grp Cache group.
+             * @param freeList Free list.
+             */
+            public NoopRowStore(CacheGroupContext grp, FreeList freeList) {
+                super(grp,freeList);
+            }
+
+
+
+            @Override public void removeRow(long link, IoStatisticsHolder statHolder) throws IgniteCheckedException {
+                // No-op.
+            }
+
+            @Override public void addRow(CacheDataRow row, IoStatisticsHolder statHolder) throws IgniteCheckedException {
+                // No-op.
+            }
+
+            @Override public boolean updateRow(long link, CacheDataRow row,
+                IoStatisticsHolder statHolder) throws IgniteCheckedException {
+                return true;
+            }
+
+            @Override public <S, R> void updateDataRow(long link, PageHandler<S, R> pageHnd, S arg,
+                IoStatisticsHolder statHolder) throws IgniteCheckedException {
+                // No-op.
+            }
+
+            @Override public FreeList freeList() {
+                // todo
+                return super.freeList();
+            }
+
+            @Override public void setRowCacheCleaner(GridQueryRowCacheCleaner rowCacheCleaner) {
+                // No-op.
+            }
+        }
+
+        private class NoopFreeList extends CacheFreeList {
+            public NoopFreeList(DataRegion region) throws IgniteCheckedException {
+                super(0, null, null, region, null, null, 0, false, null);
+            }
+
+            @Override
+            public void insertDataRow(CacheDataRow row, IoStatisticsHolder statHolder) throws IgniteCheckedException {
+
+            }
+
+            @Override
+            public void insertDataRows(Collection<CacheDataRow> rows, IoStatisticsHolder statHolder) throws IgniteCheckedException {
+
+            }
+
+            @Override public boolean updateDataRow(long link, CacheDataRow row,
+                IoStatisticsHolder statHolder) throws IgniteCheckedException {
+                return true;
+            }
+
+            @Override
+            public void removeDataRowByLink(long link, IoStatisticsHolder statHolder) throws IgniteCheckedException {
+
+            }
+
+            @Override public void dumpStatistics(IgniteLogger log) {
+
+            }
+
+            @Override public Object updateDataRow(long link, PageHandler pageHnd, Object arg,
+                IoStatisticsHolder statHolder) throws IgniteCheckedException {
+                return null;
+            }
+
+            @Override public void saveMetadata() throws IgniteCheckedException {
+                // No-op.
+            }
+        }
+    }
+
     /**
      *
      */
     public class GridCacheDataStore implements CacheDataStore {
         /** */
-        private final int partId;
+        protected final int partId;
 
         /** */
         private volatile AbstractFreeList<CacheDataRow> freeList;
