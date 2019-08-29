@@ -136,7 +136,7 @@ public class CatchUpWALTest extends GridCommonAbstractTest {
 
         GridCachePreloadSharedManager preloader = backupNode.context().cache().context().preloader();
 
-        IgniteInternalFuture fut = preloader.changePartitionsModeAsync(CacheDataStoreEx.StorageMode.LOG_ONLY,
+        IgniteInternalFuture fut = preloader.changePartitionsModeAsync(CacheDataStoreEx.StorageMode.READ_ONLY,
             F.asMap(backupCache.context().group().groupId(), Collections.singleton(0)));
 
         fut.get();
@@ -276,14 +276,14 @@ public class CatchUpWALTest extends GridCommonAbstractTest {
         IgniteCacheOffheapManager.CacheDataStore currStore = backupPart.dataStore(CacheDataStoreEx.StorageMode.FULL);
 
         // Pre-init the new storage.
-        backupPart.dataStore(CacheDataStoreEx.StorageMode.LOG_ONLY)
+        backupPart.dataStore(CacheDataStoreEx.StorageMode.READ_ONLY)
             .init(currStore.fullSize(), currStore.updateCounter(), currStore.cacheSizes());
 
         backupNode.context().cache().context().database().checkpointReadLock();
 
         try {
             // Switching mode under the write lock.
-            backupPart.dataStoreMode(CacheDataStoreEx.StorageMode.LOG_ONLY);
+            backupPart.dataStoreMode(CacheDataStoreEx.StorageMode.READ_ONLY);
         } finally {
             backupNode.context().cache().context().database().checkpointReadUnlock();
         }

@@ -65,6 +65,6 @@ public interface CacheDataStoreEx extends IgniteCacheOffheapManager.CacheDataSto
         FULL,
 
         /** Proxy will redirect the write operations to the temp-WAL storage. */
-        LOG_ONLY;
+        READ_ONLY;
     }
 }

@@ -27,6 +27,7 @@ import org.apache.ignite.internal.processors.cache.CacheGroupContext;
 import org.apache.ignite.internal.processors.cache.GridCacheSharedManagerAdapter;
 import org.apache.ignite.internal.processors.cache.IgniteCacheOffheapManager;
 import org.apache.ignite.internal.processors.cache.distributed.dht.preloader.GridDhtPartitionDemandMessage;
+import org.apache.ignite.internal.processors.cache.distributed.dht.preloader.GridDhtPartitionsExchangeFuture;
 import org.apache.ignite.internal.processors.cache.distributed.dht.preloader.GridDhtPreloaderAssignments;
 import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtLocalPartition;
 import org.apache.ignite.internal.processors.cache.persistence.GridCacheDatabaseSharedManager;
@@ -212,7 +213,7 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
         if (staleFuture(fut0))
             return;
 
-        assert part.dataStoreMode() == CacheDataStoreEx.StorageMode.LOG_ONLY;
+        assert part.dataStoreMode() == CacheDataStoreEx.StorageMode.READ_ONLY;
 
         IgniteCacheOffheapManager.CacheDataStore store = part.dataStore(CacheDataStoreEx.StorageMode.FULL);
 
@@ -404,7 +405,7 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
                 final Map<Integer, Set<Integer>> assigns = rebFut.nodeAssigns;
 
                 IgniteInternalFuture<Void> switchFut = cctx.preloader()
-                    .changePartitionsModeAsync(CacheDataStoreEx.StorageMode.LOG_ONLY, assigns);
+                    .changePartitionsModeAsync(CacheDataStoreEx.StorageMode.READ_ONLY, assigns);
 
                 switchFut.listen(new IgniteInClosure<IgniteInternalFuture>() {
                     @Override public void apply(IgniteInternalFuture fut) {
@@ -542,6 +543,14 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
         Map<Integer, Set<Integer>> parts
     ) {
         return switchMgr.offerSwitchRequest(mode, parts);
+    }
+
+    /**
+     * @param fut Before exchange for the given discovery event.
+     */
+    public void onExchangeDone(GridDhtPartitionsExchangeFuture fut) {
+        //
+        System.out.println(">xxx> process");
     }
 
     /**

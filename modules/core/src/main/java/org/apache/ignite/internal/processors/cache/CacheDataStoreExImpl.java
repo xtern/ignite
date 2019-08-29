@@ -17,6 +17,7 @@
 
 package org.apache.ignite.internal.processors.cache;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -25,13 +26,13 @@ import javax.cache.processor.EntryProcessor;
 import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.IgniteException;
 import org.apache.ignite.IgniteLogger;
-import org.apache.ignite.internal.IgniteInternalFuture;
 import org.apache.ignite.internal.pagemem.wal.IgnitePartitionCatchUpLog;
 import org.apache.ignite.internal.pagemem.wal.WALIterator;
 import org.apache.ignite.internal.processors.cache.mvcc.MvccSnapshot;
 import org.apache.ignite.internal.processors.cache.mvcc.MvccVersion;
 import org.apache.ignite.internal.processors.cache.persistence.CacheDataRow;
 import org.apache.ignite.internal.processors.cache.persistence.CacheSearchRow;
+import org.apache.ignite.internal.processors.cache.persistence.DataRowCacheAware;
 import org.apache.ignite.internal.processors.cache.persistence.GridCacheDatabaseSharedManager;
 import org.apache.ignite.internal.processors.cache.persistence.RowStore;
 import org.apache.ignite.internal.processors.cache.persistence.freelist.SimpleDataRow;
@@ -43,7 +44,7 @@ import org.apache.ignite.internal.processors.cache.version.GridCacheVersion;
 import org.apache.ignite.internal.processors.query.GridQueryRowCacheCleaner;
 import org.apache.ignite.internal.util.GridLongList;
 import org.apache.ignite.internal.util.lang.GridCursor;
-import org.apache.ignite.internal.util.typedef.internal.U;
+import org.apache.ignite.internal.util.lang.IgnitePredicateX;
 import org.apache.ignite.lang.IgniteBiTuple;
 import org.jetbrains.annotations.Nullable;
 
@@ -93,7 +94,7 @@ public class CacheDataStoreExImpl implements CacheDataStoreEx {
         storageMap.put(StorageMode.FULL, primary);
 
         if (secondary != null)
-            storageMap.put(StorageMode.LOG_ONLY, secondary);
+            storageMap.put(StorageMode.READ_ONLY, secondary);
     }
 
 //    /** {@inheritDoc} */
@@ -194,6 +195,11 @@ public class CacheDataStoreExImpl implements CacheDataStoreEx {
         @Nullable CacheDataRow oldRow
     ) throws IgniteCheckedException {
         return activeStorage().createRow(cctx, key, val, ver, expireTime, oldRow);
+    }
+
+    @Override public void insertRows(Collection<DataRowCacheAware> rows,
+        IgnitePredicateX<CacheDataRow> initPred) throws IgniteCheckedException {
+        activeStorage().insertRows(rows, initPred);
     }
 
     /** {@inheritDoc} */

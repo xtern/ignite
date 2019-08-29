@@ -1442,6 +1442,8 @@ public class GridCacheDatabaseSharedManager extends IgniteCacheDatabaseSharedMan
                 }
             }
         }
+
+//        cctx.preloader().beforeExchange(fut);
     }
 
     /**

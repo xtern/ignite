@@ -2925,6 +2925,11 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
             return dataRow;
         }
 
+        @Override public void insertRows(Collection<DataRowCacheAware> rows,
+            IgnitePredicateX<CacheDataRow> initPred) throws IgniteCheckedException {
+
+        }
+
         /** {@inheritDoc} */
         @Override public void invoke(
             GridCacheContext cctx,
@@ -3012,6 +3017,11 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
 
             @Override
             public void insertDataRow(CacheDataRow row, IoStatisticsHolder statHolder) throws IgniteCheckedException {
+
+            }
+
+            @Override
+            public void insertDataRows(Collection<CacheDataRow> rows, IoStatisticsHolder statHolder) throws IgniteCheckedException {
 
             }
 
