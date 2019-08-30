@@ -17,10 +17,14 @@
 
 package org.apache.ignite.internal.processors.database;
 
+import java.io.File;
+import java.io.IOException;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicBoolean;
 import javax.cache.Cache;
 import org.apache.ignite.Ignite;
 import org.apache.ignite.IgniteCache;
+import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.cache.CacheAtomicityMode;
 import org.apache.ignite.cache.CacheMode;
 import org.apache.ignite.cache.CachePeekMode;
@@ -31,6 +35,7 @@ import org.apache.ignite.configuration.DataRegionConfiguration;
 import org.apache.ignite.configuration.DataStorageConfiguration;
 import org.apache.ignite.configuration.IgniteConfiguration;
 import org.apache.ignite.internal.IgniteEx;
+import org.apache.ignite.internal.IgniteInternalFuture;
 import org.apache.ignite.internal.IgniteInterruptedCheckedException;
 import org.apache.ignite.internal.processors.affinity.AffinityTopologyVersion;
 import org.apache.ignite.internal.processors.cache.CacheDataStoreEx;
@@ -38,6 +43,10 @@ import org.apache.ignite.internal.processors.cache.IgniteCacheOffheapManager;
 import org.apache.ignite.internal.processors.cache.IgniteInternalCache;
 import org.apache.ignite.internal.processors.cache.distributed.dht.preloader.GridDhtPartitionMap;
 import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtLocalPartition;
+import org.apache.ignite.internal.processors.cache.persistence.file.RandomAccessFileIO;
+import org.apache.ignite.internal.processors.cache.persistence.file.RandomAccessFileIOFactory;
+import org.apache.ignite.internal.processors.cache.preload.GridCachePreloadSharedManager;
+import org.apache.ignite.internal.util.io.GridFileUtils;
 import org.apache.ignite.internal.util.typedef.internal.U;
 import org.apache.ignite.testframework.GridTestUtils;
 import org.apache.ignite.testframework.junits.common.GridCommonAbstractTest;
@@ -47,6 +56,8 @@ import org.junit.Ignore;
 import org.junit.Test;
 
 import static org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtPartitionState.MOVING;
+import static org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtPartitionState.RENTING;
+import static org.apache.ignite.internal.processors.cache.persistence.file.FilePageStoreManager.DFLT_STORE_DIR;
 import static org.apache.ignite.internal.util.IgniteUtils.GB;
 
 /**
@@ -94,11 +105,17 @@ public class CatchUpWALTest extends GridCommonAbstractTest {
     public void tearDown() throws Exception {
         stopAllGrids();
 
-        cleanPersistenceDir();
+//        cleanPersistenceDir();
+    }
+
+    private void copyFile(File src, File dst) throws IOException {
+        RandomAccessFileIOFactory ioFactory = new RandomAccessFileIOFactory();
+
+        GridFileUtils.copy(ioFactory, src, ioFactory, dst, Long.MAX_VALUE);
     }
 
     @Test
-    public void checkPartitionSwitchUnderConstantLoad() throws Exception {
+    public void checkInitPartition() throws Exception {
         Ignite node = startGrids(2);
 
         node.cluster().active(true);
@@ -109,7 +126,152 @@ public class CatchUpWALTest extends GridCommonAbstractTest {
 
         AffinityTopologyVersion topVer = grid(0).context().cache().context().exchange().readyAffinityVersion();
 
-//        fillCache(node, 0, 100);
+        AtomicBoolean stopper = new AtomicBoolean();
+
+        fillCache(node, 0, 10);
+
+        int primaryIdx =
+            grid(0).cachex(DEFAULT_CACHE_NAME).context().topology().localPartition(0).primary(topVer) ? 0 : 1;
+
+        int backupIndex = ~primaryIdx & 1;
+
+        IgniteEx primaryNode = grid(primaryIdx);
+        IgniteEx backupNode = grid(backupIndex);
+
+        log.info(">xxx> Primary: " + primaryNode.localNode().id());
+        log.info(">xxx> Backup: " + backupNode.localNode().id());
+
+        // set MOBING
+        IgniteInternalCache backupCache = backupNode.cachex(DEFAULT_CACHE_NAME);
+        GridDhtLocalPartition backupPart = backupCache.context().topology().localPartition(0);
+
+        backupPart.moving();
+
+        assert backupPart.state() == MOVING : backupPart.state();
+
+        GridDhtPartitionMap backupPartsMap =
+            backupNode.cachex(DEFAULT_CACHE_NAME).context().topology().localPartitionMap();
+
+        primaryNode.cachex(DEFAULT_CACHE_NAME).context().topology().update(null, backupPartsMap, true);
+
+        backupNode.context().cache().context().database().checkpointReadLock();
+
+        try {
+            // Switching mode under the write lock.
+            backupPart.dataStoreMode(CacheDataStoreEx.StorageMode.READ_ONLY);
+        } finally {
+            backupNode.context().cache().context().database().checkpointReadUnlock();
+        }
+
+        // simulating that part was downloaded
+        CountDownLatch latch = new CountDownLatch(1);
+
+        backupPart.rent(false);
+
+//        backupPart.clearAsync();
+        backupPart.onClearFinished(f -> {
+            System.out.println("evicted");
+
+            latch.countDown();
+        });
+
+        latch.await();
+
+//        System.out.println(">xxx> destroy");
+//
+//        try {
+//            backupPart.destroy();
+//        } catch (Throwable t) {
+//            t.printStackTrace();
+//
+//            fail("failed");
+//        }
+//
+//        System.out.println("destroyed");
+
+        File destFile = partitionFile(backupNode, DEFAULT_CACHE_NAME, 0, backupIndex);
+        File sourceFile = new File("/home/xtern/check-rebalance/file-rebalance/part-0.bin.tmp");
+
+        System.out.println("source: " + sourceFile.exists() + ": " + sourceFile);
+        System.out.println("  dest: " + destFile.exists() + ": " + destFile);
+
+        try {
+            copyFile(sourceFile, destFile);
+        } catch (Throwable e) {
+            e.printStackTrace();
+
+            fail("copy files");
+        }
+
+        AffinityTopologyVersion affVer = backupCache.context().topology().readyTopologyVersion();
+
+        backupPart = backupCache.context().topology().localPartition(0, affVer, true, true);
+
+        System.out.println(">xxx> init: " + backupPart.state());
+
+        backupPart.dataStore().init();
+
+        System.out.println(">xxx> moving");
+
+//        IgniteInternalFuture<?> fut = backupPart.rent(false);
+//
+//        fut.get();
+//
+//        assert backupPart.state() == RENTING : backupPart.state();
+
+//        backupPart.moving();
+//
+//        backupPart.own();
+
+//        System.out.println("size: " + backupCache.size());
+
+        backupPart.own();
+
+        Iterable<Cache.Entry> it = backupCache.localEntries(new CachePeekMode[]{CachePeekMode.ALL});
+
+        for (Cache.Entry e : it)
+            System.out.println(">xx> " + e.getKey());
+
+//        File destFile = partitionFile(backupNode, DEFAULT_CACHE_NAME, 0);
+
+//        GridCachePreloadSharedManager preloader = backupNode.context().cache().context().preloader();
+//
+//        preloader.reInitialize(p, new File("~/check-rebalance/file-rebalance/part-0.bin.tmp"));
+
+        U.sleep(1_000);
+
+        System.out.println("shutting down");
+
+
+        //backupPart.dataStoreMode
+
+    }
+
+    /**
+     * @param ignite Ignite.
+     * @param cacheName Cache name.
+     * @param partId Partition id.
+     */
+    private static File partitionFile(Ignite ignite, String cacheName, int partId, int backupIndex) throws IgniteCheckedException {
+        File dbDir = U.resolveWorkDirectory(U.defaultWorkDirectory(), DFLT_STORE_DIR, false);
+
+        String nodeName = "node0" + backupIndex + "-" + ignite.cluster().localNode().consistentId();
+
+        return new File(dbDir, String.format("%s/cache-%s/part-%d.bin", nodeName, cacheName, partId));
+    }
+
+    @Test
+    @Ignore
+    public void checkPartitionSwitchUnderConstantLoad() throws Exception {
+        Ignite node = startGrids(2);
+
+        node.cluster().active(true);
+
+        node.cluster().baselineAutoAdjustTimeout(0);
+
+        awaitPartitionMapExchange();
+
+        AffinityTopologyVersion topVer = grid(0).context().cache().context().exchange().readyAffinityVersion();
 
         AtomicBoolean stopper = new AtomicBoolean();
 

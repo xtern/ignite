@@ -1322,6 +1322,7 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
         partStoreLock.lock(p);
 
         try {
+            System.out.println(">>>> remove " + p);
             boolean removed = partDataStores.remove(p, store);
 
             assert removed;

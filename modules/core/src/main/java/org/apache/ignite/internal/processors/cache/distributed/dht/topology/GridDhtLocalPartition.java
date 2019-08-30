@@ -652,7 +652,7 @@ public class GridDhtLocalPartition extends GridCacheConcurrentMapImpl implements
 
             GridDhtPartitionState partState = getPartState(state);
 
-            assert partState == OWNING || partState == RENTING : "Only partitions in state OWNING or RENTING can be moved to MOVING state";
+            assert partState == OWNING || partState == RENTING : "Only partitions in state OWNING or RENTING can be moved to MOVING state: " + partState;
 
             if (casState(state, MOVING))
                 break;
