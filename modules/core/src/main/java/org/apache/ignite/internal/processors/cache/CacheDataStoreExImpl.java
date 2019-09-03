@@ -167,7 +167,7 @@ public class CacheDataStoreExImpl implements CacheDataStoreEx {
     }
 
     @Override public boolean init() {
-        return false;
+        return storageMap.getOrDefault(currMode, storageMap.get(StorageMode.FULL)).init();
     }
 
     /** {@inheritDoc} */
@@ -182,7 +182,8 @@ public class CacheDataStoreExImpl implements CacheDataStoreEx {
 //
     /** {@inheritDoc} */
     @Override public void init(long size, long updCntr, @Nullable Map<Integer, Long> cacheSizes) {
-        throw new UnsupportedOperationException("The init method of proxy storage must never be called.");
+        storageMap.getOrDefault(currMode, storageMap.get(StorageMode.FULL)).init(size, updCntr, cacheSizes);
+        //throw new UnsupportedOperationException("The init method of proxy storage must never be called.");
     }
 
     /** {@inheritDoc} */
@@ -374,6 +375,8 @@ public class CacheDataStoreExImpl implements CacheDataStoreEx {
 
     /** {@inheritDoc} */
     @Override public GridCursor<? extends CacheDataRow> cursor() throws IgniteCheckedException {
+//        IgniteCacheOffheapManager.CacheDataStore s = activeStorage();
+//        System.out.println(">xxx> activeStorage()=" + s.getClass());
         return activeStorage().cursor();
     }
 
@@ -391,6 +394,9 @@ public class CacheDataStoreExImpl implements CacheDataStoreEx {
 
     /** {@inheritDoc} */
     @Override public GridCursor<? extends CacheDataRow> cursor(int cacheId) throws IgniteCheckedException {
+        IgniteCacheOffheapManager.CacheDataStore s = activeStorage();
+        System.out.println(">xxx> activeStorage()=" + s.getClass());
+
         return activeStorage().cursor(cacheId);
     }
 

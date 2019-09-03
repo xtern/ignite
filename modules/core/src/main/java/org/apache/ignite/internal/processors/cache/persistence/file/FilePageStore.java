@@ -163,6 +163,10 @@ public class FilePageStore implements PageStore {
                 if (fileExists == null) {
                     File file = pathProvider.apply().toFile();
 
+                    System.out.println("file : " + file);
+
+                    System.out.println("file exists: " + file.exists());
+
                     fileExists = file.exists() && file.length() > headerSize();
                 }
             }
@@ -339,6 +343,8 @@ public class FilePageStore implements PageStore {
 
     /** {@inheritDoc} */
     @Override public void truncate(int tag) throws StorageException {
+        U.dumpStack(">xxx> truncate");
+
         init();
 
         Path filePath = pathProvider.apply();

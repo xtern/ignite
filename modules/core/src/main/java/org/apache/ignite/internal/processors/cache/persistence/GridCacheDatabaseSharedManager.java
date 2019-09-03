@@ -1867,7 +1867,7 @@ public class GridCacheDatabaseSharedManager extends IgniteCacheDatabaseSharedMan
 
     /** {@inheritDoc} */
     @Override public void releaseHistoryForPreloading() {
-        U.dumpStack(cctx.localNodeId() + " >xxx> release history for preloading");
+//        U.dumpStack(cctx.localNodeId() + " >xxx> release history for preloading");
 
         for (Map.Entry<T2<Integer, Integer>, T2<Long, WALPointer>> e : reservedForPreloading.entrySet()) {
             try {

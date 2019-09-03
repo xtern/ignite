@@ -995,6 +995,8 @@ public class GridDhtPartitionTopologyImpl implements GridDhtPartitionTopology {
                             "[grp=" + grp.cacheOrGroupName() + ", part=" + p + ", topVer=" + topVer +
                             ", this.topVer=" + this.readyTopVer + ']');
 
+                    System.out.println(">xxx> create partition");
+
                     locParts.set(p, loc = partFactory.create(ctx, grp, p));
 
                     this.updateSeq.incrementAndGet();
@@ -1483,6 +1485,8 @@ public class GridDhtPartitionTopologyImpl implements GridDhtPartitionTopology {
                 boolean fullMapUpdated = (node2part == null);
 
                 if (node2part != null) {
+                    System.out.println(">xxx> node2part update ");
+
                     for (GridDhtPartitionMap part : node2part.values()) {
                         GridDhtPartitionMap newPart = partMap.get(part.nodeId());
 

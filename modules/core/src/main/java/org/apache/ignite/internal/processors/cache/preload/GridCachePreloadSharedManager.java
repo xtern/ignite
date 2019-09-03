@@ -270,6 +270,18 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
     }
 
     /**
+     * @param mode The storage mode to switch to.
+     * @param parts The set of partitions to change storage mode.
+     * @return The future which will be completed when request is done.
+     */
+    public IgniteInternalFuture<Void> switchPartitionsMode(
+        CacheDataStoreEx.StorageMode mode,
+        Map<Integer, Set<Integer>> parts
+    ) {
+        return switchMgr.offerSwitchRequest(mode, parts);
+    }
+
+    /**
      * @param assignsMap The map of cache groups assignments to process.
      * @return The map of cache assignments <tt>[group_order, [node, [group_id, partitions]]]</tt>
      */
