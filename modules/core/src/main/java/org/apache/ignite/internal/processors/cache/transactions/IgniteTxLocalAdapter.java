@@ -95,6 +95,7 @@ import static org.apache.ignite.internal.processors.cache.GridCacheOperation.REL
 import static org.apache.ignite.internal.processors.cache.GridCacheOperation.TRANSFORM;
 import static org.apache.ignite.internal.processors.cache.GridCacheOperation.UPDATE;
 import static org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtPartitionState.LOST;
+import static org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtPartitionState.MOVING;
 import static org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtPartitionState.OWNING;
 import static org.apache.ignite.internal.processors.dr.GridDrType.DR_NONE;
 import static org.apache.ignite.internal.processors.dr.GridDrType.DR_PRIMARY;
@@ -492,7 +493,7 @@ public abstract class IgniteTxLocalAdapter extends IgniteTxAdapter implements Ig
                         GridDhtLocalPartition part = top.localPartition(p);
 
                         // LOST state is possible if tx is started over LOST partition.
-                        assert part != null && (part.state() == OWNING || part.state() == LOST):
+                        assert part != null && (part.state() == MOVING || part.state() == OWNING || part.state() == LOST):
                             part == null ?
                                 "map=" + top.partitionMap(false) + ", lost=" + top.lostPartitions() :
                                 "part=" + part.toString();

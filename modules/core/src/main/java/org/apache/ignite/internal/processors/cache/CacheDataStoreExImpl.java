@@ -28,6 +28,7 @@ import org.apache.ignite.IgniteException;
 import org.apache.ignite.IgniteLogger;
 import org.apache.ignite.internal.pagemem.wal.IgnitePartitionCatchUpLog;
 import org.apache.ignite.internal.pagemem.wal.WALIterator;
+import org.apache.ignite.internal.processors.cache.IgniteCacheOffheapManager.CacheDataStore;
 import org.apache.ignite.internal.processors.cache.mvcc.MvccSnapshot;
 import org.apache.ignite.internal.processors.cache.mvcc.MvccVersion;
 import org.apache.ignite.internal.processors.cache.persistence.CacheDataRow;
@@ -68,7 +69,7 @@ public class CacheDataStoreExImpl implements CacheDataStoreEx {
     private final IgnitePartitionCatchUpLog catchLog;
 
     /** The map of all storages per each mode. */
-    private final ConcurrentMap<StorageMode, IgniteCacheOffheapManager.CacheDataStore> storageMap =
+    private final ConcurrentMap<StorageMode, CacheDataStore> storageMap =
         new ConcurrentHashMap<>(StorageMode.values().length);
 
     /** Currently used data storage state. <tt>FULL</tt> mode is used by default. */
@@ -80,8 +81,8 @@ public class CacheDataStoreExImpl implements CacheDataStoreEx {
      */
     public CacheDataStoreExImpl(
         GridCacheSharedContext<?, ?> cctx,
-        IgniteCacheOffheapManager.CacheDataStore primary,
-        IgniteCacheOffheapManager.CacheDataStore secondary,
+        CacheDataStore primary,
+        CacheDataStore secondary,
         IgnitePartitionCatchUpLog catchLog,
         IgniteLogger log
     ) {
@@ -109,7 +110,7 @@ public class CacheDataStoreExImpl implements CacheDataStoreEx {
 //    }
 
     /** {@inheritDoc} */
-    @Override public IgniteCacheOffheapManager.CacheDataStore store(StorageMode mode) {
+    @Override public CacheDataStore store(StorageMode mode) {
         return ofNullable(storageMap.get(mode))
             .orElseThrow(() -> new IgniteException("The storage doesn't exists for given mode: " + mode));
     }
@@ -119,9 +120,17 @@ public class CacheDataStoreExImpl implements CacheDataStoreEx {
         if (mode == currMode)
             return;
 
-        assert cctx.database().checkpointLockIsHeldByThread() :
-            "Changing mode is allowed only under the checkpoint write lock";
+        assert cctx.database().checkpointLockIsHeldByThread() : "Changing mode required checkpoint write lock";
         assert storageMap.get(mode) != null;
+
+        // todo should re-initialize storage
+        if (mode == StorageMode.READ_ONLY) {
+            // todo sync this somehow
+            CacheDataStore curr = store(StorageMode.FULL);
+
+            store(StorageMode.READ_ONLY).init(curr.updateCounter(), curr.fullSize(), curr.cacheSizes());
+//            store(StorageMode.READ_ONLY).updateCounter(curr.updateCounter());
+        }
 
         currMode = mode;
 
@@ -162,7 +171,7 @@ public class CacheDataStoreExImpl implements CacheDataStoreEx {
     /**
      * @return The currently active cache data storage.
      */
-    private IgniteCacheOffheapManager.CacheDataStore activeStorage() {
+    private CacheDataStore activeStorage() {
         return storageMap.getOrDefault(currMode, storageMap.get(StorageMode.FULL));
     }
 
@@ -181,8 +190,8 @@ public class CacheDataStoreExImpl implements CacheDataStoreEx {
 //    }
 //
     /** {@inheritDoc} */
-    @Override public void init(long size, long updCntr, @Nullable Map<Integer, Long> cacheSizes) {
-        storageMap.getOrDefault(currMode, storageMap.get(StorageMode.FULL)).init(size, updCntr, cacheSizes);
+    @Override public void init(long updCntr, long size, @Nullable Map<Integer, Long> cacheSizes) {
+        storageMap.getOrDefault(currMode, storageMap.get(StorageMode.FULL)).init(updCntr, size, cacheSizes);
         //throw new UnsupportedOperationException("The init method of proxy storage must never be called.");
     }
 
@@ -394,7 +403,7 @@ public class CacheDataStoreExImpl implements CacheDataStoreEx {
 
     /** {@inheritDoc} */
     @Override public GridCursor<? extends CacheDataRow> cursor(int cacheId) throws IgniteCheckedException {
-        IgniteCacheOffheapManager.CacheDataStore s = activeStorage();
+        CacheDataStore s = activeStorage();
         System.out.println(">xxx> activeStorage()=" + s.getClass());
 
         return activeStorage().cursor(cacheId);

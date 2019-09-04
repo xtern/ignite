@@ -301,7 +301,7 @@ public class GridDhtLocalPartition extends GridCacheConcurrentMapImpl implements
     /**
      * @return Data store.
      */
-    public CacheDataStore dataStore() {
+    public CacheDataStoreEx dataStore() {
         return store;
     }
 
@@ -449,7 +449,7 @@ public class GridDhtLocalPartition extends GridCacheConcurrentMapImpl implements
      */
     public void dataStoreMode(CacheDataStoreEx.StorageMode mode) {
         if (state() != MOVING)
-            return;
+            throw new IgniteException("Expected MIVING partition, actual state is " + state());
 
         store.storeMode(mode);
     }
