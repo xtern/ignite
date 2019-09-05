@@ -2373,7 +2373,8 @@ public class GridDhtPartitionTopologyImpl implements GridDhtPartitionTopology {
             part.moving();
 
         if (!clear) {
-            U.dumpStack(ctx.localNodeId() + " >xxx> add historical part=" + p);
+            if (!grp.cacheOrGroupName().contains("sys-cache"))
+                U.dumpStack(ctx.localNodeId() + " >xxx> add historical part=" + p);
 
             exchFut.addHistoryPartition(grp, part.id());
         }

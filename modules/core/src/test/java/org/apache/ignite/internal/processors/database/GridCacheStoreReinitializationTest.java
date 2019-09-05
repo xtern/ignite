@@ -19,21 +19,29 @@ package org.apache.ignite.internal.processors.database;
 
 import java.io.File;
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.Iterator;
+import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.apache.ignite.Ignite;
 import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.cache.CacheAtomicityMode;
 import org.apache.ignite.cache.CacheMode;
+import org.apache.ignite.cache.CachePeekMode;
+import org.apache.ignite.cache.CacheRebalanceMode;
+import org.apache.ignite.cache.CacheWriteSynchronizationMode;
 import org.apache.ignite.cache.affinity.rendezvous.RendezvousAffinityFunction;
 import org.apache.ignite.configuration.CacheConfiguration;
 import org.apache.ignite.configuration.DataRegionConfiguration;
 import org.apache.ignite.configuration.DataStorageConfiguration;
 import org.apache.ignite.configuration.IgniteConfiguration;
+import org.apache.ignite.configuration.WALMode;
 import org.apache.ignite.internal.IgniteEx;
 import org.apache.ignite.internal.pagemem.PageIdUtils;
 import org.apache.ignite.internal.processors.affinity.AffinityTopologyVersion;
 import org.apache.ignite.internal.processors.cache.CacheDataStoreEx;
+import org.apache.ignite.internal.processors.cache.GridCacheContext;
 import org.apache.ignite.internal.processors.cache.IgniteInternalCache;
 import org.apache.ignite.internal.processors.cache.distributed.dht.preloader.GridDhtPartitionMap;
 import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtLocalPartition;
@@ -42,11 +50,14 @@ import org.apache.ignite.internal.processors.cache.persistence.file.RandomAccess
 import org.apache.ignite.internal.processors.cache.persistence.pagemem.PageMemoryEx;
 import org.apache.ignite.internal.util.io.GridFileUtils;
 import org.apache.ignite.internal.util.typedef.internal.U;
+import org.apache.ignite.testframework.junits.WithSystemProperty;
 import org.apache.ignite.testframework.junits.common.GridCommonAbstractTest;
 import org.junit.After;
 import org.junit.Before;
+import org.junit.Ignore;
 import org.junit.Test;
 
+import static org.apache.ignite.IgniteSystemProperties.IGNITE_PDS_WAL_REBALANCE_THRESHOLD;
 import static org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtPartitionState.MOVING;
 import static org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtPartitionState.OWNING;
 import static org.apache.ignite.internal.processors.cache.persistence.file.FilePageStoreManager.DFLT_STORE_DIR;
@@ -60,19 +71,24 @@ public class GridCacheStoreReinitializationTest extends GridCommonAbstractTest {
     @Override protected IgniteConfiguration getConfiguration(String igniteInstanceName) throws Exception {
         IgniteConfiguration cfg = super.getConfiguration(igniteInstanceName);
 
+        cfg.setConsistentId(igniteInstanceName);
+
         CacheConfiguration ccfg = new CacheConfiguration(DEFAULT_CACHE_NAME);
 
-        ccfg.setCacheMode(CacheMode.PARTITIONED);
+        ccfg.setCacheMode(CacheMode.REPLICATED);
         ccfg.setAtomicityMode(CacheAtomicityMode.TRANSACTIONAL);
-        ccfg.setBackups(2);
-        ccfg.setAffinity(new RendezvousAffinityFunction(false, 16));
+//        ccfg.setBackups(2);
+        ccfg.setAffinity(new RendezvousAffinityFunction(false, 4));
+        ccfg.setRebalanceMode(CacheRebalanceMode.NONE);
         //ccfg.setBackups(1);
         // todo check different sync modes
-//        ccfg.setWriteSynchronizationMode(CacheWriteSynchronizationMode.FULL_SYNC);
+        ccfg.setWriteSynchronizationMode(CacheWriteSynchronizationMode.FULL_SYNC);
 
         cfg.setCacheConfiguration(ccfg);
 
         DataStorageConfiguration dscfg = new DataStorageConfiguration();
+
+        dscfg.setWalMode(WALMode.LOG_ONLY);
 
         DataRegionConfiguration reg = new DataRegionConfiguration();
 
@@ -81,6 +97,7 @@ public class GridCacheStoreReinitializationTest extends GridCommonAbstractTest {
 
         dscfg.setDefaultDataRegionConfiguration(reg);
         dscfg.setCheckpointFrequency(3_000);
+        dscfg.setMaxWalArchiveSize(10 * GB);
 
         cfg.setDataStorageConfiguration(dscfg);
 
@@ -102,106 +119,200 @@ public class GridCacheStoreReinitializationTest extends GridCommonAbstractTest {
     }
 
     @Test
+    @WithSystemProperty(key = IGNITE_PDS_WAL_REBALANCE_THRESHOLD, value = "0")
     public void checkInitPartition() throws Exception {
-        Ignite node = startGrids(2);
+        IgniteEx node0 = startGrid(0);
 
-        node.cluster().active(true);
+        node0.cluster().active(true);
+        node0.cluster().baselineAutoAdjustTimeout(0);
 
-        node.cluster().baselineAutoAdjustTimeout(0);
+        IgniteEx node1 = startGrid(1);
 
         awaitPartitionMapExchange();
 
-        AffinityTopologyVersion topVer = grid(0).context().cache().context().exchange().readyAffinityVersion();
+        IgniteInternalCache<Integer, Integer> cache = node0.cachex(DEFAULT_CACHE_NAME);
 
-        AtomicBoolean stopper = new AtomicBoolean();
+        for (int i = 0; i < 10_000; i++)
+            cache.put(i, i);
 
-        // todo
-        //fillCache(node, 0, 10);
+        forceCheckpoint(node0);
+        forceCheckpoint(node1);
 
-        int primaryIdx =
-            grid(0).cachex(DEFAULT_CACHE_NAME).context().topology().localPartition(0).primary(topVer) ? 0 : 1;
+        stopGrid(1);
 
-        int backupIdx = ~primaryIdx & 1;
+        U.sleep(5_000);
 
-        IgniteEx primaryNode = grid(primaryIdx);
-        IgniteEx backupNode = grid(backupIdx);
+        for (int i = 10_000; i < 20_000; i++)
+            cache.put(i, i);
 
-        log.info(">xxx> Primary: " + primaryNode.localNode().id());
-        log.info(">xxx> Backup: " + backupNode.localNode().id());
+        forceCheckpoint(node0);
 
-        // set MOBING
-        IgniteInternalCache<Integer, Integer> backupCache = backupNode.cachex(DEFAULT_CACHE_NAME);
-        GridDhtLocalPartition backupPart = backupCache.context().topology().localPartition(0);
+        List<GridDhtLocalPartition> parts = cache.context().topology().localPartitions();
 
-        backupPart.moving();
+        File[] partFiles = new File[parts.size()];
 
-        assert backupPart.state() == MOVING : backupPart.state();
+        for (GridDhtLocalPartition part : parts) {
+            File file = partitionFile(node0, DEFAULT_CACHE_NAME, part.id());
 
-        GridDhtPartitionMap backupPartsMap = backupCache.context().topology().localPartitionMap();
+            System.out.println(">> (exists=" + (file.exists()) +") " + file);
 
-        backupCache.context().topology().update(null, backupPartsMap, true);
+            partFiles[part.id()] = file;
+        }
 
-        backupNode.context().cache().context().database().checkpointReadLock();
+        stopGrid(0);
+
+        // copy files to temp dir
+        String sep = File.separator;
+
+        File tmpDir = new File(System.getProperty("java.io.tmpdir") + sep + getClass().getName());
+
+        if (!tmpDir.exists())
+            tmpDir.mkdirs();
+
+        try {
+            assert tmpDir.isDirectory();
+
+            assert tmpDir.listFiles().length == 0 : "Temp location is not empty: " + tmpDir;
+
+            copyFiles(tmpDir.toString(), partFiles);
+
+            node0 = startGrid(0);
+
+            node0.cluster().active(true);
+            node0.cluster().baselineAutoAdjustTimeout(0);
+
+            cache = node0.cachex(DEFAULT_CACHE_NAME);
+
+            CachePeekMode[] peekAll = new CachePeekMode[] {CachePeekMode.ALL};
+
+            assertEquals(20_000, cache.localSize(peekAll));
+
+//            if (true)
+//                return;
+
+            System.out.println(">>> ");
+            System.out.println(">>> starting 1 ");
+            System.out.println(">>> ");
+
+            node1 = startGrid(1);
+
+            awaitPartitionMapExchange();
+
+            IgniteInternalCache<Object, Object> cache1 = node1.cachex(DEFAULT_CACHE_NAME);
+
+            for (GridDhtLocalPartition p : cache1.context().topology().localPartitions())
+                System.out.println(">xxx> " + p.id() + " " + p.state() + " size = " + p.fullSize());
+
+            GridCacheContext<Object, Object> cctx = cache1.context();
+
+//            Iterator<File> itr = partFiles.iterator();
+
+            for (GridDhtLocalPartition part : cctx.topology().localPartitions())
+                reinit(node1, part, partFiles[part.id()], cctx);
+
+            int total = 21_000;
+
+            for (int i = 20_000; i < total; i++)
+                cache.put(i, i);
+
+            for (GridDhtLocalPartition part : cctx.topology().localPartitions())
+                assertEquals(total / cctx.topology().localPartitions().size(), part.fullSize());
+
+            // todo to be continue
+//            assertEquals(10_000, cache1.localSize(peekAll));
+//
+//            U.sleep(5000);
+//
+//            assertEquals(10_000, cache1.localSize(peekAll));
+        } finally {
+            for (File f : tmpDir.listFiles())
+                f.delete();
+        }
+    }
+
+    private void reinit(IgniteEx node, GridDhtLocalPartition part, File newPartFile, GridCacheContext cctx) throws IgniteCheckedException, InterruptedException, IOException {
+        part.moving();
+
+        assert part.state() == MOVING : part.state();
+
+//        GridDhtPartitionMap backupPartsMap = backupCache.context().topology().localPartitionMap();
+//
+//        backupCache.context().topology().update(null, backupPartsMap, true);
+
+        node.context().cache().context().database().checkpointReadLock();
 
         try {
             // Switching mode under the write lock.
-            backupPart.dataStoreMode(CacheDataStoreEx.StorageMode.READ_ONLY);
+            part.dataStoreMode(CacheDataStoreEx.StorageMode.READ_ONLY);
         } finally {
-            backupNode.context().cache().context().database().checkpointReadUnlock();
+            node.context().cache().context().database().checkpointReadUnlock();
         }
 
-        final int grpId = backupCache.context().group().groupId();
-        final int backupPartId = backupPart.id();
+        final int grpId = part.group().groupId();
+        final int partId = part.id();
 
         // Simulating that part was downloaded and compltely destroying partition.
-        destroyPartition(backupNode, backupPart);
+        destroyPartition(node, part);
 
-        String partPath = System.getProperty("PART_FILE_LOCATION");
+        U.sleep(1_000);
 
-        assert partPath != null : "PART_FILE_LOCATION not defined";
-
-        overwritePartitionFile(backupIdx, backupPartId, partPath);
+        overwritePartitionFile(node, partId, newPartFile);
 
         // Free off-heap.
-        ((PageMemoryEx)backupCache.context().group().dataRegion().pageMemory())
-            .clearAsync((grp, pageId) -> grp == grpId && backupPartId == PageIdUtils.partId(pageId),true)
+        ((PageMemoryEx)part.group().dataRegion().pageMemory())
+            .clearAsync((grp, pageId) -> grp == grpId && partId == PageIdUtils.partId(pageId),true)
             .get();
 
-        AffinityTopologyVersion affVer = backupCache.context().topology().readyTopologyVersion();
+        AffinityTopologyVersion affVer = cctx.topology().readyTopologyVersion();
 
         // Create partition.
-        backupPart = backupCache.context().topology().localPartition(0, affVer, true, true);
+        part = cctx.topology().localPartition(partId, affVer, true, true);
 
-        log.info(">xxx> Re-initialize partition: " + backupPart.state());
+//        if (part.state() != MOVING)
+//            part.moving();
+
+        log.info(">xxx> Re-initialize partition: " + part.state());
 
 //        backupCache.context().shared().pageStore().ensure(backupCache.context().group().groupId(), 0);
 
-        backupPart.dataStore().init(0, 0, null);
+        node.context().cache().context().database().checkpointReadLock();
 
-        System.out.println(">xxx> Own partition: " + backupPartId);
+        try {
+            // Switching mode under the write lock.
+            part.dataStoreMode(CacheDataStoreEx.StorageMode.FULL);
+        } finally {
+            node.context().cache().context().database().checkpointReadUnlock();
+        }
 
-        backupCache.context().topology().own(backupPart);
+        part.dataStore().init(part.reservedCounter(), 0, null);
 
-        assert backupPart.state() == OWNING : backupPart.state();
+//        assert part.reservedCounter() >= part.updateCounter() : "reserved=" + part.reservedCounter() + ", cntr=" + part.updateCounter();
 
-        GridDhtPartitionState partState = backupCache.context().topology().partitionState(backupNode.localNode().id(), backupPartId);
+//        System.out.println(">xxx> lwm =" + part.reservedCounter() + ", hwm = " + part.updateCounter());
 
-        System.out.println(">xxx> node2part state " + partState);
+        System.out.println(">xxx> Own partition: " + partId + " state = " + part.state());
 
-//        System.out.println(">xxx> force checkpoint");
-//        forceCheckpoint();
+        assert cctx.topology().own(part);
 
-        validateLocal(backupCache, 10_000);
+        assert part.state() == OWNING : part.state();
 
-//        File destFile = partitionFile(backupNode, DEFAULT_CACHE_NAME, 0);
+        GridDhtPartitionState partState = cctx.topology().partitionState(node.localNode().id(), partId);
 
-//        GridCachePreloadSharedManager preloader = backupNode.context().cache().context().preloader();
-//
-//        preloader.reInitialize(p, new File("~/check-rebalance/file-rebalance/part-0.bin.tmp"));
+        System.out.println(">xxx> node2part " + partId + " state " + partState + " size = " + part.fullSize());
+    }
 
-        System.out.println("shutting down");
+    private void copyFiles(String dir, File[] files) throws IOException {
+        log.info(">> copy files:");
 
-        U.sleep(1_000);
+        for (File src : files) {
+            File dst = new File(dir + File.separator + src.getName());
+
+            log.info("\n\t\t" + src + "\n\t\t   \\---> " + dst);
+
+            RandomAccessFileIOFactory ioFactory = new RandomAccessFileIOFactory();
+
+            GridFileUtils.copy(ioFactory, src, ioFactory, dst, Long.MAX_VALUE);
+        }
     }
 
     private void validateLocal(IgniteInternalCache<Integer, Integer> cache, int size) throws IgniteCheckedException {
@@ -211,10 +322,8 @@ public class GridCacheStoreReinitializationTest extends GridCommonAbstractTest {
             assertEquals(String.valueOf(i), Integer.valueOf(i), cache.get(i));
     }
 
-    private void overwritePartitionFile(int nodeIdx, int partId, String srcPath) throws IgniteCheckedException, IOException {
-        File dst = partitionFile(grid(nodeIdx), DEFAULT_CACHE_NAME, partId, nodeIdx);
-
-        File src = new File(srcPath);
+    private void overwritePartitionFile(Ignite node, int partId, File src) throws IgniteCheckedException, IOException {
+        File dst = partitionFile(node, DEFAULT_CACHE_NAME, partId);
 
         log.info(">> copy files: \n\t\t" + src + "\n\t\t   \\---> " + dst);
 
@@ -240,11 +349,19 @@ public class GridCacheStoreReinitializationTest extends GridCommonAbstractTest {
      * @param cacheName Cache name.
      * @param partId Partition id.
      */
-    private static File partitionFile(Ignite ignite, String cacheName, int partId, int backupIndex) throws IgniteCheckedException {
+    private File partitionFile(Ignite ignite, String cacheName, int partId) throws IgniteCheckedException {
         File dbDir = U.resolveWorkDirectory(U.defaultWorkDirectory(), DFLT_STORE_DIR, false);
 
-        String nodeName = "node0" + backupIndex + "-" + ignite.cluster().localNode().consistentId();
+        String nodeName = ignite.name().replaceAll("\\.", "_");
 
         return new File(dbDir, String.format("%s/cache-%s/part-%d.bin", nodeName, cacheName, partId));
+//        String nodeName = ignite.cluster().localNode().attribute(ATTR_IGNITE_INSTANCE_NAME);
+//
+//        int idx = getTestIgniteInstanceIndex(nodeName);
+//
+//        //String nodeName = "node0" + backupIndex + "-" + ignite.cluster().localNode().consistentId();
+//
+//        return new File(dbDir, String.format("node%02d-%s/cache-%s/part-%d.bin",
+//            idx, ignite.cluster().localNode().consistentId(), cacheName, partId));
     }
 }

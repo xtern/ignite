@@ -98,7 +98,7 @@ public class RowStore {
      * @throws IgniteCheckedException If failed.
      */
     public void addRow(CacheDataRow row, IoStatisticsHolder statHolder) throws IgniteCheckedException {
-        System.out.println(">xxx> " + ctx.localNodeId() +" put " + row.value().value(coctx, false));
+//        System.out.println(">xxx> " + ctx.localNodeId() +" put " + row.value().value(coctx, false));
 
         if (!persistenceEnabled)
             freeList.insertDataRow(row, statHolder);
@@ -144,7 +144,7 @@ public class RowStore {
         if (rowCacheCleaner != null)
             rowCacheCleaner.remove(link);
 
-        U.dumpStack(ctx.localNodeId() + " update " + row.key().value(coctx, false) + "=" + row.value().value(coctx, false));
+//        U.dumpStack(ctx.localNodeId() + " update " + row.key().value(coctx, false) + "=" + row.value().value(coctx, false));
 
         return freeList.updateDataRow(link, row, statHolder);
     }

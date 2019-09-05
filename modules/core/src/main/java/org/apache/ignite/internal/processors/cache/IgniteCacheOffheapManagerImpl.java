@@ -1513,7 +1513,12 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
         }
 
         @Override public void init(long updCntr, long size, @Nullable Map<Integer, Long> cacheSizes) {
+            assert false;
+
             pCntr.init(updCntr, null);
+
+            if ("default".equalsIgnoreCase(grp.cacheOrGroupName()))
+                System.out.println(ctx.localNodeId() + " initsize " + size);
 
             storageSize.set(size);
 
@@ -1578,6 +1583,9 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
 
         /** {@inheritDoc} */
         @Override public void updateSize(int cacheId, long delta) {
+//            if (CU.cacheId("default") == cacheId)
+//                System.out.println("update delta " + delta + " total = " + storageSize.get());
+
             storageSize.addAndGet(delta);
 
             if (grp.sharedGroup()) {
@@ -3026,6 +3034,9 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
          */
         public void restoreState(long size, long updCntr, @Nullable Map<Integer, Long> cacheSizes, byte[] cntrUpdData) {
             pCntr.init(updCntr, cntrUpdData);
+
+            if (size == 0 && !grp.cacheOrGroupName().contains("sys-cache"))
+                U.dumpStack(">xxx> " + ctx.localNodeId() + " updateSize4 " + size);
 
             storageSize.set(size);
 

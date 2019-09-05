@@ -1639,7 +1639,10 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
 
         /** {@inheritDoc} */
         @Override public synchronized void init(long updCntr, long size, Map<Integer, Long> cacheSizes0) {
-            resetUpdateCounter();
+//            System.out.println(">xxx> resetting update counter " + updCntr);
+            if (updCntr == 0)
+                resetUpdateCounter();
+
             updateCounter(updCntr);
 
 //            storageSize.set(size);
@@ -2247,7 +2250,7 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
 
                     CacheDataRowStore rowStore = new CacheDataRowStore(grp, freeList, partId);
 
-                    System.out.println(">xxx> create tree");
+//                    System.out.println(">xxx> create tree");
 
                     RootPage treeRoot = metas.treeRoot;
 
@@ -2291,7 +2294,7 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
 
                     PageMemoryEx pageMem = (PageMemoryEx)grp.dataRegion().pageMemory();
 
-                    System.out.println(">xxx> create delegate");
+                    System.out.println(">xxx> create delegate CacheDataStoreImpl for " + partId);
 
                     delegate0 = new CacheDataStoreImpl(partId, rowStore, dataTree) {
                         /** {@inheritDoc} */
@@ -2527,9 +2530,11 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
         /** {@inheritDoc} */
         @Override public boolean init() {
             try {
-                U.dumpStack("INITIALIZED");
+                boolean r = init0(true) != null;
 
-                return init0(true) != null;
+                U.dumpStack("INITIALIZED size=" + fullSize());
+
+                return r;
             }
             catch (IgniteCheckedException e) {
                 throw new IgniteException(e);
@@ -2544,6 +2549,9 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
             try {
                 // TODO add test when the storage is not inited at the current method called
                 CacheDataStore delegate0 = init0(false);
+
+                // todo think
+                updateCounter(updateCounter());
 
                 ofNullable(delegate0)
                     .orElseThrow(() -> new IgniteCheckedException("The storage must be present at inital phase"));
