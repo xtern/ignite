@@ -15,7 +15,6 @@
  * limitations under the License.
  */
 
-
 package org.apache.ignite.internal.processors.cache.persistence;
 
 import java.util.Collection;
@@ -63,7 +62,9 @@ import org.jetbrains.annotations.Nullable;
 
 import static org.apache.ignite.IgniteSystemProperties.IGNITE_FAIL_NODE_ON_UNRECOVERABLE_PARTITION_INCONSISTENCY;
 
-/** */
+/**
+ * todo CHECK with flag in gridcachedatastore
+ */
 public class ReadOnlyGridCacheDataStore implements CacheDataStore {
     /** Update counter. */
     private final PartitionUpdateCounter cntr;
@@ -115,40 +116,10 @@ public class ReadOnlyGridCacheDataStore implements CacheDataStore {
 
     /** {@inheritDoc} */
     @Override public synchronized void init(long updCntr) {
-        if (updCntr == 0)
+//        if (updCntr == 0)
             resetUpdateCounter();
 
         updateCounter(updCntr);
-    }
-
-    /** {@inheritDoc} */
-    @Override public int partId() {
-        return delegate.partId();
-    }
-
-    /** {@inheritDoc} */
-    @Override public boolean isEmpty() {
-        return delegate.isEmpty();
-    }
-
-    /** {@inheritDoc} */
-    @Override public long cacheSize(int cacheId) {
-        return delegate.cacheSize(cacheId);
-    }
-
-    /** {@inheritDoc} */
-    @Override public Map<Integer, Long> cacheSizes() {
-        return delegate.cacheSizes();
-    }
-
-    /** {@inheritDoc} */
-    @Override public long fullSize() {
-        return delegate.fullSize();
-    }
-
-    /** {@inheritDoc} */
-    @Override public void updateSize(int cacheId, long delta) {
-        delegate.updateSize(cacheId, delta);
     }
 
     /** {@inheritDoc} */
@@ -161,40 +132,9 @@ public class ReadOnlyGridCacheDataStore implements CacheDataStore {
         return cntr.initial();
     }
 
-    @Override public boolean init() {
-        return delegate.init();
-    }
-
-    @Override public long reservedCounter() {
-        return cntr.reserved();
-    }
-
-    @Override public @Nullable PartitionUpdateCounter partUpdateCounter() {
-        return cntr;
-    }
-
-    @Override public long reserve(long delta) {
-        return cntr.reserve(delta);
-    }
-
-    @Override public void updateInitialCounter(long start, long delta) {
-        cntr.update(start, delta);
-    }
-
-    @Override public void setRowCacheCleaner(GridQueryRowCacheCleaner rowCacheCleaner) {
-        delegate.setRowCacheCleaner(rowCacheCleaner);
-    }
-
-    @Override public PendingEntriesTree pendingTree() {
-        return delegate.pendingTree();
-    }
-
+    /** {@inheritDoc} */
     @Override public void resetUpdateCounter() {
         cntr.reset();
-    }
-
-    @Override public PartitionMetaStorage<SimpleDataRow> partStorage() {
-        return delegate.partStorage();
     }
 
     /** {@inheritDoc} */
@@ -233,8 +173,90 @@ public class ReadOnlyGridCacheDataStore implements CacheDataStore {
         return cntr.finalizeUpdateCounters();
     }
 
+    /** {@inheritDoc} */
+    @Override public int partId() {
+        return delegate.partId();
+    }
+
+    /** {@inheritDoc} */
+    @Override public boolean isEmpty() {
+        return delegate.isEmpty();
+    }
+
+    /** {@inheritDoc} */
+    @Override public long cacheSize(int cacheId) {
+        return delegate.cacheSize(cacheId);
+    }
+
+    /** {@inheritDoc} */
+    @Override public Map<Integer, Long> cacheSizes() {
+        return delegate.cacheSizes();
+    }
+
+    /** {@inheritDoc} */
+    @Override public long fullSize() {
+        return delegate.fullSize();
+    }
+
+    /** {@inheritDoc} */
+    @Override public void updateSize(int cacheId, long delta) {
+        delegate.updateSize(cacheId, delta);
+    }
+
+    /** {@inheritDoc} */
+    @Override public boolean init() {
+        return delegate.init();
+    }
+
+    /** {@inheritDoc} */
+    @Override public long reservedCounter() {
+        return cntr.reserved();
+    }
+
+    /** {@inheritDoc} */
+    @Override public @Nullable PartitionUpdateCounter partUpdateCounter() {
+        return cntr;
+    }
+
+    /** {@inheritDoc} */
+    @Override public long reserve(long delta) {
+        return cntr.reserve(delta);
+    }
+
+    /** {@inheritDoc} */
+    @Override public void updateInitialCounter(long start, long delta) {
+        cntr.update(start, delta);
+    }
+
+    /** {@inheritDoc} */
+    @Override public void setRowCacheCleaner(GridQueryRowCacheCleaner rowCacheCleaner) {
+        delegate.setRowCacheCleaner(rowCacheCleaner);
+    }
+
+    /** {@inheritDoc} */
+    @Override public PendingEntriesTree pendingTree() {
+        return delegate.pendingTree();
+    }
+
+    /** {@inheritDoc} */
+    @Override public PartitionMetaStorage<SimpleDataRow> partStorage() {
+        return delegate.partStorage();
+    }
+
+    /** {@inheritDoc} */
     @Override public void preload() throws IgniteCheckedException {
         delegate.preload();
+    }
+
+    /** {@inheritDoc} */
+    @Override public void invoke(
+        GridCacheContext cctx,
+        KeyCacheObject key,
+        IgniteCacheOffheapManager.OffheapInvokeClosure clo
+    ) throws IgniteCheckedException {
+        // Assume we've performed an invoke operation on the B+ Tree and find nothing.
+        // Emulating that always inserting/removing a new value.
+        clo.call(null);
     }
 
     /** {@inheritDoc} */
@@ -255,106 +277,139 @@ public class ReadOnlyGridCacheDataStore implements CacheDataStore {
         GridCacheVersion ver,
         long expireTime,
         @Nullable CacheDataRow oldRow
-    ) throws IgniteCheckedException {
-//            assert false : "Shouldn't be here";
-
+    ) {
         assert oldRow == null;
 
-        DataRow dataRow = makeDataRow(key, val, ver, expireTime, cctx.cacheId());
+        if (key.partition() < 0)
+            key.partition(delegate.partId());
 
-//            System.out.println(">xxx> catched " + key.value(cctx.cacheObjectContext(), false));
-
-        // Log to the temporary store.
-//            catchLog.log(new DataRecord(new DataEntry(
-//                cctx.cacheId(),
-//                key,
-//                val,
-//                val == null ? DELETE : GridCacheOperation.UPDATE,
-//                null,
-//                ver,
-//                expireTime,
-//                partId,
-//                updateCounter()
-//            )));
-
-        return dataRow;
+        return new DataRow(key, val, ver, delegate.partId(), expireTime, cctx.cacheId());
     }
 
-    @Override public void insertRows(Collection<DataRowCacheAware> rows,
-        IgnitePredicateX<CacheDataRow> initPred) throws IgniteCheckedException {
+    /** {@inheritDoc} */
+    @Override public void insertRows(Collection<DataRowCacheAware> rows, IgnitePredicateX<CacheDataRow> initPred){
         // No-op.
     }
 
-    @Override public int cleanup(GridCacheContext cctx,
-        @Nullable List<MvccLinkAwareSearchRow> cleanupRows) throws IgniteCheckedException {
+    /** {@inheritDoc} */
+    @Override public GridCursor<? extends CacheDataRow> cursor() throws IgniteCheckedException {
+        return delegate.cursor();
+    }
+
+    /** {@inheritDoc} */
+    @Override public GridCursor<? extends CacheDataRow> cursor(Object x) throws IgniteCheckedException {
+        return delegate.cursor(x);
+    }
+
+    /** {@inheritDoc} */
+    @Override public GridCursor<? extends CacheDataRow> cursor(MvccSnapshot mvccSnapshot) throws IgniteCheckedException {
+        return delegate.cursor(mvccSnapshot);
+    }
+
+    /** {@inheritDoc} */
+    @Override public GridCursor<? extends CacheDataRow> cursor(int cacheId) throws IgniteCheckedException {
+        return delegate.cursor(cacheId);
+    }
+
+    /** {@inheritDoc} */
+    @Override public GridCursor<? extends CacheDataRow> cursor(int cacheId,
+        MvccSnapshot mvccSnapshot) throws IgniteCheckedException {
+        return delegate.cursor(cacheId, mvccSnapshot);
+    }
+
+    /** {@inheritDoc} */
+    @Override public GridCursor<? extends CacheDataRow> cursor(int cacheId, KeyCacheObject lower,
+        KeyCacheObject upper) throws IgniteCheckedException {
+        return delegate.cursor(cacheId, lower, upper);
+    }
+
+    /** {@inheritDoc} */
+    @Override public GridCursor<? extends CacheDataRow> cursor(int cacheId, KeyCacheObject lower, KeyCacheObject upper,
+        Object x) throws IgniteCheckedException {
+        return delegate.cursor(cacheId, lower, upper, x);
+    }
+
+    /** {@inheritDoc} */
+    @Override public GridCursor<? extends CacheDataRow> cursor(int cacheId, KeyCacheObject lower, KeyCacheObject upper,
+        Object x, MvccSnapshot snapshot) throws IgniteCheckedException {
+        return delegate.cursor(cacheId, lower, upper, x, snapshot);
+    }
+
+    /** {@inheritDoc} */
+    @Override public void destroy() throws IgniteCheckedException {
+        delegate.destroy();
+    }
+
+    /** {@inheritDoc} */
+    @Override public void clear(int cacheId) throws IgniteCheckedException {
+        delegate.clear(cacheId);
+    }
+
+    /** {@inheritDoc} */
+    @Override public RowStore rowStore() {
+        return rowStore;
+    }
+
+    /** {@inheritDoc} */
+    @Override public void updateTxState(GridCacheContext cctx, CacheSearchRow row) {
+        // No-op.
+    }
+
+    /** {@inheritDoc} */
+    @Override public void update(GridCacheContext cctx, KeyCacheObject key, CacheObject val, GridCacheVersion ver,
+        long expireTime, @Nullable CacheDataRow oldRow) {
+        // No-op.
+    }
+
+    @Override public int cleanup(GridCacheContext cctx, @Nullable List<MvccLinkAwareSearchRow> cleanupRows) {
         // No-op.
         return 0;
     }
 
-    @Override public void updateTxState(GridCacheContext cctx, CacheSearchRow row) throws IgniteCheckedException {
-        // No-op./
-    }
-
-    @Override public void update(GridCacheContext cctx, KeyCacheObject key, CacheObject val, GridCacheVersion ver,
-        long expireTime, @Nullable CacheDataRow oldRow) throws IgniteCheckedException {
-        // No-op.
-    }
-
     @Override public boolean mvccInitialValue(GridCacheContext cctx, KeyCacheObject key, @Nullable CacheObject val,
         GridCacheVersion ver, long expireTime, MvccVersion mvccVer,
-        MvccVersion newMvccVer) throws IgniteCheckedException {
+        MvccVersion newMvccVer) {
         return false;
     }
 
     @Override public boolean mvccApplyHistoryIfAbsent(GridCacheContext cctx, KeyCacheObject key,
-        List<GridCacheMvccEntryInfo> hist) throws IgniteCheckedException {
+        List<GridCacheMvccEntryInfo> hist) {
         return false;
     }
 
     @Override public boolean mvccUpdateRowWithPreloadInfo(GridCacheContext cctx, KeyCacheObject key,
         @Nullable CacheObject val, GridCacheVersion ver, long expireTime, MvccVersion mvccVer,
-        MvccVersion newMvccVer, byte mvccTxState, byte newMvccTxState) throws IgniteCheckedException {
+        MvccVersion newMvccVer, byte mvccTxState, byte newMvccTxState) {
         return false;
     }
 
     @Override public MvccUpdateResult mvccUpdate(GridCacheContext cctx, KeyCacheObject key, CacheObject val,
         GridCacheVersion ver, long expireTime, MvccSnapshot mvccSnapshot, @Nullable CacheEntryPredicate filter,
         EntryProcessor entryProc, Object[] invokeArgs, boolean primary, boolean needHist, boolean noCreate,
-        boolean needOldVal, boolean retVal, boolean keepBinary) throws IgniteCheckedException {
+        boolean needOldVal, boolean retVal, boolean keepBinary) {
+        // todo empty result .. new MvccUpdateDataRow( PREV_NULL);
+        assert false;
+
         return null;
     }
 
-    @Override
-    public MvccUpdateResult mvccRemove(GridCacheContext cctx, KeyCacheObject key, MvccSnapshot mvccSnapshot,
+    @Override public MvccUpdateResult mvccRemove(GridCacheContext cctx, KeyCacheObject key, MvccSnapshot mvccSnapshot,
         @Nullable CacheEntryPredicate filter, boolean primary, boolean needHistory, boolean needOldVal,
         boolean retVal) throws IgniteCheckedException {
-        // todo
-        return null;
+        return delegate.mvccRemove(cctx, key, mvccSnapshot, filter, primary, needHistory, needOldVal, retVal);
     }
 
     @Override public MvccUpdateResult mvccLock(GridCacheContext cctx, KeyCacheObject key,
         MvccSnapshot mvccSnapshot) throws IgniteCheckedException {
-        return null;
+        return delegate.mvccLock(cctx, key, mvccSnapshot);
     }
 
     @Override public void mvccRemoveAll(GridCacheContext cctx, KeyCacheObject key) throws IgniteCheckedException {
-
+        delegate.mvccRemoveAll(cctx, key);
     }
 
-    /** {@inheritDoc} */
-    @Override public void invoke(
-        GridCacheContext cctx,
-        KeyCacheObject key,
-        IgniteCacheOffheapManager.OffheapInvokeClosure clo
-    ) throws IgniteCheckedException {
-        // Assume we've performed an invoke operation on the B+ Tree and find nothing.
-        // Emulating that always inserting/removing a new value.
-        clo.call(null);
-    }
-
-    @Override
-    public void mvccApplyUpdate(GridCacheContext cctx, KeyCacheObject key, CacheObject val, GridCacheVersion ver,
-        long expireTime, MvccVersion mvccVer) throws IgniteCheckedException {
+    @Override public void mvccApplyUpdate(GridCacheContext cctx, KeyCacheObject key, CacheObject val,
+        GridCacheVersion ver, long expireTime, MvccVersion mvccVer) throws IgniteCheckedException {
 
     }
 
@@ -378,81 +433,8 @@ public class ReadOnlyGridCacheDataStore implements CacheDataStore {
         return delegate.mvccFindAllVersions(cctx, key);
     }
 
-    @Override public GridCursor<? extends CacheDataRow> cursor() throws IgniteCheckedException {
-        return delegate.cursor();
-    }
-
-    @Override public GridCursor<? extends CacheDataRow> cursor(Object x) throws IgniteCheckedException {
-        return delegate.cursor(x);
-    }
-
-    @Override
-    public GridCursor<? extends CacheDataRow> cursor(MvccSnapshot mvccSnapshot) throws IgniteCheckedException {
-        return delegate.cursor(mvccSnapshot);
-    }
-
-    @Override public GridCursor<? extends CacheDataRow> cursor(int cacheId) throws IgniteCheckedException {
-        return delegate.cursor(cacheId);
-    }
-
-    @Override public GridCursor<? extends CacheDataRow> cursor(int cacheId,
-        MvccSnapshot mvccSnapshot) throws IgniteCheckedException {
-        return delegate.cursor(cacheId, mvccSnapshot);
-    }
-
-    @Override public GridCursor<? extends CacheDataRow> cursor(int cacheId, KeyCacheObject lower,
-        KeyCacheObject upper) throws IgniteCheckedException {
-        return delegate.cursor(cacheId, lower, upper);
-    }
-
-    @Override
-    public GridCursor<? extends CacheDataRow> cursor(int cacheId, KeyCacheObject lower, KeyCacheObject upper,
-        Object x) throws IgniteCheckedException {
-        return delegate.cursor(cacheId, lower, upper, x);
-    }
-
-    @Override
-    public GridCursor<? extends CacheDataRow> cursor(int cacheId, KeyCacheObject lower, KeyCacheObject upper,
-        Object x, MvccSnapshot snapshot) throws IgniteCheckedException {
-        return delegate.cursor(cacheId, lower, upper, x, snapshot);
-    }
-
-    @Override public void destroy() throws IgniteCheckedException {
-        delegate.destroy();
-    }
-
-    @Override public void clear(int cacheId) throws IgniteCheckedException {
-        delegate.clear(cacheId);
-    }
-
-    /**
-     * @param key Cache key.
-     * @param val Cache value.
-     * @param ver Version.
-     * @param expireTime Expired time.
-     * @param cacheId Cache id.
-     * @return Made data row.
-     */
-    private DataRow makeDataRow(
-        KeyCacheObject key,
-        CacheObject val,
-        GridCacheVersion ver,
-        long expireTime,
-        int cacheId
-    ) {
-        if (key.partition() < 0)
-            key.partition(delegate.partId());
-
-        return new DataRow(key, val, ver, delegate.partId(), expireTime, cacheId);
-    }
-
-    /** {@inheritDoc} */
-    @Override public RowStore rowStore() {
-        return rowStore;
-    }
-
     /** */
-    private class NoopRowStore extends RowStore {
+    private static class NoopRowStore extends RowStore {
         /**
          * @param grp Cache group.
          * @param freeList Free list.
@@ -489,7 +471,7 @@ public class ReadOnlyGridCacheDataStore implements CacheDataStore {
     }
 
     /** */
-    private class NoopFreeList extends CacheFreeList {
+    private static class NoopFreeList extends CacheFreeList {
         /** */
         public NoopFreeList(DataRegion region) throws IgniteCheckedException {
             super(0, null, null, region, null, null, 0, false, null);

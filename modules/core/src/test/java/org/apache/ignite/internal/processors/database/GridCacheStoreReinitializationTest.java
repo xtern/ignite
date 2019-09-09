@@ -20,7 +20,6 @@ package org.apache.ignite.internal.processors.database;
 import java.io.File;
 import java.io.IOException;
 import java.util.List;
-import java.util.concurrent.CountDownLatch;
 import org.apache.ignite.Ignite;
 import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.cache.CacheAtomicityMode;
@@ -35,15 +34,12 @@ import org.apache.ignite.configuration.DataStorageConfiguration;
 import org.apache.ignite.configuration.IgniteConfiguration;
 import org.apache.ignite.configuration.WALMode;
 import org.apache.ignite.internal.IgniteEx;
-import org.apache.ignite.internal.pagemem.PageIdUtils;
-import org.apache.ignite.internal.processors.affinity.AffinityTopologyVersion;
-import org.apache.ignite.internal.processors.cache.CacheDataStoreEx;
 import org.apache.ignite.internal.processors.cache.GridCacheContext;
 import org.apache.ignite.internal.processors.cache.IgniteInternalCache;
 import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtLocalPartition;
-import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtPartitionState;
 import org.apache.ignite.internal.processors.cache.persistence.file.RandomAccessFileIOFactory;
-import org.apache.ignite.internal.processors.cache.persistence.pagemem.PageMemoryEx;
+import org.apache.ignite.internal.processors.cache.preload.GridCachePreloadSharedManager;
+import org.apache.ignite.internal.util.future.GridCompoundFuture;
 import org.apache.ignite.internal.util.io.GridFileUtils;
 import org.apache.ignite.internal.util.typedef.internal.U;
 import org.apache.ignite.testframework.junits.WithSystemProperty;
@@ -53,7 +49,6 @@ import org.junit.Before;
 import org.junit.Test;
 
 import static org.apache.ignite.IgniteSystemProperties.IGNITE_PDS_WAL_REBALANCE_THRESHOLD;
-import static org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtPartitionState.MOVING;
 import static org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtPartitionState.OWNING;
 import static org.apache.ignite.internal.processors.cache.persistence.file.FilePageStoreManager.DFLT_STORE_DIR;
 import static org.apache.ignite.internal.util.IgniteUtils.GB;
@@ -182,11 +177,8 @@ public class GridCacheStoreReinitializationTest extends GridCommonAbstractTest {
 
             assertEquals(20_000, cache.localSize(peekAll));
 
-//            if (true)
-//                return;
-
             System.out.println(">>> ");
-            System.out.println(">>> starting 1 ");
+            System.out.println(">>> starting node 1 ");
             System.out.println(">>> ");
 
             node1 = startGrid(1);
@@ -200,113 +192,75 @@ public class GridCacheStoreReinitializationTest extends GridCommonAbstractTest {
 
             GridCacheContext<Object, Object> cctx = cache1.context();
 
-//            Iterator<File> itr = partFiles.iterator();
+            GridCachePreloadSharedManager preloader = node1.context().cache().context().preloader();
 
-            for (GridDhtLocalPartition part : cctx.topology().localPartitions())
-                reinit(node1, part, partFiles[part.id()], cctx);
+            GridCompoundFuture<Void,Void> fut = new GridCompoundFuture<>();
 
-            int total = 21_000;
+            fut.markInitialized();
+
+            // Destroy partitions.
+            for (GridDhtLocalPartition part : cctx.topology().localPartitions()) {
+                part.moving();
+
+                node1.context().cache().context().database().checkpointReadLock();
+
+                try {
+                    // Switching mode under the write lock.
+                    part.readOnly(true);
+                } finally {
+                    node1.context().cache().context().database().checkpointReadUnlock();
+                }
+
+                // Simulating that part was downloaded and compltely destroying partition.
+                fut.add(preloader.destroyPartition(part));
+            }
+
+            fut.get();
+
+            forceCheckpoint(node1);
+
+            // Init partitions.
+            for (GridDhtLocalPartition part : cctx.topology().localPartitions()) {
+                node1.context().cache().context().database().checkpointReadLock();
+
+                try {
+                    preloader.recoverPartition(part.id(), partFiles[part.id()], cctx);
+                } finally {
+                    node1.context().cache().context().database().checkpointReadUnlock();
+                }
+
+                assertTrue(cctx.topology().own(part));
+
+                assertEquals(OWNING, cctx.topology().partitionState(node1.localNode().id(), part.id()));
+            }
+
+            int total = 44_000;
 
             for (int i = 20_000; i < total; i++)
                 cache.put(i, i);
 
             for (GridDhtLocalPartition part : cctx.topology().localPartitions())
                 assertEquals(total / cctx.topology().localPartitions().size(), part.fullSize());
-
-            // todo to be continue
-//            assertEquals(10_000, cache1.localSize(peekAll));
-//
-//            U.sleep(5000);
-//
-//            assertEquals(10_000, cache1.localSize(peekAll));
         } finally {
             for (File f : tmpDir.listFiles())
                 f.delete();
         }
     }
 
-    private void reinit(IgniteEx node, GridDhtLocalPartition part, File newPartFile, GridCacheContext cctx) throws IgniteCheckedException, InterruptedException, IOException {
-        part.moving();
-
-        assert part.state() == MOVING : part.state();
-
-//        GridDhtPartitionMap backupPartsMap = backupCache.context().topology().localPartitionMap();
-//
-//        backupCache.context().topology().update(null, backupPartsMap, true);
-
-        node.context().cache().context().database().checkpointReadLock();
-
-        try {
-            // Switching mode under the write lock.
-            part.dataStoreMode(CacheDataStoreEx.StorageMode.READ_ONLY);
-        } finally {
-            node.context().cache().context().database().checkpointReadUnlock();
-        }
-
-        final int grpId = part.group().groupId();
-        final int partId = part.id();
-
-        // Simulating that part was downloaded and compltely destroying partition.
-        destroyPartition(node, part);
-
-        U.sleep(1_000);
-
-        overwritePartitionFile(node, partId, newPartFile);
-
-        // Free off-heap.
-        ((PageMemoryEx)part.group().dataRegion().pageMemory())
-            .clearAsync((grp, pageId) -> grp == grpId && partId == PageIdUtils.partId(pageId),true)
-            .get();
-
-        AffinityTopologyVersion affVer = cctx.topology().readyTopologyVersion();
-
-        // Create partition.
-        part = cctx.topology().localPartition(partId, affVer, true, true);
-
-//        if (part.state() != MOVING)
-//            part.moving();
-
-        log.info(">xxx> Re-initialize partition: " + part.state());
-
-//        backupCache.context().shared().pageStore().ensure(backupCache.context().group().groupId(), 0);
-
-        node.context().cache().context().database().checkpointReadLock();
-
-        try {
-            // Switching mode under the write lock.
-            part.dataStoreMode(CacheDataStoreEx.StorageMode.FULL);
-        } finally {
-            node.context().cache().context().database().checkpointReadUnlock();
-        }
-
-        part.dataStore().init(part.reservedCounter());
-
-//        assert part.reservedCounter() >= part.updateCounter() : "reserved=" + part.reservedCounter() + ", cntr=" + part.updateCounter();
-
-//        System.out.println(">xxx> lwm =" + part.reservedCounter() + ", hwm = " + part.updateCounter());
-
-        System.out.println(">xxx> Own partition: " + partId + " state = " + part.state());
-
-        assert cctx.topology().own(part);
-
-        assert part.state() == OWNING : part.state();
-
-        GridDhtPartitionState partState = cctx.topology().partitionState(node.localNode().id(), partId);
-
-        System.out.println(">xxx> node2part " + partId + " state " + partState + " size = " + part.fullSize());
-    }
-
     private void copyFiles(String dir, File[] files) throws IOException {
         log.info(">> copy files:");
 
-        for (File src : files) {
+        for (int i = 0; i < files.length; i++) {
+            File src = files[i];
             File dst = new File(dir + File.separator + src.getName());
 
-            log.info("\n\t\t" + src + "\n\t\t   \\---> " + dst);
+            log.info("\n\t\t" + src + " (size=" + src.length() + ")\n\t\t   \\---> " + dst);
 
             RandomAccessFileIOFactory ioFactory = new RandomAccessFileIOFactory();
 
             GridFileUtils.copy(ioFactory, src, ioFactory, dst, Long.MAX_VALUE);
+
+            files[i] = dst;
         }
     }
 
@@ -318,25 +272,7 @@ public class GridCacheStoreReinitializationTest extends GridCommonAbstractTest {
     }
 
     private void overwritePartitionFile(Ignite node, int partId, File src) throws IgniteCheckedException, IOException {
-        File dst = partitionFile(node, DEFAULT_CACHE_NAME, partId);
 
-        log.info(">> copy files: \n\t\t" + src + "\n\t\t   \\---> " + dst);
-
-        RandomAccessFileIOFactory ioFactory = new RandomAccessFileIOFactory();
-
-        GridFileUtils.copy(ioFactory, src, ioFactory, dst, Long.MAX_VALUE);
-    }
-
-    private void destroyPartition(Ignite node, GridDhtLocalPartition part) throws InterruptedException, IgniteCheckedException {
-        CountDownLatch waitRent = new CountDownLatch(1);
-
-        part.rent(false);
-
-        part.onClearFinished(f -> waitRent.countDown());
-
-        waitRent.await();
-
-        forceCheckpoint(node);
     }
 
     /**

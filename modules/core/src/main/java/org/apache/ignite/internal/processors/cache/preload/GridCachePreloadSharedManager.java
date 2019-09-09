@@ -1,5 +1,8 @@
 package org.apache.ignite.internal.processors.cache.preload;
 
+import java.io.File;
+import java.io.IOException;
+import java.nio.file.Files;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -11,7 +14,6 @@ import java.util.TreeMap;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
-import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.stream.Collectors;
@@ -21,17 +23,20 @@ import org.apache.ignite.cluster.ClusterNode;
 import org.apache.ignite.internal.GridKernalContext;
 import org.apache.ignite.internal.IgniteFeatures;
 import org.apache.ignite.internal.IgniteInternalFuture;
+import org.apache.ignite.internal.pagemem.PageIdUtils;
 import org.apache.ignite.internal.processors.affinity.AffinityAssignment;
 import org.apache.ignite.internal.processors.affinity.AffinityTopologyVersion;
-import org.apache.ignite.internal.processors.cache.CacheDataStoreEx;
 import org.apache.ignite.internal.processors.cache.CacheGroupContext;
+import org.apache.ignite.internal.processors.cache.GridCacheContext;
 import org.apache.ignite.internal.processors.cache.GridCacheSharedManagerAdapter;
-import org.apache.ignite.internal.processors.cache.IgniteCacheOffheapManager;
 import org.apache.ignite.internal.processors.cache.distributed.dht.preloader.GridDhtPartitionDemandMessage;
 import org.apache.ignite.internal.processors.cache.distributed.dht.preloader.GridDhtPartitionsExchangeFuture;
 import org.apache.ignite.internal.processors.cache.distributed.dht.preloader.GridDhtPreloaderAssignments;
 import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtLocalPartition;
 import org.apache.ignite.internal.processors.cache.persistence.GridCacheDatabaseSharedManager;
+import org.apache.ignite.internal.processors.cache.persistence.file.FilePageStore;
+import org.apache.ignite.internal.processors.cache.persistence.file.FilePageStoreManager;
+import org.apache.ignite.internal.processors.cache.persistence.pagemem.PageMemoryEx;
 import org.apache.ignite.internal.util.GridIntList;
 import org.apache.ignite.internal.util.future.GridFutureAdapter;
 import org.apache.ignite.internal.util.lang.IgniteInClosureX;
@@ -41,6 +46,7 @@ import org.apache.ignite.internal.util.typedef.internal.S;
 import org.apache.ignite.internal.util.typedef.internal.U;
 import org.apache.ignite.lang.IgniteInClosure;
 
+import static java.nio.file.StandardCopyOption.REPLACE_EXISTING;
 import static org.apache.ignite.internal.GridTopic.TOPIC_REBALANCE;
 import static org.apache.ignite.internal.managers.communication.GridIoPolicy.SYSTEM_POOL;
 import static org.apache.ignite.internal.processors.cache.GridCacheUtils.UTILITY_CACHE_NAME;
@@ -214,9 +220,10 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
         if (staleFuture(fut0))
             return;
 
-        assert part.dataStoreMode() == CacheDataStoreEx.StorageMode.READ_ONLY;
+        assert part.readOnly();
 
-        IgniteCacheOffheapManager.CacheDataStore store = part.dataStore(CacheDataStoreEx.StorageMode.FULL);
+        // todo
+//        IgniteCacheOffheapManager.CacheDataStore store = part.dataStore(CacheDataStoreEx.StorageMode.FULL);
 
         // todo
 //        // Re-init data store at first access to it.
@@ -270,17 +277,17 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
 //        });
     }
 
-    /**
-     * @param mode The storage mode to switch to.
-     * @param parts The set of partitions to change storage mode.
-     * @return The future which will be completed when request is done.
-     */
-    public IgniteInternalFuture<Void> switchPartitionsMode(
-        CacheDataStoreEx.StorageMode mode,
-        Map<Integer, Set<Integer>> parts
-    ) {
-        return switchMgr.offerSwitchRequest(mode, parts);
-    }
+//    /**
+//     * @param mode The storage mode to switch to.
+//     * @param parts The set of partitions to change storage mode.
+//     * @return The future which will be completed when request is done.
+//     */
+//    public IgniteInternalFuture<Void> switchPartitionsMode(
+//        CacheDataStoreEx.StorageMode mode,
+//        Map<Integer, Set<Integer>> parts
+//    ) {
+//        return switchMgr.offerSwitchRequest(mode, parts);
+//    }
 
     /**
      * @param assignsMap The map of cache groups assignments to process.
@@ -417,8 +424,7 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
 
                 final Map<Integer, Set<Integer>> assigns = rebFut.nodeAssigns;
 
-                IgniteInternalFuture<Void> switchFut = cctx.preloader()
-                    .changePartitionsModeAsync(CacheDataStoreEx.StorageMode.READ_ONLY, assigns);
+                IgniteInternalFuture<Void> switchFut = cctx.preloader().changePartitionsModeAsync(true, assigns);
 
                 switchFut.listen(new IgniteInClosure<IgniteInternalFuture>() {
                     @Override public void apply(IgniteInternalFuture fut) {
@@ -547,34 +553,73 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
     }
 
     /**
-     * @param mode The storage mode to switch to.
+     * @param readOnly The storage mode to switch to.
      * @param parts The set of partitions to change storage mode.
      * @return The future which will be completed when request is done.
      */
     public IgniteInternalFuture<Void> changePartitionsModeAsync(
-        CacheDataStoreEx.StorageMode mode,
+        boolean readOnly,
         Map<Integer, Set<Integer>> parts
     ) {
-        return switchMgr.offerSwitchRequest(mode, parts);
+        return switchMgr.offerSwitchRequest(readOnly, parts);
     }
 
     /**
      * @param fut Exchange future.
      */
     public void onExchangeDone(GridDhtPartitionsExchangeFuture fut) {
-        // todo
+        // todo switch to read-only mode after first exchange
         System.out.println(">xxx> process");
     }
 
-    //todo
-    public void destroyPartition(GridDhtLocalPartition part) {
-        CountDownLatch waitRent = new CountDownLatch(1);
+    // todo destroy partition but don't change state in node2part map
+    public IgniteInternalFuture<Void> destroyPartition(GridDhtLocalPartition part) {
+        GridFutureAdapter<Void> destroyFut = new GridFutureAdapter<>();
 
-        part.rent(false);
+        part.clearAsync();
 
-        part.onClearFinished(f -> waitRent.countDown());
+        part.onClearFinished(c -> {
+            try {
+                part.group().offheap().destroyCacheDataStore(part.dataStore());
+            } catch (IgniteCheckedException e) {
+                destroyFut.onDone(e);
+            }
 
-        U.awaitQuiet(waitRent);
+            ((PageMemoryEx)part.group().dataRegion().pageMemory())
+                .clearAsync(
+                    (grpId, pageId) ->
+                        grpId == part.group().groupId() && part.id() == PageIdUtils.partId(pageId), true)
+                .listen(c0 -> destroyFut.onDone());
+        });
+
+        return destroyFut;
+    }
+
+    // on checkpoint write lock
+    public void recoverPartition(int partId, File fsPartFile, GridCacheContext cctx) throws IgniteCheckedException {
+        AffinityTopologyVersion affVer = cctx.topology().readyTopologyVersion();
+
+        // Create partition.
+        GridDhtLocalPartition part = cctx.topology().localPartition(partId, affVer, true, true);
+
+        FilePageStore store =
+            (FilePageStore)((FilePageStoreManager)cctx.group().shared().pageStore()).getStore(cctx.groupId(), partId);
+
+        File dst = new File(store.getFileAbsolutePath());
+
+        log.info("Moving downloaded partition file: " + fsPartFile + " --> " + dst);
+
+        try {
+            Files.move(fsPartFile.toPath(), dst.toPath(), REPLACE_EXISTING);
+        }
+        catch (IOException e) {
+            throw new IgniteCheckedException("Unable to move file from " + fsPartFile + " to " + dst, e);
+        }
+
+        part.readOnly(false);
+
+        // todo update counter value is ignored
+        part.dataStore().init(0);
     }
 
     /**

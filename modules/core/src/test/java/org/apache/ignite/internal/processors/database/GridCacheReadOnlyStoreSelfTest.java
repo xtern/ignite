@@ -39,7 +39,6 @@ import org.apache.ignite.configuration.IgniteConfiguration;
 import org.apache.ignite.internal.IgniteEx;
 import org.apache.ignite.internal.IgniteInternalFuture;
 import org.apache.ignite.internal.processors.affinity.AffinityTopologyVersion;
-import org.apache.ignite.internal.processors.cache.CacheDataStoreEx;
 import org.apache.ignite.internal.processors.cache.IgniteInternalCache;
 import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtInvalidPartitionException;
 import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtLocalPartition;
@@ -150,12 +149,12 @@ public class GridCacheReadOnlyStoreSelfTest extends GridCommonAbstractTest {
         node.context().cache().context().database().checkpointReadLock();
 
         try {
-            part.dataStoreMode(CacheDataStoreEx.StorageMode.READ_ONLY);
+            part.readOnly(true);
         } finally {
             node.context().cache().context().database().checkpointReadUnlock();
         }
 
-        assert cache.context().topology().localPartition(evictedId).dataStore().storeMode() == CacheDataStoreEx.StorageMode.READ_ONLY;
+        assert cache.context().topology().localPartition(evictedId).dataStore().readOnly();
 
         // generate keys
         Set<Integer> keys = new HashSet<>();
@@ -239,7 +238,7 @@ public class GridCacheReadOnlyStoreSelfTest extends GridCommonAbstractTest {
 
         try {
             // Switching mode under the write lock.
-            backupPart.dataStoreMode(CacheDataStoreEx.StorageMode.READ_ONLY);
+            backupPart.readOnly(true);
 
             rmv.set(true);
         } finally {
@@ -255,7 +254,7 @@ public class GridCacheReadOnlyStoreSelfTest extends GridCommonAbstractTest {
 
             try {
                 // Switching mode under the write lock.
-                backupPart.dataStoreMode(CacheDataStoreEx.StorageMode.FULL);
+                backupPart.readOnly(false);
 
                 rmv.set(false);
             }

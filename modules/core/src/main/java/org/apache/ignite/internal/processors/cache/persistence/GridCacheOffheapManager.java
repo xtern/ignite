@@ -43,7 +43,6 @@ import org.apache.ignite.internal.pagemem.PageIdUtils;
 import org.apache.ignite.internal.pagemem.PageMemory;
 import org.apache.ignite.internal.pagemem.PageSupport;
 import org.apache.ignite.internal.pagemem.store.IgnitePageStoreManager;
-import org.apache.ignite.internal.pagemem.wal.IgnitePartitionCatchUpLog;
 import org.apache.ignite.internal.pagemem.wal.IgniteWriteAheadLogManager;
 import org.apache.ignite.internal.pagemem.wal.WALIterator;
 import org.apache.ignite.internal.pagemem.wal.WALPointer;
@@ -66,7 +65,6 @@ import org.apache.ignite.internal.processors.cache.GridCacheContext;
 import org.apache.ignite.internal.processors.cache.GridCacheEntryEx;
 import org.apache.ignite.internal.processors.cache.GridCacheMvccEntryInfo;
 import org.apache.ignite.internal.processors.cache.GridCacheTtlManager;
-import org.apache.ignite.internal.processors.cache.IgniteCacheOffheapManager.CacheDataStore;
 import org.apache.ignite.internal.processors.cache.IgniteCacheOffheapManagerImpl;
 import org.apache.ignite.internal.processors.cache.KeyCacheObject;
 import org.apache.ignite.internal.processors.cache.PartitionUpdateCounter;
@@ -95,7 +93,6 @@ import org.apache.ignite.internal.processors.cache.persistence.tree.reuse.ReuseL
 import org.apache.ignite.internal.processors.cache.persistence.tree.reuse.ReuseListImpl;
 import org.apache.ignite.internal.processors.cache.persistence.tree.util.PageHandler;
 import org.apache.ignite.internal.processors.cache.persistence.wal.FileWALPointer;
-import org.apache.ignite.internal.processors.cache.persistence.wal.InMemoryPartitionCatchUpLog;
 import org.apache.ignite.internal.processors.cache.tree.CacheDataRowStore;
 import org.apache.ignite.internal.processors.cache.tree.CacheDataTree;
 import org.apache.ignite.internal.processors.cache.tree.PendingEntriesTree;
@@ -203,21 +200,12 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
         if (ctx.database() instanceof GridCacheDatabaseSharedManager)
             ((GridCacheDatabaseSharedManager) ctx.database()).cancelOrWaitPartitionDestroy(grp.groupId(), p);
 
-        //ctx.pageStore().ensure(grp.groupId(), p);
-
         boolean exists = ctx.pageStore() != null && ctx.pageStore().exists(grp.groupId(), p);
 
-        System.out.println(">xxx> exists = " + exists + ", pagStore " + (ctx.pageStore() != null));
+        CacheDataStore store = new GridCacheDataStore(p, exists);
+        CacheDataStore readOnlyStore = new ReadOnlyGridCacheDataStore(grp, ctx, store);
 
-        IgnitePartitionCatchUpLog catchLog = new InMemoryPartitionCatchUpLog(grp, p);
-
-        GridCacheDataStore store = new GridCacheDataStore(p, exists);
-
-        return new CacheDataStoreExImpl(grp.shared(),
-            store,
-            new ReadOnlyGridCacheDataStore(grp, ctx, store),
-            catchLog,
-            log);
+        return new CacheDataStoreExImpl(grp.shared(), store, readOnlyStore, log);
     }
 
     /** {@inheritDoc} */
@@ -311,8 +299,7 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
         boolean beforeDestroy,
         boolean needSnapshot
     ) throws IgniteCheckedException {
-        if (store instanceof CacheDataStoreEx &&
-            ((CacheDataStoreEx)store).storeMode() == CacheDataStoreEx.StorageMode.READ_ONLY)
+        if (store instanceof CacheDataStoreEx && ((CacheDataStoreEx)store).readOnly())
             return;
 
         RowStore rowStore0 = store.rowStore();

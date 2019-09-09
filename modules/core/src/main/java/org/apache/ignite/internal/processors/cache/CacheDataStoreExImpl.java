@@ -20,21 +20,16 @@ package org.apache.ignite.internal.processors.cache;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.atomic.AtomicBoolean;
 import javax.cache.processor.EntryProcessor;
 import org.apache.ignite.IgniteCheckedException;
-import org.apache.ignite.IgniteException;
 import org.apache.ignite.IgniteLogger;
-import org.apache.ignite.internal.pagemem.wal.IgnitePartitionCatchUpLog;
-import org.apache.ignite.internal.pagemem.wal.WALIterator;
 import org.apache.ignite.internal.processors.cache.IgniteCacheOffheapManager.CacheDataStore;
 import org.apache.ignite.internal.processors.cache.mvcc.MvccSnapshot;
 import org.apache.ignite.internal.processors.cache.mvcc.MvccVersion;
 import org.apache.ignite.internal.processors.cache.persistence.CacheDataRow;
 import org.apache.ignite.internal.processors.cache.persistence.CacheSearchRow;
 import org.apache.ignite.internal.processors.cache.persistence.DataRowCacheAware;
-import org.apache.ignite.internal.processors.cache.persistence.GridCacheDatabaseSharedManager;
 import org.apache.ignite.internal.processors.cache.persistence.RowStore;
 import org.apache.ignite.internal.processors.cache.persistence.freelist.SimpleDataRow;
 import org.apache.ignite.internal.processors.cache.persistence.partstorage.PartitionMetaStorage;
@@ -48,8 +43,6 @@ import org.apache.ignite.internal.util.lang.GridCursor;
 import org.apache.ignite.internal.util.lang.IgnitePredicateX;
 import org.apache.ignite.lang.IgniteBiTuple;
 import org.jetbrains.annotations.Nullable;
-
-import static java.util.Optional.ofNullable;
 
 /**
  * <p>
@@ -65,15 +58,12 @@ public class CacheDataStoreExImpl implements CacheDataStoreEx {
     /** */
     private final GridCacheSharedContext<?, ?> cctx;
 
-    /** */
-    private final IgnitePartitionCatchUpLog catchLog;
-
-    /** The map of all storages per each mode. */
-    private final ConcurrentMap<StorageMode, CacheDataStore> storageMap =
-        new ConcurrentHashMap<>(StorageMode.values().length);
-
     /** Currently used data storage state. <tt>FULL</tt> mode is used by default. */
-    private volatile StorageMode currMode = StorageMode.FULL;
+    private volatile AtomicBoolean readOnly = new AtomicBoolean();
+
+    private final CacheDataStore store;
+
+    private final CacheDataStore readOnlyStore;
 
     /**
      * @param primary The main storage to perform full cache operations.
@@ -83,19 +73,21 @@ public class CacheDataStoreExImpl implements CacheDataStoreEx {
         GridCacheSharedContext<?, ?> cctx,
         CacheDataStore primary,
         CacheDataStore secondary,
-        IgnitePartitionCatchUpLog catchLog,
         IgniteLogger log
     ) {
         assert primary != null;
 
         this.cctx = cctx;
         this.log = log;
-        this.catchLog = catchLog;
 
-        storageMap.put(StorageMode.FULL, primary);
+        store = primary;
+        readOnlyStore = secondary;
+//        this.catchLog = catchLog;
 
-        if (secondary != null)
-            storageMap.put(StorageMode.READ_ONLY, secondary);
+//        storageMap.put(StorageMode.FULL, primary);
+//
+//        if (secondary != null)
+//            storageMap.put(StorageMode.READ_ONLY, secondary);
     }
 
 //    /** {@inheritDoc} */
@@ -110,73 +102,53 @@ public class CacheDataStoreExImpl implements CacheDataStoreEx {
 //    }
 
     /** {@inheritDoc} */
-    @Override public CacheDataStore store(StorageMode mode) {
-        return ofNullable(storageMap.get(mode))
-            .orElseThrow(() -> new IgniteException("The storage doesn't exists for given mode: " + mode));
+    @Override public CacheDataStore store(boolean readOnly) {
+        return readOnly ? readOnlyStore : store;
     }
 
     /** {@inheritDoc} */
-    @Override public void storeMode(StorageMode mode) {
-        if (mode == currMode)
-            return;
+    @Override public void readOnly(boolean readOnly) {
+        if (this.readOnly.compareAndSet(!readOnly, readOnly)) {
+            assert cctx.database().checkpointLockIsHeldByThread() : "Changing mode required checkpoint write lock";
 
-        assert cctx.database().checkpointLockIsHeldByThread() : "Changing mode required checkpoint write lock";
-        assert storageMap.get(mode) != null;
-
-        // todo should re-initialize storage
-        if (mode == StorageMode.READ_ONLY) {
-            // todo sync this somehow
-            CacheDataStore curr = store(StorageMode.FULL);
-
-            store(StorageMode.READ_ONLY).init(curr.updateCounter());
-//            store(StorageMode.READ_ONLY).updateCounter(curr.updateCounter());
-        }
-
-        currMode = mode;
-
-        if (currMode == StorageMode.FULL) {
-            // restore data
-            try {
-                restoreMemory();
-            }
-            catch (IgniteCheckedException e) {
-                throw new IgniteException(e);
-            }
+            // todo should re-initialize storage and sync this somehow
+            if (readOnly)
+                readOnlyStore.init(store.updateCounter());
         }
     }
 
-    private void restoreMemory() throws IgniteCheckedException {
-        System.out.println(">xxx> restoring memory");
-
-        WALIterator iter = catchLog.replay();
-
-        ((GridCacheDatabaseSharedManager)cctx.database()).applyFastUpdates(iter,
-            (ptr, rec) -> true,
-            (entry) -> true,
-            true);
-
-        //assert catchLog.catched();
-    }
-
     /** {@inheritDoc} */
-    @Override public StorageMode storeMode() {
-        return currMode;
+    @Override public boolean readOnly() {
+        return readOnly.get();
     }
 
-    /** {@inheritDoc} */
-    @Override public IgnitePartitionCatchUpLog catchLog() {
-        return catchLog;
-    }
+//    /** {@inheritDoc} */
+//    @Override public IgnitePartitionCatchUpLog catchLog() {
+//        return catchLog;
+//    }
+
+//    private void restoreMemory() throws IgniteCheckedException {
+//        System.out.println(">xxx> restoring memory");
+//
+//        WALIterator iter = catchLog.replay();
+//
+//        ((GridCacheDatabaseSharedManager)cctx.database()).applyFastUpdates(iter,
+//            (ptr, rec) -> true,
+//            (entry) -> true,
+//            true);
+//
+//        //assert catchLog.catched();
+//    }
 
     /**
      * @return The currently active cache data storage.
      */
     private CacheDataStore activeStorage() {
-        return storageMap.getOrDefault(currMode, storageMap.get(StorageMode.FULL));
+        return store(readOnly.get());
     }
 
     @Override public boolean init() {
-        return storageMap.getOrDefault(currMode, storageMap.get(StorageMode.FULL)).init();
+        return activeStorage().init();
     }
 
     /** {@inheritDoc} */
@@ -191,7 +163,7 @@ public class CacheDataStoreExImpl implements CacheDataStoreEx {
 //
     /** {@inheritDoc} */
     @Override public void init(long updCntr) {
-        storageMap.getOrDefault(currMode, storageMap.get(StorageMode.FULL)).init(updCntr);
+        activeStorage().init(updCntr);
         //throw new UnsupportedOperationException("The init method of proxy storage must never be called.");
     }
 

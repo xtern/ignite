@@ -17,34 +17,39 @@
 
 package org.apache.ignite.internal.processors.cache;
 
-import org.apache.ignite.internal.pagemem.wal.IgnitePartitionCatchUpLog;
 import org.apache.ignite.internal.processors.cache.IgniteCacheOffheapManager.CacheDataStore;
 
 /**
  *
  */
 public interface CacheDataStoreEx extends CacheDataStore {
-    /**
-     * @param mode The storage mode.
-     * @return The storage intance for the given mode.
-     */
-    public CacheDataStore store(StorageMode mode);
+    public CacheDataStore store(boolean readOnly);
 
-    /**
-     * @param mode The mode to switch to.
-     */
-    public void storeMode(StorageMode mode);
+    public void readOnly(boolean readOnly);
 
-    /**
-     * @return The currently used storage mode. Some of the long-running threads will remain to use
-     * the old mode until they finish.
-     */
-    public StorageMode storeMode();
+    public boolean readOnly();
 
-    /**
-     * @return The storage is used to expose temporary cache data rows when the <tt>LOG_ONLY</tt> mode is active.
-     */
-    public IgnitePartitionCatchUpLog catchLog();
+//    /**
+//     * @param mode The storage mode.
+//     * @return The storage intance for the given mode.
+//     */
+//    public CacheDataStore store(StorageMode mode);
+//
+//    /**
+//     * @param mode The mode to switch to.
+//     */
+//    public void storeMode(StorageMode mode);
+//
+//    /**
+//     * @return The currently used storage mode. Some of the long-running threads will remain to use
+//     * the old mode until they finish.
+//     */
+//    public StorageMode storeMode();
+
+//    /**
+//     * @return The storage is used to expose temporary cache data rows when the <tt>LOG_ONLY</tt> mode is active.
+//     */
+//    public IgnitePartitionCatchUpLog catchLog();
     //
 //    /**
 //     * @param mode The mode to switch to.
@@ -57,14 +62,14 @@ public interface CacheDataStoreEx extends CacheDataStore {
 //     */
 //    public void store(StorageMode mode, IgniteCacheOffheapManager.CacheDataStore storage);
 
-    /**
-     *
-     */
-    public enum StorageMode {
-        /** Proxy will normally route all operations to the PageMemrory. */
-        FULL,
-
-        /** Proxy will redirect the write operations to the temp-WAL storage. */
-        READ_ONLY;
-    }
+//    /**
+//     *
+//     */
+//    public enum StorageMode {
+//        /** Proxy will normally route all operations to the PageMemrory. */
+//        FULL,
+//
+//        /** Proxy will redirect the write operations to the temp-WAL storage. */
+//        READ_ONLY;
+//    }
 }

@@ -47,7 +47,6 @@ import org.apache.ignite.internal.processors.cache.GridCacheEntryEx;
 import org.apache.ignite.internal.processors.cache.GridCacheMapEntry;
 import org.apache.ignite.internal.processors.cache.GridCacheMapEntryFactory;
 import org.apache.ignite.internal.processors.cache.GridCacheSharedContext;
-import org.apache.ignite.internal.processors.cache.IgniteCacheOffheapManager;
 import org.apache.ignite.internal.processors.cache.KeyCacheObject;
 import org.apache.ignite.internal.processors.cache.distributed.dht.GridDhtCacheEntry;
 import org.apache.ignite.internal.processors.cache.distributed.dht.GridReservable;
@@ -76,7 +75,6 @@ import org.jetbrains.annotations.Nullable;
 import static org.apache.ignite.IgniteSystemProperties.IGNITE_ATOMIC_CACHE_DELETE_HISTORY_SIZE;
 import static org.apache.ignite.IgniteSystemProperties.IGNITE_CACHE_REMOVED_ENTRIES_TTL;
 import static org.apache.ignite.events.EventType.EVT_CACHE_REBALANCE_OBJECT_UNLOADED;
-import static org.apache.ignite.internal.processors.cache.IgniteCacheOffheapManager.CacheDataStore;
 import static org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtPartitionState.EVICTED;
 import static org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtPartitionState.LOST;
 import static org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtPartitionState.MOVING;
@@ -447,18 +445,18 @@ public class GridDhtLocalPartition extends GridCacheConcurrentMapImpl implements
     /**
      * Set {@link CacheDataStoreEx.StorageMode} to the corresponding local partition storage.
      */
-    public void dataStoreMode(CacheDataStoreEx.StorageMode mode) {
+    public void readOnly(boolean readOnly) {
         if (state() != MOVING)
             throw new IgniteException("Expected MIVING partition, actual state is " + state());
 
-        store.storeMode(mode);
+        store.readOnly(readOnly);
     }
 
     /**
      * @return The curretly active storage mode.
      */
-    public CacheDataStoreEx.StorageMode dataStoreMode() {
-        return store.storeMode();
+    public boolean readOnly() {
+        return store.readOnly();
     }
 
 //    /**
@@ -472,13 +470,13 @@ public class GridDhtLocalPartition extends GridCacheConcurrentMapImpl implements
 //        store.store(mode, storage);
 //    }
 
-    /**
-     * @param mode The storage mode.
-     * @return The storage intance for the given mode.
-     */
-    public IgniteCacheOffheapManager.CacheDataStore dataStore(CacheDataStoreEx.StorageMode mode) {
-        return store.store(mode);
-    }
+//    /**
+//     * @param mode The storage mode.
+//     * @return The storage intance for the given mode.
+//     */
+//    public IgniteCacheOffheapManager.CacheDataStore dataStore(CacheDataStoreEx.StorageMode mode) {
+//        return store.store(mode);
+//    }
 
     /**
      * Reserves a partition so it won't be cleared or evicted.

@@ -4,10 +4,8 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import org.apache.ignite.IgniteLogger;
-import org.apache.ignite.internal.processors.cache.CacheDataStoreEx;
 import org.apache.ignite.internal.processors.cache.CacheGroupContext;
 import org.apache.ignite.internal.processors.cache.GridCacheSharedContext;
-import org.apache.ignite.internal.processors.cache.IgniteCacheOffheapManager;
 import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtLocalPartition;
 import org.apache.ignite.internal.processors.cache.persistence.DbCheckpointListener;
 import org.apache.ignite.internal.util.future.GridFutureAdapter;
@@ -57,19 +55,18 @@ public class PartitionSwitchModeManager implements DbCheckpointListener {
                 for (Integer partId : e.getValue()) {
                     GridDhtLocalPartition locPart = grp.topology().localPartition(partId);
 
-                    if (locPart.dataStoreMode() == rq.nextMode)
+                    if (locPart.readOnly() == rq.nextReadOnly)
                         continue;
 
                     //TODO invalidate partition
 
-                    IgniteCacheOffheapManager.CacheDataStore currStore = locPart.dataStore(locPart.dataStoreMode());
+//                    IgniteCacheOffheapManager.CacheDataStore currStore = locPart.dataStore(locPart.readOnlyMode());
 
                     // Pre-init the new storage.
-                    locPart.dataStore(rq.nextMode)
-                        .init(currStore.updateCounter());
+//                    locPart.dataStore(rq.nextReadOnly).init(currStore.updateCounter());
 
                     // Switching mode under the write lock.
-                    locPart.dataStoreMode(rq.nextMode);
+                    locPart.readOnly(rq.nextReadOnly);
                 }
             }
 
@@ -88,21 +85,21 @@ public class PartitionSwitchModeManager implements DbCheckpointListener {
     }
 
     /**
-     * @param mode The storage mode to switch to.
+     * @param readOnly The storage mode to switch to.
      * @param parts The set of partitions to change storage mode.
      * @return The future which will be completed when request is done.
      */
     public GridFutureAdapter<Void> offerSwitchRequest(
-        CacheDataStoreEx.StorageMode mode,
+        boolean readOnly,
         Map<Integer, Set<Integer>> parts
     ) {
-        SwitchModeRequest req = new SwitchModeRequest(mode, parts);
+        SwitchModeRequest req = new SwitchModeRequest(readOnly, parts);
 
         boolean offered = switchReqs.offer(req);
 
         assert offered;
 
-        U.log(log, "Change partition mode request registered [mode=" + mode + ", parts=" + parts + ']');
+        U.log(log, "Change partition mode request registered [mode=" + readOnly + ", parts=" + parts + ']');
 
         return req.rqFut;
     }
@@ -112,7 +109,7 @@ public class PartitionSwitchModeManager implements DbCheckpointListener {
      */
     private static class SwitchModeRequest {
         /** The storage mode to switch to. */
-        private final CacheDataStoreEx.StorageMode nextMode;
+        private final boolean nextReadOnly;
 
         /** The map of cache groups and corresponding partition to switch mode to. */
         private final Map<Integer, Set<Integer>> parts;
@@ -121,14 +118,14 @@ public class PartitionSwitchModeManager implements DbCheckpointListener {
         private final GridFutureAdapter<Void> rqFut = new GridFutureAdapter<>();
 
         /**
-         * @param nextMode The mode to set to.
+         * @param nextReadOnly The mode to set to.
          * @param parts The partitions to switch mode to.
          */
         public SwitchModeRequest(
-            CacheDataStoreEx.StorageMode nextMode,
+            boolean nextReadOnly,
             Map<Integer, Set<Integer>> parts
         ) {
-            this.nextMode = nextMode;
+            this.nextReadOnly = nextReadOnly;
             this.parts = parts;
         }
     }
