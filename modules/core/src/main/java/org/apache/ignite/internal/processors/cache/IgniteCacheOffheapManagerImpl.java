@@ -47,6 +47,8 @@ import org.apache.ignite.internal.pagemem.wal.record.delta.DataPageMvccMarkUpdat
 import org.apache.ignite.internal.pagemem.wal.record.delta.DataPageMvccUpdateNewTxStateHintRecord;
 import org.apache.ignite.internal.pagemem.wal.record.delta.DataPageMvccUpdateTxStateHintRecord;
 import org.apache.ignite.internal.processors.affinity.AffinityTopologyVersion;
+import org.apache.ignite.internal.processors.cache.IgniteCacheOffheapManager.CacheDataStore;
+import org.apache.ignite.internal.processors.cache.IgniteCacheOffheapManager.OffheapInvokeClosure;
 import org.apache.ignite.internal.processors.cache.distributed.dht.colocated.GridDhtDetachedCacheEntry;
 import org.apache.ignite.internal.processors.cache.distributed.dht.preloader.CachePartitionPartialCountersMap;
 import org.apache.ignite.internal.processors.cache.distributed.dht.preloader.IgniteDhtDemandedPartitionsMap;
@@ -1512,22 +1514,23 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
             return false;
         }
 
-        @Override public void init(long updCntr, long size, @Nullable Map<Integer, Long> cacheSizes) {
-            assert false;
-
-            pCntr.init(updCntr, null);
-
-            if ("default".equalsIgnoreCase(grp.cacheOrGroupName()))
-                System.out.println(ctx.localNodeId() + " initsize " + size);
-
-            storageSize.set(size);
-
-            this.cacheSizes.clear();
-
-            if (cacheSizes != null) {
-                for (Map.Entry<Integer, Long> e : cacheSizes.entrySet())
-                    this.cacheSizes.put(e.getKey(), new AtomicLong(e.getValue()));
-            }
+        @Override public void init(long updCntr) {
+            throw new IllegalStateException("Re-initialization of non-persisted cache.");
+//            assert false;
+//
+//            pCntr.init(updCntr, null);
+//
+//            if ("default".equalsIgnoreCase(grp.cacheOrGroupName()))
+//                System.out.println(ctx.localNodeId() + " initsize " + size);
+//
+//            storageSize.set(size);
+//
+//            this.cacheSizes.clear();
+//
+//            if (cacheSizes != null) {
+//                for (Map.Entry<Integer, Long> e : cacheSizes.entrySet())
+//                    this.cacheSizes.put(e.getKey(), new AtomicLong(e.getValue()));
+//            }
         }
 
         /** {@inheritDoc} */

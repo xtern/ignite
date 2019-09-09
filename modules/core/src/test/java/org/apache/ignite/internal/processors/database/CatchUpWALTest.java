@@ -182,7 +182,7 @@ public class CatchUpWALTest extends GridCommonAbstractTest {
 
 //        backupCache.context().shared().pageStore().ensure(backupCache.context().group().groupId(), 0);
 
-        backupPart.dataStore().init(0, 0, null);
+        backupPart.dataStore().init(0);
 
         System.out.println(">xxx> Own partition: " + backupPartId);
 
@@ -401,7 +401,7 @@ public class CatchUpWALTest extends GridCommonAbstractTest {
 
         // Pre-init the new storage.
         backupPart.dataStore(CacheDataStoreEx.StorageMode.READ_ONLY)
-            .init(currStore.updateCounter(), currStore.fullSize(), currStore.cacheSizes());
+            .init(currStore.updateCounter());
 
         backupNode.context().cache().context().database().checkpointReadLock();
 

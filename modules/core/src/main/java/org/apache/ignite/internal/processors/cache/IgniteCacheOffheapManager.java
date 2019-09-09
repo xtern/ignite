@@ -609,10 +609,8 @@ public interface IgniteCacheOffheapManager {
 
         /**
          * @param updCntr Update counter to init.
-         * @param size Size to init.
-         * @param cacheSizes Cache sizes if store belongs to group containing multiple caches.
          */
-        void init(long updCntr, long size, @Nullable Map<Integer, Long> cacheSizes);
+        void init(long updCntr);
 
         /**
          * @return Partition ID.

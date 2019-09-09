@@ -279,6 +279,7 @@ public class GridCacheReadOnlyStoreSelfTest extends GridCommonAbstractTest {
         log.info("Range [" + rmvStart + " - " + rmvStop + "]");
 
         for (Cache.Entry<Integer, Integer> e : it) {
+            // todo This check in unstable when raneg starts from zero.
             if (backupCache.affinity().partition(e.getKey()) == partId && e.getKey() > rmvStart && e.getKey() < rmvStop)
                 fail("range [" + rmvStart + " - " + rmvStop + "] key=" + e.getKey());
         }

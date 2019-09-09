@@ -128,7 +128,7 @@ public class CacheDataStoreExImpl implements CacheDataStoreEx {
             // todo sync this somehow
             CacheDataStore curr = store(StorageMode.FULL);
 
-            store(StorageMode.READ_ONLY).init(curr.updateCounter(), curr.fullSize(), curr.cacheSizes());
+            store(StorageMode.READ_ONLY).init(curr.updateCounter());
 //            store(StorageMode.READ_ONLY).updateCounter(curr.updateCounter());
         }
 
@@ -190,8 +190,8 @@ public class CacheDataStoreExImpl implements CacheDataStoreEx {
 //    }
 //
     /** {@inheritDoc} */
-    @Override public void init(long updCntr, long size, @Nullable Map<Integer, Long> cacheSizes) {
-        storageMap.getOrDefault(currMode, storageMap.get(StorageMode.FULL)).init(updCntr, size, cacheSizes);
+    @Override public void init(long updCntr) {
+        storageMap.getOrDefault(currMode, storageMap.get(StorageMode.FULL)).init(updCntr);
         //throw new UnsupportedOperationException("The init method of proxy storage must never be called.");
     }
 

@@ -11,6 +11,7 @@ import java.util.TreeMap;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.stream.Collectors;
@@ -563,6 +564,17 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
     public void onExchangeDone(GridDhtPartitionsExchangeFuture fut) {
         // todo
         System.out.println(">xxx> process");
+    }
+
+    //todo
+    public void destroyPartition(GridDhtLocalPartition part) {
+        CountDownLatch waitRent = new CountDownLatch(1);
+
+        part.rent(false);
+
+        part.onClearFinished(f -> waitRent.countDown());
+
+        U.awaitQuiet(waitRent);
     }
 
     /**

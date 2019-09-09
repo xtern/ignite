@@ -66,7 +66,7 @@ public class PartitionSwitchModeManager implements DbCheckpointListener {
 
                     // Pre-init the new storage.
                     locPart.dataStore(rq.nextMode)
-                        .init(currStore.updateCounter(), currStore.fullSize(), currStore.cacheSizes());
+                        .init(currStore.updateCounter());
 
                     // Switching mode under the write lock.
                     locPart.dataStoreMode(rq.nextMode);
