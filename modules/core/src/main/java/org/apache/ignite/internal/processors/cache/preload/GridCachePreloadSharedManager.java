@@ -12,7 +12,9 @@ import java.util.NavigableMap;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.UUID;
+import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
@@ -24,6 +26,8 @@ import org.apache.ignite.internal.GridKernalContext;
 import org.apache.ignite.internal.IgniteFeatures;
 import org.apache.ignite.internal.IgniteInternalFuture;
 import org.apache.ignite.internal.pagemem.PageIdUtils;
+import org.apache.ignite.internal.pagemem.store.IgnitePageStoreManager;
+import org.apache.ignite.internal.pagemem.store.PageStore;
 import org.apache.ignite.internal.processors.affinity.AffinityAssignment;
 import org.apache.ignite.internal.processors.affinity.AffinityTopologyVersion;
 import org.apache.ignite.internal.processors.cache.CacheGroupContext;
@@ -33,6 +37,7 @@ import org.apache.ignite.internal.processors.cache.distributed.dht.preloader.Gri
 import org.apache.ignite.internal.processors.cache.distributed.dht.preloader.GridDhtPartitionsExchangeFuture;
 import org.apache.ignite.internal.processors.cache.distributed.dht.preloader.GridDhtPreloaderAssignments;
 import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtLocalPartition;
+import org.apache.ignite.internal.processors.cache.persistence.DbCheckpointListener;
 import org.apache.ignite.internal.processors.cache.persistence.GridCacheDatabaseSharedManager;
 import org.apache.ignite.internal.processors.cache.persistence.file.FilePageStore;
 import org.apache.ignite.internal.processors.cache.persistence.file.FilePageStoreManager;
@@ -46,13 +51,12 @@ import org.apache.ignite.internal.util.typedef.internal.S;
 import org.apache.ignite.internal.util.typedef.internal.U;
 import org.apache.ignite.lang.IgniteInClosure;
 
-import static java.nio.file.StandardCopyOption.REPLACE_EXISTING;
 import static org.apache.ignite.internal.GridTopic.TOPIC_REBALANCE;
 import static org.apache.ignite.internal.managers.communication.GridIoPolicy.SYSTEM_POOL;
 import static org.apache.ignite.internal.processors.cache.GridCacheUtils.UTILITY_CACHE_NAME;
 import static org.apache.ignite.internal.processors.cache.preload.PartitionUploadManager.persistenceRebalanceApplicable;
 
-public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter {
+public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter implements DbCheckpointListener {
     /** */
     private static final String REBALANCE_CP_REASON = "Rebalance has been scheduled [grps=%s]";
 
@@ -84,7 +88,10 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
     private PartitionUploadManager uploadMgr;
 
     /** */
-    private PartitionSwitchModeManager switchMgr;
+    //private PartitionSwitchModeManager switchMgr;
+
+    /** */
+    private final ConcurrentLinkedQueue<Runnable> checkpointReqs = new ConcurrentLinkedQueue<>();
 
 //    /** */
 //    private PartitionStorePumpManager pumpMgr;
@@ -127,8 +134,7 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
         uploadMgr.start0(cctx);
 //        pumpMgr.start0(cctx);
 
-        ((GridCacheDatabaseSharedManager) cctx.database()).addCheckpointListener(
-            switchMgr = new PartitionSwitchModeManager(cctx));
+        ((GridCacheDatabaseSharedManager)cctx.database()).addCheckpointListener(this);
 
         if (persistenceRebalanceApplicable(cctx)) {
             // todo
@@ -162,7 +168,7 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
             uploadMgr.stop0(cancel);
 //            pumpMgr.stop0(cancel);
 
-            ((GridCacheDatabaseSharedManager)cctx.database()).removeCheckpointListener(switchMgr);
+            ((GridCacheDatabaseSharedManager)cctx.database()).removeCheckpointListener(this);
 
             for (RebalanceDownloadFuture rebFut : futMap.values())
                 rebFut.cancel();
@@ -424,7 +430,22 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
 
                 final Map<Integer, Set<Integer>> assigns = rebFut.nodeAssigns;
 
-                IgniteInternalFuture<Void> switchFut = cctx.preloader().changePartitionsModeAsync(true, assigns);
+                IgniteInternalFuture<Void> switchFut = cctx.preloader().offerCheckpointTask(() -> {
+                        for (Map.Entry<Integer, Set<Integer>> e : assigns.entrySet()) {
+                            CacheGroupContext grp = cctx.cache().cacheGroup(e.getKey());
+
+                            for (Integer partId : e.getValue()) {
+                                GridDhtLocalPartition part = grp.topology().localPartition(partId);
+
+                                if (part.readOnly())
+                                    continue;
+
+                                part.readOnly(true);
+                            }
+                        }
+
+                        return null;
+                    });
 
                 switchFut.listen(new IgniteInClosure<IgniteInternalFuture>() {
                     @Override public void apply(IgniteInternalFuture fut) {
@@ -545,24 +566,24 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
 //        return pumpMgr;
 //    }
 
-    /**
-     * @return The switch mode manager.
-     */
-    public PartitionSwitchModeManager switcher() {
-        return switchMgr;
-    }
-
-    /**
-     * @param readOnly The storage mode to switch to.
-     * @param parts The set of partitions to change storage mode.
-     * @return The future which will be completed when request is done.
-     */
-    public IgniteInternalFuture<Void> changePartitionsModeAsync(
-        boolean readOnly,
-        Map<Integer, Set<Integer>> parts
-    ) {
-        return switchMgr.offerSwitchRequest(readOnly, parts);
-    }
+//    /**
+//     * @return The switch mode manager.
+//     */
+//    public PartitionSwitchModeManager switcher() {
+//        return switchMgr;
+//    }
+//
+//    /**
+//     * @param readOnly The storage mode to switch to.
+//     * @param parts The set of partitions to change storage mode.
+//     * @return The future which will be completed when request is done.
+//     */
+//    public IgniteInternalFuture<Long> changePartitionsModeAsync(
+//        boolean readOnly,
+//        Map<Integer, Set<Integer>> parts
+//    ) {
+//        return switchMgr.offerSwitchRequest(readOnly, parts);
+//    }
 
     /**
      * @param fut Exchange future.
@@ -572,54 +593,165 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
         System.out.println(">xxx> process");
     }
 
+    public IgniteInternalFuture<Void> schedulePartitionDestroy(GridDhtLocalPartition part) {
+        GridFutureAdapter<Void> fut = new GridFutureAdapter<>();
+
+        offerCheckpointTask(
+            () -> part.readOnly(true)
+        ).listen(
+            c -> destroyPartition(part)
+                .listen(
+                    c0 -> fut.onDone()
+                )
+        );
+
+        return fut;
+    }
+
     // todo destroy partition but don't change state in node2part map
-    public IgniteInternalFuture<Void> destroyPartition(GridDhtLocalPartition part) {
+    private IgniteInternalFuture<Void> destroyPartition(GridDhtLocalPartition part) {
         GridFutureAdapter<Void> destroyFut = new GridFutureAdapter<>();
 
         part.clearAsync();
 
         part.onClearFinished(c -> {
+            CacheGroupContext ctx = part.group();
+
             try {
-                part.group().offheap().destroyCacheDataStore(part.dataStore());
+                ctx.offheap().destroyCacheDataStore(part.dataStore());
             } catch (IgniteCheckedException e) {
                 destroyFut.onDone(e);
             }
 
-            ((PageMemoryEx)part.group().dataRegion().pageMemory())
-                .clearAsync(
-                    (grpId, pageId) ->
-                        grpId == part.group().groupId() && part.id() == PageIdUtils.partId(pageId), true)
-                .listen(c0 -> destroyFut.onDone());
+            int grpId = ctx.groupId();
+
+            // Clear offheap for this partition.
+            ((PageMemoryEx)ctx.dataRegion().pageMemory())
+                .clearAsync((grp, pageId) -> grp == grpId && part.id() == PageIdUtils.partId(pageId), true)
+                .listen(c0 -> {
+                    try {
+                        // todo something smarter - store will be removed on next checkpoint.
+                        while (ctx.shared().pageStore().exists(grpId, part.id()))
+                            U.sleep(200);
+
+                        destroyFut.onDone();
+                    }
+                    catch (IgniteCheckedException e) {
+                        destroyFut.onDone(e);
+                    }
+                });
         });
 
         return destroyFut;
     }
 
-    // on checkpoint write lock
-    public void recoverPartition(int partId, File fsPartFile, GridCacheContext cctx) throws IgniteCheckedException {
+    /**
+     * Restore partition on new file. Partition should be completely destroyed before restore it with new file.
+     *
+     * @param partId Partition number.
+     * @param fsPartFile New partition file on the same filesystem.
+     * @param cctx Cache context.
+     * @return Future that will be completed when partition will be fully re-initialized. The future result is the HWM
+     * value of update counter in read-only partition.
+     * @throws IgniteCheckedException If file store for specified partition doesn't exists or partition file cannot be
+     * moved.
+     */
+    public IgniteInternalFuture<Long> restorePartition(
+        int partId,
+        File fsPartFile,
+        GridCacheContext cctx
+    ) throws IgniteCheckedException {
         AffinityTopologyVersion affVer = cctx.topology().readyTopologyVersion();
 
         // Create partition.
         GridDhtLocalPartition part = cctx.topology().localPartition(partId, affVer, true, true);
 
-        FilePageStore store =
-            (FilePageStore)((FilePageStoreManager)cctx.group().shared().pageStore()).getStore(cctx.groupId(), partId);
+        IgnitePageStoreManager pageStoreMgr = cctx.group().shared().pageStore();
 
-        File dst = new File(store.getFileAbsolutePath());
+        assert pageStoreMgr instanceof FilePageStoreManager : pageStoreMgr;
+
+        PageStore store = ((FilePageStoreManager)pageStoreMgr).getStore(cctx.groupId(), partId);
+
+        assert store instanceof FilePageStore : store;
+
+        File dst = new File(((FilePageStore)store).getFileAbsolutePath());
+
+        assert !dst.exists() : dst;
 
         log.info("Moving downloaded partition file: " + fsPartFile + " --> " + dst);
 
         try {
-            Files.move(fsPartFile.toPath(), dst.toPath(), REPLACE_EXISTING);
+            Files.move(fsPartFile.toPath(), dst.toPath());
         }
         catch (IOException e) {
+            // todo FileAlreadyExistsException -> retry ?
             throw new IgniteCheckedException("Unable to move file from " + fsPartFile + " to " + dst, e);
         }
 
-        part.readOnly(false);
+        return offerCheckpointTask(() -> {
+            long cntr = part.dataStore().updateCounter();
 
-        // todo update counter value is ignored
-        part.dataStore().init(0);
+            part.readOnly(false);
+
+            // todo update counter value is ignored
+            part.dataStore().init(0);
+
+            return cntr;
+        });
+    }
+
+    private IgniteInternalFuture<Void> offerCheckpointTask(final Runnable task) {
+        return offerCheckpointTask(() -> {
+           task.run();
+
+           return null;
+        });
+    }
+
+    private <R> IgniteInternalFuture<R> offerCheckpointTask(final Callable<R> task) {
+        class CheckpointTask implements Runnable {
+            final GridFutureAdapter<R> fut = new GridFutureAdapter<>();
+
+            final Callable<R> task;
+
+            CheckpointTask(Callable<R> task) {
+                this.task = task;
+            }
+
+
+            @Override public void run() {
+                try {
+                    fut.onDone(task.call());
+                }
+                catch (Exception e) {
+                    fut.onDone(e);
+                }
+            }
+        }
+
+        CheckpointTask task0 = new CheckpointTask(task);
+
+        checkpointReqs.offer(task0);
+
+        return task0.fut;
+    }
+
+    /** {@inheritDoc} */
+    @Override public void onMarkCheckpointBegin(Context ctx) {
+        Runnable r;
+
+        while ((r = checkpointReqs.poll()) != null)
+            r.run();
+    }
+
+    /** {@inheritDoc} */
+    @Override public void onCheckpointBegin(Context ctx) {
+
+    }
+
+    /** {@inheritDoc} */
+    @Override public void beforeCheckpointBegin(Context ctx) {
+
     }
 
     /**
