@@ -100,11 +100,10 @@
     <!--
         Uncomment to enable debugging of partition counters.
     -->
-    <!--
-    <category name="org.apache.ignite.internal.processors.cache.PartitionTxUpdateCounterDebugWrapper">
+
+    <category name="org.apache.ignite.internal.processors.cache.distributed.dht.preloader">
         <level value="DEBUG"/>
     </category>
-    -->
 
     <!-- Disable all open source debugging. -->
     <category name="org">

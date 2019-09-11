@@ -112,8 +112,8 @@ public class CacheDataStoreExImpl implements CacheDataStoreEx {
             assert cctx.database().checkpointLockIsHeldByThread() : "Changing mode required checkpoint write lock";
 
             // todo should re-initialize storage and sync this somehow
-            if (readOnly)
-                readOnlyStore.init(store.updateCounter());
+//            if (readOnly)
+//                readOnlyStore.init(store.updateCounter(), store.reservedCounter());
         }
     }
 
@@ -162,8 +162,8 @@ public class CacheDataStoreExImpl implements CacheDataStoreEx {
 //    }
 //
     /** {@inheritDoc} */
-    @Override public void init(long updCntr) {
-        activeStorage().init(updCntr);
+    @Override public long init(PartitionUpdateCounter pCntr) {
+        return activeStorage().init(pCntr);
         //throw new UnsupportedOperationException("The init method of proxy storage must never be called.");
     }
 
@@ -179,6 +179,7 @@ public class CacheDataStoreExImpl implements CacheDataStoreEx {
         return activeStorage().createRow(cctx, key, val, ver, expireTime, oldRow);
     }
 
+    /** {@inheritDoc} */
     @Override public void insertRows(Collection<DataRowCacheAware> rows,
         IgnitePredicateX<CacheDataRow> initPred) throws IgniteCheckedException {
         activeStorage().insertRows(rows, initPred);
@@ -435,6 +436,7 @@ public class CacheDataStoreExImpl implements CacheDataStoreEx {
         return activeStorage().rowStore();
     }
 
+    /** {@inheritDoc} */
     @Override public void updateInitialCounter(long start, long delta) {
         activeStorage().updateInitialCounter(start, delta);
     }
@@ -496,14 +498,17 @@ public class CacheDataStoreExImpl implements CacheDataStoreEx {
         return activeStorage().updateCounter();
     }
 
+    /** {@inheritDoc} */
     @Override public long reservedCounter() {
         return activeStorage().reservedCounter();
     }
 
+    /** {@inheritDoc} */
     @Override public @Nullable PartitionUpdateCounter partUpdateCounter() {
         return activeStorage().partUpdateCounter();
     }
 
+    /** {@inheritDoc} */
     @Override public long reserve(long delta) {
         return activeStorage().reserve(delta);
     }
@@ -513,6 +518,7 @@ public class CacheDataStoreExImpl implements CacheDataStoreEx {
         activeStorage().updateCounter(val);
     }
 
+    /** {@inheritDoc} */
     @Override public boolean updateCounter(long start, long delta) {
         return activeStorage().updateCounter(start, delta);
     }

@@ -22,7 +22,7 @@ import org.apache.ignite.internal.util.typedef.internal.CU;
 import org.apache.ignite.internal.util.typedef.internal.S;
 import org.apache.ignite.internal.util.typedef.internal.U;
 
-import static org.apache.ignite.internal.processors.cache.preload.GridCachePreloadSharedManager.rebalanceThreadTopic;
+import static org.apache.ignite.internal.processors.cache.distributed.dht.preloader.GridCachePreloadSharedManager.rebalanceThreadTopic;
 
 public class PartitionUploadManager {
     /** */
@@ -54,7 +54,7 @@ public class PartitionUploadManager {
     /**
      * @return {@code True} if cluster rebalance via sending partition files can be applied.
      */
-    static boolean persistenceRebalanceApplicable(GridCacheSharedContext cctx) {
+    public static boolean persistenceRebalanceApplicable(GridCacheSharedContext cctx) {
         return !cctx.kernalContext().clientNode() &&
             CU.isPersistenceEnabled(cctx.kernalContext().config()) &&
             cctx.isRebalanceEnabled();
@@ -63,7 +63,7 @@ public class PartitionUploadManager {
     /**
      * @param cctx Cache shared context.
      */
-    void start0(GridCacheSharedContext<?, ?> cctx) throws IgniteCheckedException {
+    public void start0(GridCacheSharedContext<?, ?> cctx) throws IgniteCheckedException {
         this.cctx = cctx;
 
         //backupMgr = cctx.storeBackup();
@@ -90,7 +90,7 @@ public class PartitionUploadManager {
     /**
      * @param cancel <tt>true</tt> to cancel all pending tasks.
      */
-    void stop0(boolean cancel) {
+    public void stop0(boolean cancel) {
         lock.writeLock().lock();
 
         try {

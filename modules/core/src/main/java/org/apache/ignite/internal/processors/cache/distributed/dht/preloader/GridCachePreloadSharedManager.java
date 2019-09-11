@@ -1,4 +1,21 @@
-package org.apache.ignite.internal.processors.cache.preload;
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.ignite.internal.processors.cache.distributed.dht.preloader;
 
 import java.io.File;
 import java.io.IOException;
@@ -17,6 +34,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.stream.Collectors;
 import org.apache.ignite.IgniteCheckedException;
@@ -33,29 +51,34 @@ import org.apache.ignite.internal.processors.affinity.AffinityTopologyVersion;
 import org.apache.ignite.internal.processors.cache.CacheGroupContext;
 import org.apache.ignite.internal.processors.cache.GridCacheContext;
 import org.apache.ignite.internal.processors.cache.GridCacheSharedManagerAdapter;
-import org.apache.ignite.internal.processors.cache.distributed.dht.preloader.GridDhtPartitionDemandMessage;
-import org.apache.ignite.internal.processors.cache.distributed.dht.preloader.GridDhtPartitionsExchangeFuture;
-import org.apache.ignite.internal.processors.cache.distributed.dht.preloader.GridDhtPreloaderAssignments;
+import org.apache.ignite.internal.processors.cache.PartitionUpdateCounter;
 import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtLocalPartition;
 import org.apache.ignite.internal.processors.cache.persistence.DbCheckpointListener;
 import org.apache.ignite.internal.processors.cache.persistence.GridCacheDatabaseSharedManager;
 import org.apache.ignite.internal.processors.cache.persistence.file.FilePageStore;
 import org.apache.ignite.internal.processors.cache.persistence.file.FilePageStoreManager;
 import org.apache.ignite.internal.processors.cache.persistence.pagemem.PageMemoryEx;
+import org.apache.ignite.internal.processors.cache.preload.GridPartitionBatchDemandMessage;
+import org.apache.ignite.internal.processors.cache.preload.PartitionDownloadManager;
+import org.apache.ignite.internal.processors.cache.preload.PartitionUploadManager;
 import org.apache.ignite.internal.util.GridIntList;
+import org.apache.ignite.internal.util.future.GridCompoundFuture;
 import org.apache.ignite.internal.util.future.GridFutureAdapter;
 import org.apache.ignite.internal.util.lang.IgniteInClosureX;
 import org.apache.ignite.internal.util.tostring.GridToStringInclude;
+import org.apache.ignite.internal.util.typedef.T2;
 import org.apache.ignite.internal.util.typedef.internal.CU;
 import org.apache.ignite.internal.util.typedef.internal.S;
 import org.apache.ignite.internal.util.typedef.internal.U;
 import org.apache.ignite.lang.IgniteInClosure;
+import org.jetbrains.annotations.Nullable;
 
 import static org.apache.ignite.internal.GridTopic.TOPIC_REBALANCE;
 import static org.apache.ignite.internal.managers.communication.GridIoPolicy.SYSTEM_POOL;
 import static org.apache.ignite.internal.processors.cache.GridCacheUtils.UTILITY_CACHE_NAME;
 import static org.apache.ignite.internal.processors.cache.preload.PartitionUploadManager.persistenceRebalanceApplicable;
 
+/** */
 public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter implements DbCheckpointListener {
     /** */
     private static final String REBALANCE_CP_REASON = "Rebalance has been scheduled [grps=%s]";
@@ -114,7 +137,7 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
     /**
      * @return The Rebalance topic to communicate with.
      */
-    static Object rebalanceThreadTopic() {
+    public static Object rebalanceThreadTopic() {
         return TOPIC_REBALANCE.topic("Rebalance", REBALANCE_TOPIC_IDX);
     }
 
@@ -593,6 +616,32 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
         System.out.println(">xxx> process");
     }
 
+    static AtomicLong rebalanceIdCntr = new AtomicLong(100);
+
+    public void triggerHistoricalRebalance(ClusterNode node, GridCacheContext cctx, int[] p, long[] lwm, long[] hwm, int partsCnt) {
+        GridDhtPartitionDemandMessage msg = new GridDhtPartitionDemandMessage(
+            cctx.topology().updateSequence(),
+            cctx.topology().readyTopologyVersion(),
+            cctx.groupId());
+
+        for (int i = 0; i < p.length; i++)
+            msg.partitions().addHistorical(p[i], lwm[i], hwm[i], partsCnt);
+
+        GridCompoundFuture<Boolean, Boolean> fut = new GridCompoundFuture<>(CU.boolReducer());
+
+        GridDhtPartitionExchangeId exchId = cctx.shared().exchange().lastFinishedFuture().exchangeId();
+
+        GridDhtPreloaderAssignments assigns = new GridDhtPreloaderAssignments(exchId, cctx.topology().readyTopologyVersion());
+
+        assigns.put(node, msg);
+
+        Runnable cur = cctx.group().preloader().addAssignments(assigns,
+            true,
+            rebalanceIdCntr.getAndIncrement(),
+            null,
+            fut);
+    }
+
     public IgniteInternalFuture<Void> schedulePartitionDestroy(GridDhtLocalPartition part) {
         GridFutureAdapter<Void> fut = new GridFutureAdapter<>();
 
@@ -631,8 +680,13 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
                 .listen(c0 -> {
                     try {
                         // todo something smarter - store will be removed on next checkpoint.
-                        while (ctx.shared().pageStore().exists(grpId, part.id()))
+                        while (ctx.shared().pageStore().exists(grpId, part.id())) {
+//                            System.out.println("wait untl partition will be destroyed");
+
                             U.sleep(200);
+                        }
+
+                        System.out.println("finishing destroy future");
 
                         destroyFut.onDone();
                     }
@@ -656,7 +710,7 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
      * @throws IgniteCheckedException If file store for specified partition doesn't exists or partition file cannot be
      * moved.
      */
-    public IgniteInternalFuture<Long> restorePartition(
+    public IgniteInternalFuture<T2<Long, Long>> restorePartition(
         int partId,
         File fsPartFile,
         GridCacheContext cctx
@@ -665,6 +719,17 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
 
         // Create partition.
         GridDhtLocalPartition part = cctx.topology().localPartition(partId, affVer, true, true);
+
+        // todo why we still finding dirty pages sometimes?
+        IgniteInternalFuture<Void> cleanupFut = ((PageMemoryEx)cctx.dataRegion().pageMemory())
+            .clearAsync((grp, pageId) -> {
+                boolean res = grp == cctx.groupId() && part.id() == PageIdUtils.partId(pageId);
+
+                if (res)
+                    log.warning("Dirty page found: " + pageId);
+
+                return res;
+            }, true);
 
         IgnitePageStoreManager pageStoreMgr = cctx.group().shared().pageStore();
 
@@ -676,7 +741,12 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
 
         File dst = new File(((FilePageStore)store).getFileAbsolutePath());
 
-        assert !dst.exists() : dst;
+//        assert !store.exists();
+//        assert !dst.exists();
+
+//        // todo why file still exists
+        while (store.exists())
+            log.warning(">>> wait for remove " + dst);
 
         log.info("Moving downloaded partition file: " + fsPartFile + " --> " + dst);
 
@@ -689,14 +759,18 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
         }
 
         return offerCheckpointTask(() -> {
-            long cntr = part.dataStore().updateCounter();
+            cleanupFut.get();
+
+            PartitionUpdateCounter cntr = part.dataStore().partUpdateCounter();
 
             part.readOnly(false);
 
             // todo update counter value is ignored
-            part.dataStore().init(0);
+            long from = part.dataStore().init(cntr);
 
-            return cntr;
+//            part.dataStore().updateCounter();
+
+            return new T2<>(from, cntr.get());
         });
     }
 
@@ -717,7 +791,6 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
             CheckpointTask(Callable<R> task) {
                 this.task = task;
             }
-
 
             @Override public void run() {
                 try {

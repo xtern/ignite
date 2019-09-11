@@ -24,8 +24,6 @@ import javax.cache.processor.EntryProcessor;
 import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.IgniteException;
 import org.apache.ignite.IgniteLogger;
-import org.apache.ignite.failure.FailureContext;
-import org.apache.ignite.failure.FailureType;
 import org.apache.ignite.internal.metric.IoStatisticsHolder;
 import org.apache.ignite.internal.processors.cache.CacheEntryPredicate;
 import org.apache.ignite.internal.processors.cache.CacheGroupContext;
@@ -36,9 +34,6 @@ import org.apache.ignite.internal.processors.cache.GridCacheSharedContext;
 import org.apache.ignite.internal.processors.cache.IgniteCacheOffheapManager;
 import org.apache.ignite.internal.processors.cache.IgniteCacheOffheapManager.CacheDataStore;
 import org.apache.ignite.internal.processors.cache.KeyCacheObject;
-import org.apache.ignite.internal.processors.cache.PartitionAtomicUpdateCounterImpl;
-import org.apache.ignite.internal.processors.cache.PartitionMvccTxUpdateCounterImpl;
-import org.apache.ignite.internal.processors.cache.PartitionTxUpdateCounterImpl;
 import org.apache.ignite.internal.processors.cache.PartitionUpdateCounter;
 import org.apache.ignite.internal.processors.cache.mvcc.MvccSnapshot;
 import org.apache.ignite.internal.processors.cache.mvcc.MvccVersion;
@@ -56,18 +51,15 @@ import org.apache.ignite.internal.processors.query.GridQueryRowCacheCleaner;
 import org.apache.ignite.internal.util.GridLongList;
 import org.apache.ignite.internal.util.lang.GridCursor;
 import org.apache.ignite.internal.util.lang.IgnitePredicateX;
-import org.apache.ignite.internal.util.typedef.internal.U;
 import org.apache.ignite.lang.IgniteBiTuple;
 import org.jetbrains.annotations.Nullable;
-
-import static org.apache.ignite.IgniteSystemProperties.IGNITE_FAIL_NODE_ON_UNRECOVERABLE_PARTITION_INCONSISTENCY;
 
 /**
  * todo CHECK with flag in gridcachedatastore
  */
 public class ReadOnlyGridCacheDataStore implements CacheDataStore {
     /** Update counter. */
-    private final PartitionUpdateCounter cntr;
+//    private final PartitionUpdateCounter cntr;
 
     /** */
     private final IgniteLogger log;
@@ -106,71 +98,78 @@ public class ReadOnlyGridCacheDataStore implements CacheDataStore {
             throw new IgniteException(e);
         }
 
-        if (grp.mvccEnabled())
-            cntr = new PartitionMvccTxUpdateCounterImpl();
-        else if (grp.hasAtomicCaches() || !grp.persistenceEnabled())
-            cntr = new PartitionAtomicUpdateCounterImpl();
-        else
-            cntr = new PartitionTxUpdateCounterImpl();
+//        if (grp.mvccEnabled())
+//            cntr = new PartitionMvccTxUpdateCounterImpl();
+//        else if (grp.hasAtomicCaches() || !grp.persistenceEnabled())
+//            cntr = new PartitionAtomicUpdateCounterImpl();
+//        else
+//            cntr = new PartitionTxUpdateCounterImpl();
     }
 
     /** {@inheritDoc} */
-    @Override public synchronized void init(long updCntr) {
+    @Override public long init(PartitionUpdateCounter partUpdateCounter) {
+        // No-op.
+        return 0;
 //        if (updCntr == 0)
-            resetUpdateCounter();
-
-        updateCounter(updCntr);
+//        resetUpdateCounter();
+//
+//        cntr.reserve(reserved);
+//
+//        updateCounter(updCntr);
+//
+//        assert cntr.reserved() >= cntr.get() : "hwm=" + cntr.reserved() + " lwm=" + cntr.get();
     }
 
     /** {@inheritDoc} */
     @Override public long nextUpdateCounter() {
-        return cntr.next();
+        return delegate.nextUpdateCounter();
     }
 
     /** {@inheritDoc} */
     @Override public long initialUpdateCounter() {
-        return cntr.initial();
+        return delegate.initialUpdateCounter();
     }
 
     /** {@inheritDoc} */
     @Override public void resetUpdateCounter() {
-        cntr.reset();
+        delegate.resetUpdateCounter();
     }
 
     /** {@inheritDoc} */
     @Override public long getAndIncrementUpdateCounter(long delta) {
-        return cntr.reserve(delta);
+        return delegate.getAndIncrementUpdateCounter(delta);
     }
 
     /** {@inheritDoc} */
     @Override public long updateCounter() {
-        return cntr.get();
+        return delegate.updateCounter();
     }
 
     /** {@inheritDoc} */
     @Override public void updateCounter(long val) {
-        try {
-            cntr.update(val);
-        }
-        catch (IgniteCheckedException e) {
-            U.error(log, "Failed to update partition counter. " +
-                "Most probably a node with most actual data is out of topology or data streamer is used " +
-                "in preload mode (allowOverride=false) concurrently with cache transactions [grpName=" +
-                grp.name() + ", partId=" + partId() + ']', e);
-
-            if (Boolean.getBoolean(IGNITE_FAIL_NODE_ON_UNRECOVERABLE_PARTITION_INCONSISTENCY))
-                ctx.kernalContext().failure().process(new FailureContext(FailureType.CRITICAL_ERROR, e));
-        }
+        delegate.updateCounter(val);
+//        try {
+//            delegate.updateCounter(val);
+//        }
+//        catch (IgniteCheckedException e) {
+//            U.error(log, "Failed to update partition counter. " +
+//                "Most probably a node with most actual data is out of topology or data streamer is used " +
+//                "in preload mode (allowOverride=false) concurrently with cache transactions [grpName=" +
+//                grp.name() + ", partId=" + partId() + ']', e);
+//
+//            if (Boolean.getBoolean(IGNITE_FAIL_NODE_ON_UNRECOVERABLE_PARTITION_INCONSISTENCY))
+//                ctx.kernalContext().failure().process(new FailureContext(FailureType.CRITICAL_ERROR, e));
+//        }
     }
 
     /** {@inheritDoc} */
     @Override public boolean updateCounter(long start, long delta) {
-        return cntr.update(start, delta);
+        return delegate.updateCounter(start, delta);
     }
 
     /** {@inheritDoc} */
     @Override public GridLongList finalizeUpdateCounters() {
-        return cntr.finalizeUpdateCounters();
+        return delegate.finalizeUpdateCounters();
     }
 
     /** {@inheritDoc} */
@@ -210,22 +209,22 @@ public class ReadOnlyGridCacheDataStore implements CacheDataStore {
 
     /** {@inheritDoc} */
     @Override public long reservedCounter() {
-        return cntr.reserved();
+        return delegate.reservedCounter();
     }
 
     /** {@inheritDoc} */
     @Override public @Nullable PartitionUpdateCounter partUpdateCounter() {
-        return cntr;
+        return delegate.partUpdateCounter();
     }
 
     /** {@inheritDoc} */
     @Override public long reserve(long delta) {
-        return cntr.reserve(delta);
+        return delegate.reserve(delta);
     }
 
     /** {@inheritDoc} */
     @Override public void updateInitialCounter(long start, long delta) {
-        cntr.update(start, delta);
+        delegate.updateInitialCounter(start, delta);
     }
 
     /** {@inheritDoc} */

@@ -1452,7 +1452,8 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
         private final CacheDataTree dataTree;
 
         /** Update counter. */
-        protected final PartitionUpdateCounter pCntr;
+        // todo set in constructor
+        protected volatile PartitionUpdateCounter pCntr;
 
         /** Partition size. */
         private final AtomicLong storageSize = new AtomicLong();
@@ -1511,8 +1512,13 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
             return false;
         }
 
-        @Override public void init(long updCntr) {
-            throw new IllegalStateException("Re-initialization of non-persisted cache.");
+        @Override public long init(PartitionUpdateCounter partUpdateCounter) {
+            long oldVal = pCntr.get();
+
+            pCntr = partUpdateCounter;
+
+            return oldVal;
+            //throw new IllegalStateException("Re-initialization of non-persisted cache.");
 //            assert false;
 //
 //            pCntr.init(updCntr, null);

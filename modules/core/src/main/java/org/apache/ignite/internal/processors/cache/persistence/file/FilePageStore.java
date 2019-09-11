@@ -341,11 +341,11 @@ public class FilePageStore implements PageStore {
 
     /** {@inheritDoc} */
     @Override public void truncate(int tag) throws StorageException {
-        U.dumpStack(">xxx> truncate");
-
         init();
 
         Path filePath = pathProvider.apply();
+
+        U.dumpStack(">xxx> truncate " + filePath);
 
         lock.writeLock().lock();
 

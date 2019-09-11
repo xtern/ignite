@@ -29,7 +29,7 @@ public class PartitionDownloadManager {
     /**
      * @param cctx Cache shared context.
      */
-    void start0(GridCacheSharedContext<?, ?> cctx) {
+    public void start0(GridCacheSharedContext<?, ?> cctx) {
         assert cctx.pageStore() instanceof FilePageStoreManager : cctx.pageStore();
 
         this.cctx = cctx;
@@ -40,7 +40,7 @@ public class PartitionDownloadManager {
     /**
      * @param cancel <tt>true</tt> to cancel all pending tasks.
      */
-    void stop0(boolean cancel) {
+    public void stop0(boolean cancel) {
         // No-op.
     }
 

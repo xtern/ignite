@@ -2041,7 +2041,7 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
         }
 
         /** {@inheritDoc} */
-        @Override public void init(long updCntr) {
+        @Override public long init(PartitionUpdateCounter partUpdateCounter) {
             delegate = null;
 
             init.set(false);
@@ -2050,11 +2050,11 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
                 // TODO add test when the storage is not inited at the current method called
                 CacheDataStore delegate0 = init0(false);
 
-                // todo think
-                updateCounter(updateCounter());
-
                 ofNullable(delegate0)
                     .orElseThrow(() -> new IgniteCheckedException("The storage must be present at inital phase"));
+
+                // todo think
+                return delegate0.init(partUpdateCounter);
 
 //                assert delegate0.fullSize() == size :
 //                    "oldSize=" + delegate0.fullSize() + ", newSize=" + size;

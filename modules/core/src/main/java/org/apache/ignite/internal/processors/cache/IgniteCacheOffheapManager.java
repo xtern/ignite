@@ -610,7 +610,7 @@ public interface IgniteCacheOffheapManager {
         /**
          * @param updCntr Update counter to init.
          */
-        void init(long updCntr);
+        long init(PartitionUpdateCounter partUpdateCounter);
 
         /**
          * @return Partition ID.
