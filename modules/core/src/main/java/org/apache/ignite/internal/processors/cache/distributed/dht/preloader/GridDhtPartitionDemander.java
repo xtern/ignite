@@ -73,7 +73,6 @@ import org.apache.ignite.internal.util.typedef.internal.LT;
 import org.apache.ignite.internal.util.typedef.internal.S;
 import org.apache.ignite.internal.util.typedef.internal.U;
 import org.apache.ignite.lang.IgniteInClosure;
-import org.apache.ignite.spi.IgniteSpiException;
 import org.jetbrains.annotations.Nullable;
 
 import static org.apache.ignite.events.EventType.EVT_CACHE_REBALANCE_OBJECT_LOADED;
@@ -418,11 +417,11 @@ public class GridDhtPartitionDemander {
     private void requestPartitions(final RebalanceFuture fut, GridDhtPreloaderAssignments assignments) {
         assert fut != null;
 
-        if (topologyChanged(fut)) {
-            fut.cancel();
-
-            return;
-        }
+//        if (topologyChanged(fut)) {
+//            fut.cancel();
+//
+//            return;
+//        }
 
         if (!ctx.kernalContext().grid().isRebalanceEnabled()) {
             if (log.isTraceEnabled())
@@ -604,7 +603,9 @@ public class GridDhtPartitionDemander {
     public void registerSupplyMessage(final UUID nodeId, final GridDhtPartitionSupplyMessage supplyMsg, final Runnable r) {
         final RebalanceFuture fut = rebalanceFut;
 
-        if (!topologyChanged(fut) && fut.isActual(supplyMsg.rebalanceId())) {
+        //!topologyChanged(fut)
+
+        if (fut.isActual(supplyMsg.rebalanceId())) {
             boolean historical = false;
 
             for (Integer p : supplyMsg.infos().keySet()) {
@@ -619,6 +620,8 @@ public class GridDhtPartitionDemander {
             else // Can be reordered.
                 ctx.kernalContext().getRebalanceExecutorService().execute(r);
         }
+        else
+            System.out.println(">>> future is not actual");
     }
 
     /**
@@ -655,7 +658,8 @@ public class GridDhtPartitionDemander {
             }
 
             // Topology already changed (for the future that supply message based on).
-            if (topologyChanged(fut) || !fut.isActual(supplyMsg.rebalanceId())) {
+            // topologyChanged(fut)
+            if (!fut.isActual(supplyMsg.rebalanceId())) {
                 if (log.isDebugEnabled())
                     log.debug("Supply message ignored (topology changed) [" + demandRoutineInfo(nodeId, supplyMsg) + "]");
 
@@ -811,7 +815,9 @@ public class GridDhtPartitionDemander {
 
                 d.topic(rebalanceTopic);
 
-                if (!topologyChanged(fut) && !fut.isDone()) {
+                // !topologyChanged(fut)
+
+                if (!fut.isDone()) {
                     // Send demand message.
                     try {
                         ctx.io().sendOrderedMessage(node, rebalanceTopic,
@@ -832,7 +838,7 @@ public class GridDhtPartitionDemander {
                             ", topChanged=" + topologyChanged(fut) + ", rebalanceFuture=" + fut + "]");
                 }
             }
-            catch (IgniteSpiException | IgniteCheckedException e) {
+            catch (RuntimeException | IgniteCheckedException e) {
                 fut.cancel(nodeId);
 
                 LT.error(log, e, "Error during rebalancing [" + demandRoutineInfo(nodeId, supplyMsg) +
@@ -852,7 +858,8 @@ public class GridDhtPartitionDemander {
         int p,
         final UUID nodeId,
         final GridDhtPartitionSupplyMessage supplyMsg) {
-        if (topologyChanged(fut) || !fut.isActual(supplyMsg.rebalanceId()))
+        // topologyChanged(fut)
+        if (!fut.isActual(supplyMsg.rebalanceId()))
             return;
 
         long queued = fut.queued.get(p).sum();
@@ -1276,6 +1283,8 @@ public class GridDhtPartitionDemander {
          * @return {@code True}.
          */
         @Override public boolean cancel() {
+            U.dumpStack("canceled");
+
             try {
                 // Cancel lock is needed only for case when some message might be on the fly while rebalancing is
                 // cancelled.

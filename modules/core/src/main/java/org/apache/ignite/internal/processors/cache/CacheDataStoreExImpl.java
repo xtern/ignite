@@ -109,6 +109,8 @@ public class CacheDataStoreExImpl implements CacheDataStoreEx {
     /** {@inheritDoc} */
     @Override public void readOnly(boolean readOnly) {
         if (this.readOnly.compareAndSet(!readOnly, readOnly)) {
+            log.warning(">>>>>\n" + ">>>>> part changed to " + (readOnly ? "readonly" : "full"));
+
             assert cctx.database().checkpointLockIsHeldByThread() : "Changing mode required checkpoint write lock";
 
             // todo should re-initialize storage and sync this somehow
@@ -162,8 +164,8 @@ public class CacheDataStoreExImpl implements CacheDataStoreEx {
 //    }
 //
     /** {@inheritDoc} */
-    @Override public long init(PartitionUpdateCounter pCntr) {
-        return activeStorage().init(pCntr);
+    @Override public void init(PartitionUpdateCounter pCntr) {
+        activeStorage().init(pCntr);
         //throw new UnsupportedOperationException("The init method of proxy storage must never be called.");
     }
 
@@ -182,6 +184,8 @@ public class CacheDataStoreExImpl implements CacheDataStoreEx {
     /** {@inheritDoc} */
     @Override public void insertRows(Collection<DataRowCacheAware> rows,
         IgnitePredicateX<CacheDataRow> initPred) throws IgniteCheckedException {
+        System.out.println(">xxx> insert " + rows.size());
+
         activeStorage().insertRows(rows, initPred);
     }
 
@@ -304,7 +308,12 @@ public class CacheDataStoreExImpl implements CacheDataStoreEx {
         KeyCacheObject key,
         IgniteCacheOffheapManager.OffheapInvokeClosure c
     ) throws IgniteCheckedException {
+//        cctx.shared().database().checkpointReadLock();
+//        try {
         activeStorage().invoke(cctx, key, c);
+//        } finally {
+//            cctx.shared().database().checkpointReadUnlock();
+//        }
     }
 
     /** {@inheritDoc} */
@@ -376,9 +385,6 @@ public class CacheDataStoreExImpl implements CacheDataStoreEx {
 
     /** {@inheritDoc} */
     @Override public GridCursor<? extends CacheDataRow> cursor(int cacheId) throws IgniteCheckedException {
-        CacheDataStore s = activeStorage();
-        System.out.println(">xxx> activeStorage()=" + s.getClass());
-
         return activeStorage().cursor(cacheId);
     }
 

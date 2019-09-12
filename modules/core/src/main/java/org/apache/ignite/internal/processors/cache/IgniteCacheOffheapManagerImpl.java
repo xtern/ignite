@@ -47,6 +47,8 @@ import org.apache.ignite.internal.pagemem.wal.record.delta.DataPageMvccMarkUpdat
 import org.apache.ignite.internal.pagemem.wal.record.delta.DataPageMvccUpdateNewTxStateHintRecord;
 import org.apache.ignite.internal.pagemem.wal.record.delta.DataPageMvccUpdateTxStateHintRecord;
 import org.apache.ignite.internal.processors.affinity.AffinityTopologyVersion;
+import org.apache.ignite.internal.processors.cache.IgniteCacheOffheapManager.CacheDataStore;
+import org.apache.ignite.internal.processors.cache.IgniteCacheOffheapManager.OffheapInvokeClosure;
 import org.apache.ignite.internal.processors.cache.distributed.dht.colocated.GridDhtDetachedCacheEntry;
 import org.apache.ignite.internal.processors.cache.distributed.dht.preloader.CachePartitionPartialCountersMap;
 import org.apache.ignite.internal.processors.cache.distributed.dht.preloader.IgniteDhtDemandedPartitionsMap;
@@ -1452,8 +1454,7 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
         private final CacheDataTree dataTree;
 
         /** Update counter. */
-        // todo set in constructor
-        protected volatile PartitionUpdateCounter pCntr;
+        private final PartitionUpdateCounter pCntr;
 
         /** Partition size. */
         private final AtomicLong storageSize = new AtomicLong();
@@ -1512,13 +1513,13 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
             return false;
         }
 
-        @Override public long init(PartitionUpdateCounter partUpdateCounter) {
-            long oldVal = pCntr.get();
+        @Override public void init(PartitionUpdateCounter partUpdateCounter) {
+//            long oldVal = pCntr.get();
 
-            pCntr = partUpdateCounter;
+//            pCntr = partUpdateCounter;
 
-            return oldVal;
-            //throw new IllegalStateException("Re-initialization of non-persisted cache.");
+//            return oldVal;
+            throw new IllegalStateException("Re-initialization of non-persisted cache.");
 //            assert false;
 //
 //            pCntr.init(updCntr, null);
@@ -3040,9 +3041,6 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
          */
         public void restoreState(long size, long updCntr, @Nullable Map<Integer, Long> cacheSizes, byte[] cntrUpdData) {
             pCntr.init(updCntr, cntrUpdData);
-
-            if (size == 0 && !grp.cacheOrGroupName().contains("sys-cache"))
-                U.dumpStack(">xxx> " + ctx.localNodeId() + " updateSize4 " + size);
 
             storageSize.set(size);
 

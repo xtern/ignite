@@ -65,6 +65,7 @@ import org.apache.ignite.internal.processors.cache.GridCacheContext;
 import org.apache.ignite.internal.processors.cache.GridCacheEntryEx;
 import org.apache.ignite.internal.processors.cache.GridCacheMvccEntryInfo;
 import org.apache.ignite.internal.processors.cache.GridCacheTtlManager;
+import org.apache.ignite.internal.processors.cache.IgniteCacheOffheapManager.CacheDataStore;
 import org.apache.ignite.internal.processors.cache.IgniteCacheOffheapManagerImpl;
 import org.apache.ignite.internal.processors.cache.KeyCacheObject;
 import org.apache.ignite.internal.processors.cache.PartitionUpdateCounter;
@@ -112,7 +113,6 @@ import org.apache.ignite.internal.util.typedef.internal.U;
 import org.apache.ignite.lang.IgniteBiTuple;
 import org.jetbrains.annotations.Nullable;
 
-import static java.util.Optional.ofNullable;
 import static org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtPartitionState.MOVING;
 import static org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtPartitionState.OWNING;
 import static org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtPartitionState.RENTING;
@@ -1659,6 +1659,11 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
             return grp.cacheOrGroupName() + "-" +"PendingEntries-" + partId;
         }
 
+//        private CacheDataStore init0(boolean checkExists) {
+//            return init0()
+//        }
+//        , PartitionUpdateCounter cntr
+//
         /**
          * @return Store delegate.
          * @throws IgniteCheckedException If failed.
@@ -1683,9 +1688,6 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
                 dbMgr.checkpointReadLock();
 
                 try {
-
-                    System.out.println("init please");
-
                     Metas metas = getOrAllocatePartitionMetas();
 
                     if (PageIdUtils.partId(metas.reuseListRoot.pageId().pageId()) != partId ||
@@ -2041,28 +2043,19 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
         }
 
         /** {@inheritDoc} */
-        @Override public long init(PartitionUpdateCounter partUpdateCounter) {
-            delegate = null;
-
-            init.set(false);
-
+        @Override public void init(PartitionUpdateCounter partUpdateCounter) {
             try {
+                delegate = null;
+
+                init.set(false);
+
                 // TODO add test when the storage is not inited at the current method called
                 CacheDataStore delegate0 = init0(false);
 
-                ofNullable(delegate0)
-                    .orElseThrow(() -> new IgniteCheckedException("The storage must be present at inital phase"));
+                assert delegate0 != null;
 
-                // todo think
-                return delegate0.init(partUpdateCounter);
-
-//                assert delegate0.fullSize() == size :
-//                    "oldSize=" + delegate0.fullSize() + ", newSize=" + size;
-//                assert delegate0.updateCounter() == updCntr :
-//                    "oldUpdCntr=" + delegate0.updateCounter() + ", newUpdCntr=" + updCntr;
-//                assert (delegate0.cacheSizes() == null && cacheSizes == null) ||
-//                    ofNullable(cacheSizes).orElse(new HashMap<>()).equals(delegate0.cacheSizes()) :
-//                    "oldCacheSizes=" + delegate0.cacheSizes() + ", newCacheSizes=" + cacheSizes;
+                // todo initialize properly or don't remove them
+                partDataStores.put(partId, this);
             }
             catch (IgniteCheckedException e) {
                 throw new IgniteException(e);
@@ -2110,13 +2103,7 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
             try {
                 CacheDataStore delegate0 = init0(true);
 
-                //System.out.println("delegate0 " + delegate0.getClass().getName());
-
-                long size = delegate0 == null ? 0 : delegate0.cacheSize(cacheId);
-
-                System.out.println("size: " + size + " class=" + delegate0.getClass().getName());
-
-                return size;
+                return delegate0 == null ? 0 : delegate0.cacheSize(cacheId);
             }
             catch (IgniteCheckedException e) {
                 throw new IgniteException(e);
@@ -2624,11 +2611,8 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
         @Override public GridCursor<? extends CacheDataRow> cursor(int cacheId) throws IgniteCheckedException {
             CacheDataStore delegate = init0(true);
 
-            if (delegate != null) {
-                System.out.println(">xxx> return cursor delegate " + delegate.getClass().getSimpleName());
-
+            if (delegate != null)
                 return delegate.cursor(cacheId);
-            }
 
             return EMPTY_CURSOR;
         }

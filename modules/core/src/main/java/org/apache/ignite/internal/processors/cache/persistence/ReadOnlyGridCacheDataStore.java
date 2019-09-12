@@ -107,9 +107,8 @@ public class ReadOnlyGridCacheDataStore implements CacheDataStore {
     }
 
     /** {@inheritDoc} */
-    @Override public long init(PartitionUpdateCounter partUpdateCounter) {
+    @Override public void init(PartitionUpdateCounter partUpdateCounter) {
         // No-op.
-        return 0;
 //        if (updCntr == 0)
 //        resetUpdateCounter();
 //
@@ -287,6 +286,7 @@ public class ReadOnlyGridCacheDataStore implements CacheDataStore {
 
     /** {@inheritDoc} */
     @Override public void insertRows(Collection<DataRowCacheAware> rows, IgnitePredicateX<CacheDataRow> initPred){
+        System.out.println("mo-op");
         // No-op.
     }
 

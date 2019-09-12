@@ -18,12 +18,15 @@
 package org.apache.ignite.internal.processors.database;
 
 import java.io.File;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Random;
 import java.util.Set;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.atomic.AtomicLong;
+import javax.cache.Cache;
 import org.apache.ignite.IgniteCache;
 import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.cache.CacheAtomicityMode;
@@ -40,6 +43,7 @@ import org.apache.ignite.configuration.WALMode;
 import org.apache.ignite.internal.IgniteEx;
 import org.apache.ignite.internal.IgniteInternalFuture;
 import org.apache.ignite.internal.IgniteInterruptedCheckedException;
+import org.apache.ignite.internal.processors.affinity.AffinityTopologyVersion;
 import org.apache.ignite.internal.processors.cache.GridCacheContext;
 import org.apache.ignite.internal.processors.cache.IgniteInternalCache;
 import org.apache.ignite.internal.processors.cache.distributed.dht.preloader.GridCachePreloadSharedManager;
@@ -49,6 +53,7 @@ import org.apache.ignite.internal.processors.cache.persistence.file.FilePageStor
 import org.apache.ignite.internal.processors.cache.persistence.file.RandomAccessFileIOFactory;
 import org.apache.ignite.internal.util.future.GridCompoundFuture;
 import org.apache.ignite.internal.util.io.GridFileUtils;
+import org.apache.ignite.internal.util.typedef.PA;
 import org.apache.ignite.internal.util.typedef.T2;
 import org.apache.ignite.internal.util.typedef.internal.U;
 import org.apache.ignite.testframework.GridTestUtils;
@@ -68,7 +73,7 @@ import static org.apache.ignite.internal.util.IgniteUtils.GB;
  */
 public class GridCacheStoreReinitializationTest extends GridCommonAbstractTest {
     /** */
-    private static final int PARTS_CNT = 4;
+    private static final int PARTS_CNT = 8;
 
     /** */
     @Override protected IgniteConfiguration getConfiguration(String igniteInstanceName) throws Exception {
@@ -121,10 +126,6 @@ public class GridCacheStoreReinitializationTest extends GridCommonAbstractTest {
     @Test
     @WithSystemProperty(key = IGNITE_PDS_WAL_REBALANCE_THRESHOLD, value = "1")
     public void checkInitPartitionWithConstantLoad() throws Exception {
-//        int initCnt = 5_000 * PARTS_CNT;
-//        int preloadCnt = initCnt * 2;
-//        int totalCnt = preloadCnt * 2;
-
         IgniteEx node0 = startGrid(1);
         IgniteEx node1 = startGrid(2);
 
@@ -152,17 +153,21 @@ public class GridCacheStoreReinitializationTest extends GridCommonAbstractTest {
 
         GridCompoundFuture<Void,Void> destroyFut = new GridCompoundFuture<>();
 
-        destroyFut.markInitialized();
-
         System.out.println(">>> switch to READ ONLY");
 
+        AffinityTopologyVersion topVer = cctx.topology().readyTopologyVersion();
+
         // Destroy partitions.
-        for (GridDhtLocalPartition part : cctx.topology().localPartitions()) {
+        for (int p : cctx.affinity().backupPartitions(cctx.localNodeId(), topVer)) {
+            GridDhtLocalPartition part = cctx.topology().localPartition(p);
+
             part.moving();
 
             // Simulating that part was downloaded and compltely destroying partition.
             destroyFut.add(preloader.schedulePartitionDestroy(part));
         }
+
+        destroyFut.markInitialized();
 
         forceCheckpoint(node1);
 
@@ -172,14 +177,14 @@ public class GridCacheStoreReinitializationTest extends GridCommonAbstractTest {
 
         forceCheckpoint(node0);
 
-        List<GridDhtLocalPartition> parts = cache.context().topology().localPartitions();
+        Map<Integer, File> partFiles = new HashMap<>();
 
-        File[] partFiles = new File[parts.size()];
+        for (int p : cctx.affinity().backupPartitions(cctx.localNodeId(), topVer)) {
+            GridDhtLocalPartition part = cache.context().topology().localPartition(p);
 
-        for (GridDhtLocalPartition part : parts) {
             File src = new File(filePageStorePath(part));
 
-            String node1filePath = filePageStorePath(node1.cachex(DEFAULT_CACHE_NAME).context().topology().localPartition(part.id()));
+            String node1filePath = filePageStorePath(cctx.topology().localPartition(part.id()));
 
             File dest = new File(node1filePath +  ".tmp");
 
@@ -189,61 +194,80 @@ public class GridCacheStoreReinitializationTest extends GridCommonAbstractTest {
 
             GridFileUtils.copy(ioFactory, src, ioFactory, dest, Long.MAX_VALUE);
 
-            partFiles[part.id()] = dest;
+            partFiles.put(part.id(), dest);
         }
 
         ldr.resume();
 
         U.sleep(1_000);
 
-//        CachePeekMode[] peekAll = new CachePeekMode[] {CachePeekMode.ALL};
-
-//        assertEquals(preloadCnt, cache.localSize(peekAll));
-
-        // We can re-init partition just after destroy.
         destroyFut.get();
 
-        long[] hwms = new long[cctx.topology().localPartitions().size()];
-        long[] lwms = new long[hwms.length];
-        int[] partsArr = new int[hwms.length];
+        Set<Integer> backupParts = cctx.affinity().backupPartitions(cctx.localNodeId(), topVer);
 
-        IgniteInternalFuture[] futs = new IgniteInternalFuture[hwms.length];
+        int backupPartsCnt = backupParts.size();
 
-        System.out.println(">>> switch to FULL");
+        long[] hwms = new long[backupPartsCnt];
+        long[] lwms = new long[backupPartsCnt];
+        int[] partsArr = new int[backupPartsCnt];
+
+        IgniteInternalFuture[] futs = new IgniteInternalFuture[backupPartsCnt];
 
         // Restore partitions.
-        for (GridDhtLocalPartition part : cctx.topology().localPartitions())
-            futs[part.id()] = preloader.restorePartition(part.id(), partFiles[part.id()], cctx);
+        int n = 0;
+
+        for (int p : backupParts) {
+            GridDhtLocalPartition part = cctx.topology().localPartition(p);
+
+            futs[n++] = preloader.restorePartition(part.id(), partFiles.get(part.id()), cctx);
+        }
 
         forceCheckpoint(node1);
 
-        for (int i = 0; i < hwms.length; i++) {
-            T2<Long, Long> cntrPair = (T2<Long, Long>)futs[i].get();
+        n = 0;
 
-            lwms[i] = cntrPair.get1();
-            hwms[i] = cntrPair.get2();
-            partsArr[i] = i;
+        for (int p : backupParts) {
+            IgniteInternalFuture fut = futs[n];
 
-            System.out.println(">>>> part " + i + " from " + lwms[i] + " to " + hwms[i]);
+            T2<Long, Long> cntrPair = (T2<Long, Long>)fut.get();
+
+            lwms[n] = cntrPair.get1();
+            hwms[n] = cntrPair.get2();
+            partsArr[n] = p;
+
+            System.out.println(">>>> Triggering rebalancing: part " + p + " [" + lwms[n] + " - " + hwms[n] + "]");
+
+            ++n;
         }
+        preloader.triggerHistoricalRebalance(node0.localNode(), cctx, partsArr, lwms, hwms, backupPartsCnt);
 
-        System.out.println("Triggering rebalancing ");
+        System.out.println("Wait rebalance finish");
 
-        preloader.triggerHistoricalRebalance(node0.localNode(), cctx, partsArr, lwms, hwms, PARTS_CNT);
-
-        U.sleep(15_000);
+        // todo fix topology changes
+        cctx.preloader().rebalanceFuture().get();
 
         ldr.stop();
 
         ldrFut.get();
 
-//        for (int i = preloadCnt; i < totalCnt; i++)
-//            cache.put(i, i);
-//
-//        for (GridDhtLocalPartition part : cctx.topology().localPartitions())
-//            assertEquals(totalCnt / cctx.topology().localPartitions().size(), part.fullSize());
-//
-//        validateLocal(node1.cachex(DEFAULT_CACHE_NAME), totalCnt);
+        System.out.println("Validating data");
+
+        CachePeekMode[] peekAll = new CachePeekMode[] {CachePeekMode.ALL};
+
+        IgniteInternalCache<Object, Object> cache0 = node0.cachex(DEFAULT_CACHE_NAME);
+        IgniteInternalCache<Object, Object> cache1 = node1.cachex(DEFAULT_CACHE_NAME);
+
+        int size0 = cache0.localSize(peekAll);
+        int size1 = cache1.localSize(peekAll);
+
+        assertEquals(size0, size1);
+
+        Iterable<Cache.Entry<Object, Object>> itr0 = cache0.localEntries(peekAll);
+
+        for (Cache.Entry<Object, Object> e : itr0)
+            e.getValue().equals(cache1.get(e.getKey()) == e.getValue());
+
+        System.out.println("Stopping");
     }
 
     /**
@@ -257,15 +281,6 @@ public class GridCacheStoreReinitializationTest extends GridCommonAbstractTest {
         return ((FilePageStore)pageStoreMgr.getStore(part.group().groupId(), part.id())).getFileAbsolutePath();
     }
 
-    private void validateLocal(IgniteInternalCache<Integer, Integer> cache, int size) throws IgniteCheckedException {
-        assertEquals(size, cache.size());
-
-        CachePeekMode[] peekAll = new CachePeekMode[] {CachePeekMode.ALL};
-
-        for (int i = 0; i < size; i++)
-            assertEquals(String.valueOf(i), Integer.valueOf(i), cache.localPeek(i, peekAll));
-    }
-
     /** */
     private static class ConstantLoader implements Runnable {
         /** */
@@ -274,6 +289,7 @@ public class GridCacheStoreReinitializationTest extends GridCommonAbstractTest {
         /** */
         private volatile boolean pause;
 
+        /** */
         private volatile boolean paused;
 
         /** */
@@ -313,53 +329,10 @@ public class GridCacheStoreReinitializationTest extends GridCommonAbstractTest {
 
                 long from = cntr.getAndAdd(100);
 
-                for (long i = from; i < from + 100; i++) {
-//                    boolean rmv0 = rmv.get();
-//
-//                    if (rmv0 != rmvPrev) {
-//                        if (rmv0)
-//                            rmvOffset = i;
-//                        else
-//                            rmvOffsetStop = i;
-//
-//                        rmvPrev = rmv0;
-//                    }
-
+                for (long i = from; i < from + 100; i++)
                     cache.put(i, i);
-
-//                    if (off > 0 && rmv0 && rnd.nextBoolean()) {
-//                        int rmvKey = i - off;
-//                        cache.remove(rmvKey);
-//
-//                        rmvKeys.add(rmvKey);
-//                    }
-                }
-
-                try {
-                    U.sleep(rnd.nextInt(10));
-                }
-                catch (IgniteInterruptedCheckedException e) {
-                    break;
-                }
-
-//                off += cnt;
             }
-
-//            int last = off - 1;
-//
-//            if (rmvOffsetStop == -1)
-//                rmvOffsetStop = last;
-
-//            return 0;
         }
-
-//        public int rmvStopIdx() {
-//            return rmvOffsetStop;
-//        }
-//
-//        public int rmvStartIdx() {
-//            return rmvOffset;
-//        }
 
         public Set<Integer> rmvKeys() {
             return rmvKeys;
@@ -484,6 +457,9 @@ public class GridCacheStoreReinitializationTest extends GridCommonAbstractTest {
         for (GridDhtLocalPartition part : cctx.topology().localPartitions())
             assertEquals(totalCnt / cctx.topology().localPartitions().size(), part.fullSize());
 
-        validateLocal(node1.cachex(DEFAULT_CACHE_NAME), totalCnt);
+        assertEquals(totalCnt, node0.cache(DEFAULT_CACHE_NAME).size());
+
+        for (int i = 0; i < totalCnt; i++)
+            assertEquals(String.valueOf(i), i, node0.cachex(DEFAULT_CACHE_NAME).localPeek(i, peekAll));
     }
 }

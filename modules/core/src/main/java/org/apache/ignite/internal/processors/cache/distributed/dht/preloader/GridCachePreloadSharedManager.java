@@ -51,7 +51,6 @@ import org.apache.ignite.internal.processors.affinity.AffinityTopologyVersion;
 import org.apache.ignite.internal.processors.cache.CacheGroupContext;
 import org.apache.ignite.internal.processors.cache.GridCacheContext;
 import org.apache.ignite.internal.processors.cache.GridCacheSharedManagerAdapter;
-import org.apache.ignite.internal.processors.cache.PartitionUpdateCounter;
 import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtLocalPartition;
 import org.apache.ignite.internal.processors.cache.persistence.DbCheckpointListener;
 import org.apache.ignite.internal.processors.cache.persistence.GridCacheDatabaseSharedManager;
@@ -71,7 +70,6 @@ import org.apache.ignite.internal.util.typedef.internal.CU;
 import org.apache.ignite.internal.util.typedef.internal.S;
 import org.apache.ignite.internal.util.typedef.internal.U;
 import org.apache.ignite.lang.IgniteInClosure;
-import org.jetbrains.annotations.Nullable;
 
 import static org.apache.ignite.internal.GridTopic.TOPIC_REBALANCE;
 import static org.apache.ignite.internal.managers.communication.GridIoPolicy.SYSTEM_POOL;
@@ -640,6 +638,8 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
             rebalanceIdCntr.getAndIncrement(),
             null,
             fut);
+
+        cur.run();
     }
 
     public IgniteInternalFuture<Void> schedulePartitionDestroy(GridDhtLocalPartition part) {
@@ -650,7 +650,9 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
         ).listen(
             c -> destroyPartition(part)
                 .listen(
-                    c0 -> fut.onDone()
+                    c0 -> {
+                        fut.onDone();
+                    }
                 )
         );
 
@@ -681,14 +683,18 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
                     try {
                         // todo something smarter - store will be removed on next checkpoint.
                         while (ctx.shared().pageStore().exists(grpId, part.id())) {
-//                            System.out.println("wait untl partition will be destroyed");
+//                            System.out.println(">>> wait untl partition will be destroyed " + part.id());
 
                             U.sleep(200);
                         }
 
-                        System.out.println("finishing destroy future");
+//                        System.out.println("finishing destroy future");
 
-                        destroyFut.onDone();
+                        ((PageMemoryEx)ctx.dataRegion().pageMemory())
+                            .clearAsync((grp, pageId) -> grp == grpId && part.id() == PageIdUtils.partId(pageId), true)
+                            .listen(c1 -> {
+                                destroyFut.onDone();
+                            });
                     }
                     catch (IgniteCheckedException e) {
                         destroyFut.onDone(e);
@@ -718,18 +724,9 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
         AffinityTopologyVersion affVer = cctx.topology().readyTopologyVersion();
 
         // Create partition.
-        GridDhtLocalPartition part = cctx.topology().localPartition(partId, affVer, true, true);
+        GridDhtLocalPartition part = cctx.topology().forceCreatePartition(partId);
 
-        // todo why we still finding dirty pages sometimes?
-        IgniteInternalFuture<Void> cleanupFut = ((PageMemoryEx)cctx.dataRegion().pageMemory())
-            .clearAsync((grp, pageId) -> {
-                boolean res = grp == cctx.groupId() && part.id() == PageIdUtils.partId(pageId);
-
-                if (res)
-                    log.warning("Dirty page found: " + pageId);
-
-                return res;
-            }, true);
+//            cctx.topology().localPartition(partId, affVer, true, true);
 
         IgnitePageStoreManager pageStoreMgr = cctx.group().shared().pageStore();
 
@@ -739,14 +736,9 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
 
         assert store instanceof FilePageStore : store;
 
+        assert !store.exists();
+
         File dst = new File(((FilePageStore)store).getFileAbsolutePath());
-
-//        assert !store.exists();
-//        assert !dst.exists();
-
-//        // todo why file still exists
-        while (store.exists())
-            log.warning(">>> wait for remove " + dst);
 
         log.info("Moving downloaded partition file: " + fsPartFile + " --> " + dst);
 
@@ -759,18 +751,14 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
         }
 
         return offerCheckpointTask(() -> {
-            cleanupFut.get();
-
-            PartitionUpdateCounter cntr = part.dataStore().partUpdateCounter();
+            long to = part.dataStore().updateCounter();
 
             part.readOnly(false);
 
-            // todo update counter value is ignored
-            long from = part.dataStore().init(cntr);
+            // todo
+            part.dataStore().init(null);
 
-//            part.dataStore().updateCounter();
-
-            return new T2<>(from, cntr.get());
+            return new T2<>(part.updateCounter(), to);
         });
     }
 
