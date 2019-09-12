@@ -20,6 +20,7 @@ package org.apache.ignite.internal.processors.cache.persistence;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
 import javax.cache.processor.EntryProcessor;
 import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.IgniteException;
@@ -58,9 +59,6 @@ import org.jetbrains.annotations.Nullable;
  * todo CHECK with flag in gridcachedatastore
  */
 public class ReadOnlyGridCacheDataStore implements CacheDataStore {
-    /** Update counter. */
-//    private final PartitionUpdateCounter cntr;
-
     /** */
     private final IgniteLogger log;
 
@@ -71,10 +69,7 @@ public class ReadOnlyGridCacheDataStore implements CacheDataStore {
     private final NoopRowStore rowStore;
 
     /** */
-    private final CacheGroupContext grp;
-
-    /** */
-    private final GridCacheSharedContext ctx;
+    private final AtomicBoolean disableRemoves = new AtomicBoolean();
 
     /**
      * todo
@@ -84,12 +79,9 @@ public class ReadOnlyGridCacheDataStore implements CacheDataStore {
         GridCacheSharedContext ctx,
         CacheDataStore delegate
     ) {
-        this.grp = grp;
-        this.ctx = ctx;
         this.delegate = delegate;
 
         log = ctx.logger(getClass());
-
 
         try {
             rowStore = new NoopRowStore(grp, new NoopFreeList(grp.dataRegion()));
@@ -97,26 +89,16 @@ public class ReadOnlyGridCacheDataStore implements CacheDataStore {
         catch (IgniteCheckedException e) {
             throw new IgniteException(e);
         }
+    }
 
-//        if (grp.mvccEnabled())
-//            cntr = new PartitionMvccTxUpdateCounterImpl();
-//        else if (grp.hasAtomicCaches() || !grp.persistenceEnabled())
-//            cntr = new PartitionAtomicUpdateCounterImpl();
-//        else
-//            cntr = new PartitionTxUpdateCounterImpl();
+    public void disableRemoves() {
+        if (disableRemoves.compareAndSet(false, true))
+            log.info("Changing data store mode to READ [p=" + partId() + "]");
     }
 
     /** {@inheritDoc} */
-    @Override public void init(PartitionUpdateCounter partUpdateCounter) {
+    @Override public void reinit(PartitionUpdateCounter partUpdateCounter) {
         // No-op.
-//        if (updCntr == 0)
-//        resetUpdateCounter();
-//
-//        cntr.reserve(reserved);
-//
-//        updateCounter(updCntr);
-//
-//        assert cntr.reserved() >= cntr.get() : "hwm=" + cntr.reserved() + " lwm=" + cntr.get();
     }
 
     /** {@inheritDoc} */
@@ -264,7 +246,8 @@ public class ReadOnlyGridCacheDataStore implements CacheDataStore {
         int partId
     ) throws IgniteCheckedException {
         // todo think
-        delegate.remove(cctx, key, partId);
+        if (!disableRemoves.get())
+            delegate.remove(cctx, key, partId);
     }
 
     /** {@inheritDoc} */
@@ -286,7 +269,6 @@ public class ReadOnlyGridCacheDataStore implements CacheDataStore {
 
     /** {@inheritDoc} */
     @Override public void insertRows(Collection<DataRowCacheAware> rows, IgnitePredicateX<CacheDataRow> initPred){
-        System.out.println("mo-op");
         // No-op.
     }
 
@@ -341,7 +323,8 @@ public class ReadOnlyGridCacheDataStore implements CacheDataStore {
 
     /** {@inheritDoc} */
     @Override public void clear(int cacheId) throws IgniteCheckedException {
-        delegate.clear(cacheId);
+        if (!disableRemoves.get())
+            delegate.clear(cacheId);
     }
 
     /** {@inheritDoc} */

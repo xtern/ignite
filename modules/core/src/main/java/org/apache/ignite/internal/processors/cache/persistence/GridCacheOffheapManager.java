@@ -2043,7 +2043,7 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
         }
 
         /** {@inheritDoc} */
-        @Override public void init(PartitionUpdateCounter partUpdateCounter) {
+        @Override public void reinit(PartitionUpdateCounter partUpdateCounter) {
             try {
                 delegate = null;
 

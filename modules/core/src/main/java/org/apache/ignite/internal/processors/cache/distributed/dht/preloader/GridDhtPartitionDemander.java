@@ -417,11 +417,11 @@ public class GridDhtPartitionDemander {
     private void requestPartitions(final RebalanceFuture fut, GridDhtPreloaderAssignments assignments) {
         assert fut != null;
 
-//        if (topologyChanged(fut)) {
-//            fut.cancel();
-//
-//            return;
-//        }
+        if (topologyChanged(fut)) {
+            fut.cancel();
+
+            return;
+        }
 
         if (!ctx.kernalContext().grid().isRebalanceEnabled()) {
             if (log.isTraceEnabled())
@@ -603,9 +603,7 @@ public class GridDhtPartitionDemander {
     public void registerSupplyMessage(final UUID nodeId, final GridDhtPartitionSupplyMessage supplyMsg, final Runnable r) {
         final RebalanceFuture fut = rebalanceFut;
 
-        //!topologyChanged(fut)
-
-        if (fut.isActual(supplyMsg.rebalanceId())) {
+        if (!topologyChanged(fut) && fut.isActual(supplyMsg.rebalanceId())) {
             boolean historical = false;
 
             for (Integer p : supplyMsg.infos().keySet()) {
@@ -620,8 +618,6 @@ public class GridDhtPartitionDemander {
             else // Can be reordered.
                 ctx.kernalContext().getRebalanceExecutorService().execute(r);
         }
-        else
-            System.out.println(">>> future is not actual");
     }
 
     /**
@@ -658,8 +654,7 @@ public class GridDhtPartitionDemander {
             }
 
             // Topology already changed (for the future that supply message based on).
-            // topologyChanged(fut)
-            if (!fut.isActual(supplyMsg.rebalanceId())) {
+            if (topologyChanged(fut) || !fut.isActual(supplyMsg.rebalanceId())) {
                 if (log.isDebugEnabled())
                     log.debug("Supply message ignored (topology changed) [" + demandRoutineInfo(nodeId, supplyMsg) + "]");
 
@@ -815,9 +810,7 @@ public class GridDhtPartitionDemander {
 
                 d.topic(rebalanceTopic);
 
-                // !topologyChanged(fut)
-
-                if (!fut.isDone()) {
+                if (!topologyChanged(fut) && !fut.isDone()) {
                     // Send demand message.
                     try {
                         ctx.io().sendOrderedMessage(node, rebalanceTopic,
@@ -858,8 +851,7 @@ public class GridDhtPartitionDemander {
         int p,
         final UUID nodeId,
         final GridDhtPartitionSupplyMessage supplyMsg) {
-        // topologyChanged(fut)
-        if (!fut.isActual(supplyMsg.rebalanceId()))
+        if (topologyChanged(fut) || !fut.isActual(supplyMsg.rebalanceId()))
             return;
 
         long queued = fut.queued.get(p).sum();

@@ -1513,28 +1513,9 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
             return false;
         }
 
-        @Override public void init(PartitionUpdateCounter partUpdateCounter) {
-//            long oldVal = pCntr.get();
-
-//            pCntr = partUpdateCounter;
-
-//            return oldVal;
-            throw new IllegalStateException("Re-initialization of non-persisted cache.");
-//            assert false;
-//
-//            pCntr.init(updCntr, null);
-//
-//            if ("default".equalsIgnoreCase(grp.cacheOrGroupName()))
-//                System.out.println(ctx.localNodeId() + " initsize " + size);
-//
-//            storageSize.set(size);
-//
-//            this.cacheSizes.clear();
-//
-//            if (cacheSizes != null) {
-//                for (Map.Entry<Integer, Long> e : cacheSizes.entrySet())
-//                    this.cacheSizes.put(e.getKey(), new AtomicLong(e.getValue()));
-//            }
+        /** {@inheritDoc} */
+        @Override public void reinit(PartitionUpdateCounter partUpdateCounter) {
+            throw new IllegalStateException("Re-initialization of non-persisted partition is redundant.");
         }
 
         /** {@inheritDoc} */
@@ -1590,9 +1571,6 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
 
         /** {@inheritDoc} */
         @Override public void updateSize(int cacheId, long delta) {
-//            if (CU.cacheId("default") == cacheId)
-//                System.out.println("update delta " + delta + " total = " + storageSize.get());
-
             storageSize.addAndGet(delta);
 
             if (grp.sharedGroup()) {
@@ -2876,7 +2854,6 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
 
         /** {@inheritDoc} */
         @Override public GridCursor<? extends CacheDataRow> cursor() throws IgniteCheckedException {
-            System.out.println(">xxx> cursor ignite");
             return dataTree.find(null, null);
         }
 

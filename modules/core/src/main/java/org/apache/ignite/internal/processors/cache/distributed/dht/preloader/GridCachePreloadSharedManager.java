@@ -54,6 +54,7 @@ import org.apache.ignite.internal.processors.cache.GridCacheSharedManagerAdapter
 import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtLocalPartition;
 import org.apache.ignite.internal.processors.cache.persistence.DbCheckpointListener;
 import org.apache.ignite.internal.processors.cache.persistence.GridCacheDatabaseSharedManager;
+import org.apache.ignite.internal.processors.cache.persistence.ReadOnlyGridCacheDataStore;
 import org.apache.ignite.internal.processors.cache.persistence.file.FilePageStore;
 import org.apache.ignite.internal.processors.cache.persistence.file.FilePageStoreManager;
 import org.apache.ignite.internal.processors.cache.persistence.pagemem.PageMemoryEx;
@@ -666,40 +667,30 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
         part.clearAsync();
 
         part.onClearFinished(c -> {
-            CacheGroupContext ctx = part.group();
+            //todo should prevent any removes on DESTROYED partition.
+            ((ReadOnlyGridCacheDataStore)part.dataStore().store(true)).disableRemoves();
 
-            try {
-                ctx.offheap().destroyCacheDataStore(part.dataStore());
-            } catch (IgniteCheckedException e) {
-                destroyFut.onDone(e);
-            }
+            CacheGroupContext ctx = part.group();
 
             int grpId = ctx.groupId();
 
-            // Clear offheap for this partition.
-            ((PageMemoryEx)ctx.dataRegion().pageMemory())
-                .clearAsync((grp, pageId) -> grp == grpId && part.id() == PageIdUtils.partId(pageId), true)
-                .listen(c0 -> {
-                    try {
-                        // todo something smarter - store will be removed on next checkpoint.
-                        while (ctx.shared().pageStore().exists(grpId, part.id())) {
-//                            System.out.println(">>> wait untl partition will be destroyed " + part.id());
+            try {
+                ctx.offheap().destroyCacheDataStore(part.dataStore());
 
-                            U.sleep(200);
-                        }
+                // todo something smarter - store will be removed on next checkpoint.
+                while (ctx.shared().pageStore().exists(grpId, part.id()))
+                    U.sleep(200);
 
-//                        System.out.println("finishing destroy future");
-
-                        ((PageMemoryEx)ctx.dataRegion().pageMemory())
-                            .clearAsync((grp, pageId) -> grp == grpId && part.id() == PageIdUtils.partId(pageId), true)
-                            .listen(c1 -> {
-                                destroyFut.onDone();
-                            });
-                    }
-                    catch (IgniteCheckedException e) {
-                        destroyFut.onDone(e);
-                    }
-                });
+                // todo should be executed for all cleared partitions at once.
+                ((PageMemoryEx)ctx.dataRegion().pageMemory())
+                    .clearAsync((grp, pageId) -> grp == grpId && part.id() == PageIdUtils.partId(pageId), true)
+                    .listen(c1 -> {
+                        destroyFut.onDone();
+                    });
+            }
+            catch (IgniteCheckedException e) {
+                destroyFut.onDone(e);
+            }
         });
 
         return destroyFut;
@@ -756,7 +747,7 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
             part.readOnly(false);
 
             // todo
-            part.dataStore().init(null);
+            part.dataStore().reinit(null);
 
             return new T2<>(part.updateCounter(), to);
         });

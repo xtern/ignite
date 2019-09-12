@@ -912,11 +912,9 @@ public class GridDhtPartitionTopologyImpl implements GridDhtPartitionTopology {
             GridDhtLocalPartition part = locParts.get(p);
 
             if (part != null) {
-                if (part.state() != EVICTED) {
-                    System.out.println("returning existing");
-
+                if (part.state() != EVICTED)
                     return part;
-                } else
+                else
                     part.awaitDestroy();
             }
 

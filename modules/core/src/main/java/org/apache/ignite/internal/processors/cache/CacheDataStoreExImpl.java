@@ -61,8 +61,10 @@ public class CacheDataStoreExImpl implements CacheDataStoreEx {
     /** Currently used data storage state. <tt>FULL</tt> mode is used by default. */
     private volatile AtomicBoolean readOnly = new AtomicBoolean();
 
+    /** */
     private final CacheDataStore store;
 
+    /** */
     private final CacheDataStore readOnlyStore;
 
     /**
@@ -82,24 +84,7 @@ public class CacheDataStoreExImpl implements CacheDataStoreEx {
 
         store = primary;
         readOnlyStore = secondary;
-//        this.catchLog = catchLog;
-
-//        storageMap.put(StorageMode.FULL, primary);
-//
-//        if (secondary != null)
-//            storageMap.put(StorageMode.READ_ONLY, secondary);
     }
-
-//    /** {@inheritDoc} */
-//    @Override public void store(StorageMode mode, IgniteCacheOffheapManager.CacheDataStore storage) {
-//        assert mode != currMode || cctx.database().checkpointLockIsHeldByThread() :
-//            "Changing active storage is allowed only under the checkpoint write lock";
-//
-//        storageMap.put(mode, storage);
-//
-//        U.log(log, "The new instance of storage have been successfully set [mode=" + mode +
-//            ", storage=" + storage + ']');
-//    }
 
     /** {@inheritDoc} */
     @Override public CacheDataStore store(boolean readOnly) {
@@ -108,39 +93,16 @@ public class CacheDataStoreExImpl implements CacheDataStoreEx {
 
     /** {@inheritDoc} */
     @Override public void readOnly(boolean readOnly) {
-        if (this.readOnly.compareAndSet(!readOnly, readOnly)) {
-            log.warning(">>>>>\n" + ">>>>> part changed to " + (readOnly ? "readonly" : "full"));
+        assert cctx.database().checkpointLockIsHeldByThread() : "Changing mode required checkpoint write lock";
 
-            assert cctx.database().checkpointLockIsHeldByThread() : "Changing mode required checkpoint write lock";
-
-            // todo should re-initialize storage and sync this somehow
-//            if (readOnly)
-//                readOnlyStore.init(store.updateCounter(), store.reservedCounter());
-        }
+        if (this.readOnly.compareAndSet(!readOnly, readOnly))
+            log.info("Changing data store mode to " + (readOnly ? "READ-REMOVE" : "FULL") + " [p=" + partId() + "]");
     }
 
     /** {@inheritDoc} */
     @Override public boolean readOnly() {
         return readOnly.get();
     }
-
-//    /** {@inheritDoc} */
-//    @Override public IgnitePartitionCatchUpLog catchLog() {
-//        return catchLog;
-//    }
-
-//    private void restoreMemory() throws IgniteCheckedException {
-//        System.out.println(">xxx> restoring memory");
-//
-//        WALIterator iter = catchLog.replay();
-//
-//        ((GridCacheDatabaseSharedManager)cctx.database()).applyFastUpdates(iter,
-//            (ptr, rec) -> true,
-//            (entry) -> true,
-//            true);
-//
-//        //assert catchLog.catched();
-//    }
 
     /**
      * @return The currently active cache data storage.
@@ -149,6 +111,7 @@ public class CacheDataStoreExImpl implements CacheDataStoreEx {
         return store(readOnly.get());
     }
 
+    /** {@inheritDoc} */
     @Override public boolean init() {
         return activeStorage().init();
     }
@@ -158,15 +121,9 @@ public class CacheDataStoreExImpl implements CacheDataStoreEx {
         return activeStorage().partId();
     }
 
-//    /** {@inheritDoc} */
-//    @Override public String name() {
-//        return activeStorage().name();
-//    }
-//
     /** {@inheritDoc} */
-    @Override public void init(PartitionUpdateCounter pCntr) {
-        activeStorage().init(pCntr);
-        //throw new UnsupportedOperationException("The init method of proxy storage must never be called.");
+    @Override public void reinit(PartitionUpdateCounter pCntr) {
+        activeStorage().reinit(pCntr);
     }
 
     /** {@inheritDoc} */
@@ -184,8 +141,6 @@ public class CacheDataStoreExImpl implements CacheDataStoreEx {
     /** {@inheritDoc} */
     @Override public void insertRows(Collection<DataRowCacheAware> rows,
         IgnitePredicateX<CacheDataRow> initPred) throws IgniteCheckedException {
-        System.out.println(">xxx> insert " + rows.size());
-
         activeStorage().insertRows(rows, initPred);
     }
 
@@ -248,8 +203,9 @@ public class CacheDataStoreExImpl implements CacheDataStoreEx {
         byte mvccTxState,
         byte newMvccTxState
     ) throws IgniteCheckedException {
-        return activeStorage().mvccUpdateRowWithPreloadInfo(cctx, key, val, ver, expireTime, mvccVer, newMvccVer, mvccTxState,
-            newMvccTxState);
+        return activeStorage().mvccUpdateRowWithPreloadInfo(
+            cctx, key, val, ver, expireTime, mvccVer, newMvccVer, mvccTxState, newMvccTxState
+        );
     }
 
     /** {@inheritDoc} */
@@ -270,8 +226,10 @@ public class CacheDataStoreExImpl implements CacheDataStoreEx {
         boolean retVal,
         boolean keepBinary
     ) throws IgniteCheckedException {
-        return activeStorage().mvccUpdate(cctx, key, val, ver, expireTime, mvccSnapshot, filter, entryProc, invokeArgs, primary,
-            needHist, noCreate, needOldVal, retVal, keepBinary);
+        return activeStorage().mvccUpdate(
+            cctx, key, val, ver, expireTime, mvccSnapshot, filter, entryProc, invokeArgs, primary, needHist, noCreate,
+            needOldVal, retVal, keepBinary
+        );
     }
 
     /** {@inheritDoc} */
@@ -308,12 +266,8 @@ public class CacheDataStoreExImpl implements CacheDataStoreEx {
         KeyCacheObject key,
         IgniteCacheOffheapManager.OffheapInvokeClosure c
     ) throws IgniteCheckedException {
-//        cctx.shared().database().checkpointReadLock();
-//        try {
+        // todo should be executed under read lock?
         activeStorage().invoke(cctx, key, c);
-//        } finally {
-//            cctx.shared().database().checkpointReadUnlock();
-//        }
     }
 
     /** {@inheritDoc} */
@@ -366,8 +320,6 @@ public class CacheDataStoreExImpl implements CacheDataStoreEx {
 
     /** {@inheritDoc} */
     @Override public GridCursor<? extends CacheDataRow> cursor() throws IgniteCheckedException {
-//        IgniteCacheOffheapManager.CacheDataStore s = activeStorage();
-//        System.out.println(">xxx> activeStorage()=" + s.getClass());
         return activeStorage().cursor();
     }
 
@@ -474,9 +426,7 @@ public class CacheDataStoreExImpl implements CacheDataStoreEx {
 
     /** {@inheritDoc} */
     @Override public long cacheSize(int cacheId) {
-        long size = activeStorage().cacheSize(cacheId);
-
-        return size;
+        return activeStorage().cacheSize(cacheId);
     }
 
     /** {@inheritDoc} */
@@ -529,11 +479,6 @@ public class CacheDataStoreExImpl implements CacheDataStoreEx {
         return activeStorage().updateCounter(start, delta);
     }
 
-//    /** {@inheritDoc} */
-//    @Override public void updateCounter(long start, long delta) {
-//        activeStorage().updateCounter(start, delta);
-//    }
-
     /** {@inheritDoc} */
     @Override public long nextUpdateCounter() {
         return activeStorage().nextUpdateCounter();
@@ -548,11 +493,6 @@ public class CacheDataStoreExImpl implements CacheDataStoreEx {
     @Override public long initialUpdateCounter() {
         return activeStorage().initialUpdateCounter();
     }
-
-//    /** {@inheritDoc} */
-//    @Override public void updateInitialCounter(long cntr) {
-//        activeStorage().updateInitialCounter(cntr);
-//    }
 
     /** {@inheritDoc} */
     @Override public GridLongList finalizeUpdateCounters() {

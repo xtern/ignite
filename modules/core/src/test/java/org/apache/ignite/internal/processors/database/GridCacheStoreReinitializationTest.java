@@ -53,7 +53,6 @@ import org.apache.ignite.internal.processors.cache.persistence.file.FilePageStor
 import org.apache.ignite.internal.processors.cache.persistence.file.RandomAccessFileIOFactory;
 import org.apache.ignite.internal.util.future.GridCompoundFuture;
 import org.apache.ignite.internal.util.io.GridFileUtils;
-import org.apache.ignite.internal.util.typedef.PA;
 import org.apache.ignite.internal.util.typedef.T2;
 import org.apache.ignite.internal.util.typedef.internal.U;
 import org.apache.ignite.testframework.GridTestUtils;
@@ -153,8 +152,6 @@ public class GridCacheStoreReinitializationTest extends GridCommonAbstractTest {
 
         GridCompoundFuture<Void,Void> destroyFut = new GridCompoundFuture<>();
 
-        System.out.println(">>> switch to READ ONLY");
-
         AffinityTopologyVersion topVer = cctx.topology().readyTopologyVersion();
 
         // Destroy partitions.
@@ -239,6 +236,9 @@ public class GridCacheStoreReinitializationTest extends GridCommonAbstractTest {
 
             ++n;
         }
+
+        GridTestUtils.setFieldValue(cctx.shared().exchange(), "rebTopVer", cctx.shared().exchange().readyAffinityVersion());
+
         preloader.triggerHistoricalRebalance(node0.localNode(), cctx, partsArr, lwms, hwms, backupPartsCnt);
 
         System.out.println("Wait rebalance finish");
@@ -331,6 +331,9 @@ public class GridCacheStoreReinitializationTest extends GridCommonAbstractTest {
 
                 for (long i = from; i < from + 100; i++)
                     cache.put(i, i);
+
+                for (long i = from; i < from + 100; i+=10)
+                    cache.remove(i);
             }
         }
 
