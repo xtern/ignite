@@ -806,6 +806,10 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
 
     }
 
+    public void handleDemandMessage(UUID nodeId, GridPartitionBatchDemandMessage msg) {
+
+    }
+
     /**
      *
      */
