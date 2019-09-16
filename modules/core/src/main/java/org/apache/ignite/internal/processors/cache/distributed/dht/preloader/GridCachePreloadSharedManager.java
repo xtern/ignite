@@ -19,6 +19,7 @@ package org.apache.ignite.internal.processors.cache.distributed.dht.preloader;
 
 import java.io.File;
 import java.io.IOException;
+import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.util.Collection;
 import java.util.HashMap;
@@ -36,16 +37,18 @@ import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
+import java.util.function.Consumer;
 import java.util.stream.Collectors;
 import org.apache.ignite.IgniteCheckedException;
+import org.apache.ignite.IgniteException;
 import org.apache.ignite.cache.CacheRebalanceMode;
 import org.apache.ignite.cluster.ClusterNode;
 import org.apache.ignite.internal.GridKernalContext;
 import org.apache.ignite.internal.IgniteFeatures;
 import org.apache.ignite.internal.IgniteInternalFuture;
+import org.apache.ignite.internal.managers.communication.TransmissionHandler;
+import org.apache.ignite.internal.managers.communication.TransmissionMeta;
 import org.apache.ignite.internal.pagemem.PageIdUtils;
-import org.apache.ignite.internal.pagemem.store.IgnitePageStoreManager;
-import org.apache.ignite.internal.pagemem.store.PageStore;
 import org.apache.ignite.internal.processors.affinity.AffinityAssignment;
 import org.apache.ignite.internal.processors.affinity.AffinityTopologyVersion;
 import org.apache.ignite.internal.processors.cache.CacheGroupContext;
@@ -73,9 +76,9 @@ import org.apache.ignite.internal.util.typedef.internal.U;
 import org.apache.ignite.lang.IgniteInClosure;
 
 import static org.apache.ignite.internal.GridTopic.TOPIC_REBALANCE;
+import static org.apache.ignite.internal.managers.communication.GridIoPolicy.PUBLIC_POOL;
 import static org.apache.ignite.internal.managers.communication.GridIoPolicy.SYSTEM_POOL;
 import static org.apache.ignite.internal.processors.cache.GridCacheUtils.UTILITY_CACHE_NAME;
-import static org.apache.ignite.internal.processors.cache.preload.PartitionUploadManager.persistenceRebalanceApplicable;
 
 /** */
 public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter implements DbCheckpointListener {
@@ -148,6 +151,12 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
         return fut == null || fut.isCancelled() || fut.isFailed() || fut.isDone();
     }
 
+    public boolean persistenceRebalanceApplicable() {
+        return !cctx.kernalContext().clientNode() &&
+            CU.isPersistenceEnabled(cctx.kernalContext().config()) &&
+            cctx.isRebalanceEnabled();
+    }
+
     /** {@inheritDoc} */
     @Override protected void start0() throws IgniteCheckedException {
         dbMgr = ((GridCacheDatabaseSharedManager) cctx.database());
@@ -158,8 +167,7 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
 
         ((GridCacheDatabaseSharedManager)cctx.database()).addCheckpointListener(this);
 
-        if (persistenceRebalanceApplicable(cctx)) {
-            // todo
+//        if (persistenceRebalanceApplicable()) {
             // Register channel listeners for the rebalance thread.
 //            cctx.gridIO().addChannelListener(rebalanceThreadTopic(), new GridIoChannelListener() {
 //                @Override public void onChannelCreated(UUID nodeId, IgniteSocketChannel channel) {
@@ -178,7 +186,7 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
 //                    }
 //                }
 //            });
-        }
+//        }
     }
 
     /** {@inheritDoc} */
@@ -428,6 +436,15 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
                 }
             });
 
+            // create listener
+            TransmissionHandler hndr = new RebalanceDownloadHandler();
+
+            cctx.kernalContext().io().addTransmissionHandler(rebalanceThreadTopic(), hndr);
+
+            headFut.listen(c -> {
+                cctx.kernalContext().io().removeTransmissionHandler(rebalanceThreadTopic());
+            });
+
             return rq;
         }
         finally {
@@ -465,8 +482,6 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
                                 part.readOnly(true);
                             }
                         }
-
-                        return null;
                     });
 
                 switchFut.listen(new IgniteInClosure<IgniteInternalFuture>() {
@@ -501,6 +516,14 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
                     dbMgr.wakeupForCheckpoint(String.format(REBALANCE_CP_REASON, assigns.keySet()));
             }
         };
+    }
+
+//    private TransmissionHandler makeHandler(UUID id, RebalanceDownloadFuture fut) {
+//        return ;
+//    }
+
+    private void createPartitionFilesListener(TransmissionHandler hndr) {
+        cctx.kernalContext().io().addTransmissionHandler(rebalanceThreadTopic(), hndr);
     }
 
     /**
@@ -699,37 +722,25 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
     /**
      * Restore partition on new file. Partition should be completely destroyed before restore it with new file.
      *
+     * @param grpId Group id.
      * @param partId Partition number.
      * @param fsPartFile New partition file on the same filesystem.
-     * @param cctx Cache context.
      * @return Future that will be completed when partition will be fully re-initialized. The future result is the HWM
      * value of update counter in read-only partition.
      * @throws IgniteCheckedException If file store for specified partition doesn't exists or partition file cannot be
      * moved.
      */
     public IgniteInternalFuture<T2<Long, Long>> restorePartition(
+        int grpId,
         int partId,
-        File fsPartFile,
-        GridCacheContext cctx
+        File fsPartFile
     ) throws IgniteCheckedException {
-        AffinityTopologyVersion affVer = cctx.topology().readyTopologyVersion();
+        CacheGroupContext ctx = cctx.cache().cacheGroup(grpId);
 
         // Create partition.
-        GridDhtLocalPartition part = cctx.topology().forceCreatePartition(partId);
+        GridDhtLocalPartition part = ctx.topology().forceCreatePartition(partId);
 
-//            cctx.topology().localPartition(partId, affVer, true, true);
-
-        IgnitePageStoreManager pageStoreMgr = cctx.group().shared().pageStore();
-
-        assert pageStoreMgr instanceof FilePageStoreManager : pageStoreMgr;
-
-        PageStore store = ((FilePageStoreManager)pageStoreMgr).getStore(cctx.groupId(), partId);
-
-        assert store instanceof FilePageStore : store;
-
-        assert !store.exists();
-
-        File dst = new File(((FilePageStore)store).getFileAbsolutePath());
+        File dst = new File(storePath(grpId, partId));
 
         log.info("Moving downloaded partition file: " + fsPartFile + " --> " + dst);
 
@@ -753,7 +764,8 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
         });
     }
 
-    private IgniteInternalFuture<Void> offerCheckpointTask(final Runnable task) {
+    // todo protected
+    public IgniteInternalFuture<Void> offerCheckpointTask(final Runnable task) {
         return offerCheckpointTask(() -> {
            task.run();
 
@@ -807,7 +819,94 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
     }
 
     public void handleDemandMessage(UUID nodeId, GridPartitionBatchDemandMessage msg) {
+        if (msg.rebalanceId() < 0) // Demand node requested context cleanup.
+            return;
 
+        ClusterNode demanderNode = cctx.discovery().node(nodeId);
+
+        if (demanderNode == null) {
+            U.error(log, "The demand message rejected (demander node left the cluster) ["
+                + ", nodeId=" + nodeId + ", topVer=" + msg.topologyVersion() + ']');
+
+            return;
+        }
+
+        if (msg.assignments() == null || msg.assignments().isEmpty()) {
+            U.error(log, "The Demand message rejected. Node assignments cannot be empty ["
+                + "nodeId=" + nodeId + ", topVer=" + msg.topologyVersion() + ']');
+
+            return;
+        }
+
+        // todo reserve history
+
+//        IgniteSocketChannel ch = null;
+//        CachePartitionUploadFuture uploadFut = null;
+
+        uploadMgr.onDemandMessage(nodeId, msg, PUBLIC_POOL);
+    }
+
+    public String storePath(int grpId, int partId) throws IgniteCheckedException {
+        return ((FilePageStore)((FilePageStoreManager)cctx.pageStore()).getStore(grpId, partId)).getFileAbsolutePath();
+    }
+
+    private class RebalanceDownloadHandler implements TransmissionHandler {
+        /** {@inheritDoc} */
+        @Override public void onException(UUID nodeId, Throwable err) {
+
+        }
+
+        /** {@inheritDoc} */
+        @Override public String filePath(UUID nodeId, TransmissionMeta fileMeta) {
+            RebalanceDownloadFuture fut = futMap.get(nodeId);
+
+            // todo
+            if (staleFuture(fut))
+                return null;
+
+            try {
+                Integer grpId = (Integer)fileMeta.params().get("group");
+                Integer partId = (Integer)fileMeta.params().get("part");
+
+                assert grpId != null;
+                assert partId != null;
+
+                return storePath(grpId, partId);
+            } catch (IgniteCheckedException e) {
+                fut.onDone(e);
+
+                throw new IgniteException("File transfer exception.", e);
+            }
+        }
+
+        /** {@inheritDoc} */
+        @Override public Consumer<ByteBuffer> chunkHandler(UUID nodeId, TransmissionMeta initMeta) {
+            assert false;
+
+            return null;
+        }
+
+        /** {@inheritDoc} */
+        @Override public Consumer<File> fileHandler(UUID nodeId, TransmissionMeta initMeta) {
+            return file -> {
+                RebalanceDownloadFuture fut = futMap.get(nodeId);
+
+                if (staleFuture(fut))
+                    return;
+
+                Integer grpId = (Integer)initMeta.params().get("group");
+                Integer partId = (Integer)initMeta.params().get("part");
+
+                try {
+                    restorePartition(grpId, partId, file).listen(c -> {
+                        fut.partitionDone(grpId, partId);
+                    });
+                }
+                catch (IgniteCheckedException e) {
+                    fut.onDone(e);
+                }
+            };
+        }
     }
 
     /**
@@ -884,11 +983,11 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
          * @param partId Cache partition to remove;
          * @throws IgniteCheckedException If fails.
          */
-        public synchronized void markPartitionDone(int grpId, int partId) throws IgniteCheckedException {
+        public synchronized void partitionDone(int grpId, int partId) {
             Set<Integer> parts = remaining.get(grpId);
 
             if (parts == null)
-                throw new IgniteCheckedException("Partition index incorrect [grpId=" + grpId + ", partId=" + partId + ']');
+                onDone(new IgniteCheckedException("Partition index incorrect [grpId=" + grpId + ", partId=" + partId + ']'));
 
             boolean success = parts.remove(partId);
 

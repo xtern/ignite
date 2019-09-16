@@ -451,21 +451,23 @@ public class GridCachePartitionExchangeManager<K, V> extends GridCacheSharedMana
             });
 
         // todo
-        cctx.gridIO().addMessageListener(rebalanceThreadTopic(), new GridMessageListener() {
-            @Override public void onMessage(UUID nodeId, Object msg, byte plc) {
-                if (msg instanceof GridPartitionBatchDemandMessage) {
-                    if (!enterBusy())
-                        return;
+        if (cctx.preloader().persistenceRebalanceApplicable()) {
+            cctx.gridIO().addMessageListener(rebalanceThreadTopic(), new GridMessageListener() {
+                @Override public void onMessage(UUID nodeId, Object msg, byte plc) {
+                    if (msg instanceof GridPartitionBatchDemandMessage) {
+                        if (!enterBusy())
+                            return;
 
-                    try {
-                        cctx.preloader().handleDemandMessage(nodeId, (GridPartitionBatchDemandMessage)msg);
-                    }
-                    finally {
-                        leaveBusy();
+                        try {
+                            cctx.preloader().handleDemandMessage(nodeId, (GridPartitionBatchDemandMessage)msg);
+                        }
+                        finally {
+                            leaveBusy();
+                        }
                     }
                 }
-            }
-        });
+            });
+        }
 
         if (!cctx.kernalContext().clientNode()) {
             for (int cnt = 0; cnt < cctx.gridConfig().getRebalanceThreadPoolSize(); cnt++) {

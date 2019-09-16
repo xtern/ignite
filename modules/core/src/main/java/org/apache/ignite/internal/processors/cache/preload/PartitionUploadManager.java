@@ -1,5 +1,7 @@
 package org.apache.ignite.internal.processors.cache.preload;
 
+import java.io.File;
+import java.io.IOException;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
@@ -13,11 +15,20 @@ import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.IgniteLogger;
 import org.apache.ignite.cluster.ClusterNode;
 import org.apache.ignite.internal.GridKernalContext;
+import org.apache.ignite.internal.IgniteInternalFuture;
+import org.apache.ignite.internal.managers.communication.GridIoManager;
+import org.apache.ignite.internal.managers.communication.TransmissionPolicy;
+import org.apache.ignite.internal.pagemem.store.IgnitePageStoreManager;
 import org.apache.ignite.internal.processors.affinity.AffinityTopologyVersion;
 import org.apache.ignite.internal.processors.cache.GridCacheSharedContext;
+import org.apache.ignite.internal.processors.cache.persistence.file.FilePageStore;
+import org.apache.ignite.internal.processors.cache.persistence.file.FilePageStoreManager;
+import org.apache.ignite.internal.processors.cache.persistence.file.RandomAccessFileIOFactory;
 import org.apache.ignite.internal.util.GridIntIterator;
 import org.apache.ignite.internal.util.GridIntList;
 import org.apache.ignite.internal.util.future.GridFutureAdapter;
+import org.apache.ignite.internal.util.io.GridFileUtils;
+import org.apache.ignite.internal.util.typedef.F;
 import org.apache.ignite.internal.util.typedef.internal.CU;
 import org.apache.ignite.internal.util.typedef.internal.S;
 import org.apache.ignite.internal.util.typedef.internal.U;
@@ -51,14 +62,14 @@ public class PartitionUploadManager {
         log = ktx.log(getClass());
     }
 
-    /**
-     * @return {@code True} if cluster rebalance via sending partition files can be applied.
-     */
-    public static boolean persistenceRebalanceApplicable(GridCacheSharedContext cctx) {
-        return !cctx.kernalContext().clientNode() &&
-            CU.isPersistenceEnabled(cctx.kernalContext().config()) &&
-            cctx.isRebalanceEnabled();
-    }
+//    /**
+//     * @return {@code True} if cluster rebalance via sending partition files can be applied.
+//     */
+//    public static boolean persistenceRebalanceApplicable(GridCacheSharedContext cctx) {
+//        return !cctx.kernalContext().clientNode() &&
+//            CU.isPersistenceEnabled(cctx.kernalContext().config()) &&
+//            cctx.isRebalanceEnabled();
+//    }
 
     /**
      * @param cctx Cache shared context.
@@ -112,48 +123,40 @@ public class PartitionUploadManager {
      * @param nodeId The nodeId request comes from.
      * @param msg Message containing rebalance request params.
      */
-    private void onDemandMessage0(UUID nodeId, GridPartitionBatchDemandMessage msg, byte plc) {
-        if (msg.rebalanceId() < 0) // Demand node requested context cleanup.
-            return;
-
-        ClusterNode demanderNode = cctx.discovery().node(nodeId);
-
-        if (demanderNode == null) {
-            U.error(log, "The demand message rejected (demander node left the cluster) ["
-                + ", nodeId=" + nodeId + ", topVer=" + msg.topologyVersion() + ']');
-
-            return;
-        }
-
-        if (msg.assignments() == null || msg.assignments().isEmpty()) {
-            U.error(log, "The Demand message rejected. Node assignments cannot be empty ["
-                + "nodeId=" + nodeId + ", topVer=" + msg.topologyVersion() + ']');
-
-            return;
-        }
+    public void onDemandMessage(UUID nodeId, GridPartitionBatchDemandMessage msg, byte plc) {
 // todo
 //        IgniteSocketChannel ch = null;
 //        CachePartitionUploadFuture uploadFut = null;
 //
-//        try {
-//            synchronized (uploadFutMap) {
-//                uploadFut = uploadFutMap.getOrDefault(nodeId,
-//                    new CachePartitionUploadFuture(msg.rebalanceId(), msg.topologyVersion(), msg.assignments()));
-//
-//                if (uploadFut.rebalanceId < msg.rebalanceId()) {
-//                    if (!uploadFut.isDone())
-//                        uploadFut.cancel();
-//
-//                    uploadFutMap.put(nodeId,
-//                        uploadFut = new CachePartitionUploadFuture(msg.rebalanceId(),
-//                            msg.topologyVersion(),
-//                            msg.assignments()));
-//                }
-//            }
-//
-//            // Need to start new partition upload routine.
+        CachePartitionUploadFuture uploadFut = null;
+
+        try {
+            // todo compute if absent?
+            synchronized (uploadFutMap) {
+                // todo why we need this global mapping
+                uploadFut = uploadFutMap.getOrDefault(nodeId,
+                    new CachePartitionUploadFuture(msg.rebalanceId(), msg.topologyVersion(), msg.assignments()));
+
+                if (uploadFut.rebalanceId < msg.rebalanceId()) {
+                    if (!uploadFut.isDone()) {
+                        log.info("Restarting upload routine [node=" + nodeId + ", old=" + uploadFut.rebalanceId + ", new=" + msg.rebalanceId());
+
+                        uploadFut.cancel();
+                    }
+
+                    uploadFutMap.put(nodeId,
+                        uploadFut = new CachePartitionUploadFuture(msg.rebalanceId(),
+                            msg.topologyVersion(),
+                            msg.assignments()));
+                }
+            }
+
+            // Need to start new partition upload routine.
 //            ch = cctx.gridIO().channelToTopic(nodeId, rebalanceThreadTopic(), plc);
-//
+
+            // todo - exec trnasmission on supplier thread!
+            sendPartitions(uploadFut, nodeId).get();
+
 //            backupMgr.backup(uploadFut.rebalanceId,
 //                uploadFut.getAssigns(),
 //                new SocketBackupProcessSupplier(
@@ -161,19 +164,83 @@ public class PartitionUploadManager {
 //                    log
 //                ),
 //                uploadFut);
-//
-//            uploadFut.onDone(true);
-//        }
-//        catch (Exception e) {
-//            U.error(log, "An error occured while processing initial demand request ["
-//                + ", nodeId=" + nodeId + ", topVer=" + msg.topologyVersion() + ']', e);
-//
-//            if (uploadFut != null)
-//                uploadFut.onDone(e);
-//        }
+        }
+        catch (Exception e) {
+            U.error(log, "An error occured while processing initial demand request ["
+                + ", nodeId=" + nodeId + ", topVer=" + msg.topologyVersion() + ']', e);
+
+            if (uploadFut != null)
+                uploadFut.onDone(e);
+        }
 //        finally {
 //            U.closeQuiet(ch);
 //        }
+    }
+
+    /**
+     * @param fut Future.
+     * @param nodeId Node id.
+     */
+    private IgniteInternalFuture sendPartitions(CachePartitionUploadFuture fut, UUID nodeId) {
+        cctx.preloader().offerCheckpointTask(() -> {
+            try {
+                Map<Integer, Map<Integer, File>> filesToSnd = new HashMap<>();
+
+                for (Map.Entry<Integer, Set<Integer>> e : fut.getAssigns().entrySet()) {
+                    int grpId = e.getKey();
+
+                    Map<Integer, File> partFiles = new HashMap<>();
+
+                    for (int partId : e.getValue()) {
+                        String path = cctx.preloader().storePath(grpId, partId);
+
+                        File src = new File(path);
+                        File dest = new File(path +  ".cpy");
+
+                        log.info("Copying file \"" + src + "\" to \"" + dest + "\"");
+
+                        RandomAccessFileIOFactory ioFactory = new RandomAccessFileIOFactory();
+
+                        GridFileUtils.copy(ioFactory, src, ioFactory, dest, Long.MAX_VALUE);
+
+                        partFiles.put(partId, dest);
+                    }
+
+                    filesToSnd.put(grpId, partFiles);
+                }
+
+                fut.partFiles(filesToSnd);
+            } catch (IgniteCheckedException | IOException e) {
+                fut.onDone(e);
+            }
+        }).listen(
+            c -> {
+                // send files
+                GridIoManager io = cctx.kernalContext().io();
+
+                try (GridIoManager.TransmissionSender snd = io.openTransmissionSender(nodeId, rebalanceThreadTopic())) {
+                    for (Map.Entry<Integer, Map<Integer, File>> e : fut.partFiles().entrySet()) {
+                        Integer grpId = e.getKey();
+
+                        for (Map.Entry<Integer, File> e0 : e.getValue().entrySet()) {
+                            Integer partId = e0.getKey();
+                            File file = e0.getValue();
+
+                            snd.send(file, F.asMap("group", grpId, "part", partId), TransmissionPolicy.FILE);
+                        }
+                    }
+
+                    fut.onDone();
+                }
+                catch (IOException | IgniteCheckedException | InterruptedException e) {
+                    fut.onDone(e);
+                }
+                //todo should we cleanup files on error?
+            }
+        );
+
+        // todo
+        return fut;
     }
 
     /** {@inheritDoc} */
@@ -248,6 +315,8 @@ public class PartitionUploadManager {
         /** */
         private Map<Integer, GridIntList> assigns;
 
+        private Map<Integer, Map<Integer, File>> filesToSend;
+
         /** */
         public CachePartitionUploadFuture(
             long rebalanceId,
@@ -285,6 +354,14 @@ public class PartitionUploadManager {
         /** {@inheritDoc} */
         @Override public String toString() {
             return S.toString(CachePartitionUploadFuture.class, this);
+        }
+
+        public void partFiles(Map<Integer, Map<Integer, File>> send) {
+            filesToSend = send;
+        }
+
+        public Map<Integer, Map<Integer, File>> partFiles() {
+            return filesToSend;
         }
     }
 }

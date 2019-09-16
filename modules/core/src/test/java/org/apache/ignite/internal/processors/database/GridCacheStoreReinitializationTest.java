@@ -216,7 +216,7 @@ public class GridCacheStoreReinitializationTest extends GridCommonAbstractTest {
         for (int p : backupParts) {
             GridDhtLocalPartition part = cctx.topology().localPartition(p);
 
-            futs[n++] = preloader.restorePartition(part.id(), partFiles.get(part.id()), cctx);
+            futs[n++] = preloader.restorePartition(cctx.groupId(), part.id(), partFiles.get(part.id()));
         }
 
         forceCheckpoint(node1);
@@ -441,7 +441,7 @@ public class GridCacheStoreReinitializationTest extends GridCommonAbstractTest {
         // Restore partitions.
         for (GridDhtLocalPartition part : cctx.topology().localPartitions()) {
             IgniteInternalFuture<T2<Long, Long>> restoreFut =
-                preloader.restorePartition(part.id(), partFiles[part.id()], cctx);
+                preloader.restorePartition(cctx.groupId(), part.id(), partFiles[part.id()]);
 
             forceCheckpoint(node1);
 
