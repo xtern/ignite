@@ -336,6 +336,7 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
 
         for (Map.Entry<Integer, GridDhtPreloaderAssignments> grpEntry : assignsMap.entrySet()) {
             int grpId = grpEntry.getKey();
+
             CacheGroupContext grp = cctx.cache().cacheGroup(grpId);
 
             if (cctx.preloader().partitionRebalanceRequired(grp, grpEntry.getValue())) {
@@ -417,6 +418,7 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
                             try {
                                 if (f.get()) // Not cancelled.
                                     nextRq0.run();
+                                // todo check how this chain is cancelling
                             }
                             catch (IgniteCheckedException e) {
                                 rqFut0.onDone(e);
@@ -429,20 +431,25 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
                 }
             }
 
-            headFut.listen(new IgniteInClosureX<IgniteInternalFuture<Boolean>>() {
-                @Override public void applyx(IgniteInternalFuture<Boolean> fut0) throws IgniteCheckedException {
-                    if (fut0.get())
-                        U.log(log, "The final persistence rebalance future is done [result=" + fut0.isDone() + ']');
-                }
-            });
+//            headFut.listen(new IgniteInClosureX<IgniteInternalFuture<Boolean>>() {
+//                @Override public void applyx(IgniteInternalFuture<Boolean> fut0) throws IgniteCheckedException {
+//                    if (fut0.get())
+//                        U.log(log, "The final persistence rebalance future is done [result=" + fut0.isDone() + ']');
+//                }
+//            });
 
             // create listener
             TransmissionHandler hndr = new RebalanceDownloadHandler();
 
             cctx.kernalContext().io().addTransmissionHandler(rebalanceThreadTopic(), hndr);
 
-            headFut.listen(c -> {
-                cctx.kernalContext().io().removeTransmissionHandler(rebalanceThreadTopic());
+            headFut.listen(new IgniteInClosureX<IgniteInternalFuture<Boolean>>() {
+                @Override public void applyx(IgniteInternalFuture<Boolean> fut0) throws IgniteCheckedException {
+                    cctx.kernalContext().io().removeTransmissionHandler(rebalanceThreadTopic());
+
+                    if (fut0.get())
+                        U.log(log, "The final persistence rebalance future is done [result=" + fut0.isDone() + ']');
+                }
             });
 
             return rq;
@@ -484,46 +491,94 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
                         }
                     });
 
-                switchFut.listen(new IgniteInClosure<IgniteInternalFuture>() {
-                    @Override public void apply(IgniteInternalFuture fut) {
-                        try {
-                            if (rebFut.initReq.compareAndSet(false, true)) {
-                                GridPartitionBatchDemandMessage msg0 =
-                                    new GridPartitionBatchDemandMessage(rebFut.rebalanceId,
-                                        rebFut.topVer,
-                                        assigns.entrySet()
-                                            .stream()
-                                            .collect(Collectors.toMap(Map.Entry::getKey,
-                                                e -> GridIntList.valueOf(e.getValue()))));
+                try {
+                    switchFut.get();
+                }
+                catch (IgniteCheckedException e) {
+                    rebFut.onDone(e);
 
-                                futMap.put(node.id(), rebFut);
+                    // todo throw exception?
+                    return;
+                }
 
-                                cctx.gridIO().sendToCustomTopic(node, rebalanceThreadTopic(), msg0, SYSTEM_POOL);
-                            }
-                        }
-                        catch (IgniteCheckedException e) {
-                            U.error(log, "Error sending request for demanded cache partitions", e);
+                final GridCompoundFuture<Void,Void> destroyFut = new GridCompoundFuture<>();
 
-                            rebFut.onDone(e);
+                for (Map.Entry<Integer, Set<Integer>> e : assigns.entrySet()) {
+                    CacheGroupContext grp = cctx.cache().cacheGroup(e.getKey());
 
-                            futMap.remove(node.id());
-                        }
+                    for (Integer partId : e.getValue()) {
+                        GridDhtLocalPartition part = grp.topology().localPartition(partId);
+
+                        destroyFut.add(destroyPartition(part));
                     }
-                });
+                }
 
-                // This is an optional step. The request will be completed on the next checkpoint occurs.
-                if (!switchFut.isDone())
-                    dbMgr.wakeupForCheckpoint(String.format(REBALANCE_CP_REASON, assigns.keySet()));
+                try {
+                    if (rebFut.initReq.compareAndSet(false, true)) {
+                        GridPartitionBatchDemandMessage msg0 =
+                            new GridPartitionBatchDemandMessage(rebFut.rebalanceId,
+                                rebFut.topVer,
+                                assigns.entrySet()
+                                    .stream()
+                                    .collect(Collectors.toMap(Map.Entry::getKey,
+                                        e -> GridIntList.valueOf(e.getValue()))));
+
+                        futMap.put(node.id(), rebFut);
+
+                        cctx.gridIO().sendToCustomTopic(node, rebalanceThreadTopic(), msg0, SYSTEM_POOL);
+                    }
+                }
+                catch (IgniteCheckedException e) {
+                    U.error(log, "Error sending request for demanded cache partitions", e);
+
+                    rebFut.onDone(e);
+
+                    futMap.remove(node.id());
+                }
+
+                try {
+                    destroyFut.get();
+                }
+                catch (IgniteCheckedException e) {
+                    rebFut.onDone(e);
+
+                    // todo throw exception?
+                    return;
+                }
+
+//                switchFut.listen(new IgniteInClosure<IgniteInternalFuture>() {
+//                    @Override public void apply(IgniteInternalFuture fut) {
+//                        try {
+//                            if (rebFut.initReq.compareAndSet(false, true)) {
+//                                GridPartitionBatchDemandMessage msg0 =
+//                                    new GridPartitionBatchDemandMessage(rebFut.rebalanceId,
+//                                        rebFut.topVer,
+//                                        assigns.entrySet()
+//                                            .stream()
+//                                            .collect(Collectors.toMap(Map.Entry::getKey,
+//                                                e -> GridIntList.valueOf(e.getValue()))));
+//
+//                                futMap.put(node.id(), rebFut);
+//
+//                                cctx.gridIO().sendToCustomTopic(node, rebalanceThreadTopic(), msg0, SYSTEM_POOL);
+//                            }
+//                        }
+//                        catch (IgniteCheckedException e) {
+//                            U.error(log, "Error sending request for demanded cache partitions", e);
+//
+//                            rebFut.onDone(e);
+//
+//                            futMap.remove(node.id());
+//                        }
+//                    }
+//                });
+
+                // todo
+//                // This is an optional step. The request will be completed on the next checkpoint occurs.
+//                if (!switchFut.isDone())
+//                    dbMgr.wakeupForCheckpoint(String.format(REBALANCE_CP_REASON, assigns.keySet()));
             }
         };
-    }
-
-//    private TransmissionHandler makeHandler(UUID id, RebalanceDownloadFuture fut) {
-//        return ;
-//    }
-
-    private void createPartitionFilesListener(TransmissionHandler hndr) {
-        cctx.kernalContext().io().addTransmissionHandler(rebalanceThreadTopic(), hndr);
     }
 
     /**
@@ -860,7 +915,7 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
         @Override public String filePath(UUID nodeId, TransmissionMeta fileMeta) {
             RebalanceDownloadFuture fut = futMap.get(nodeId);
 
-            // todo
+            // todo check what to return
             if (staleFuture(fut))
                 return null;
 
