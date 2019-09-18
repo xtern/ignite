@@ -1250,6 +1250,11 @@ public class GridIoManager extends GridManagerAdapter<CommunicationSpi<Serializa
             // as thread pool may not have any available threads to give.
             byte plc = msg.policy();
 
+            if (msg.message() != null)
+                System.out.println(">>>> received " + msg.message().getClass().getSimpleName());
+            else
+                System.out.println(">>>> received null msg");
+
             switch (plc) {
                 case P2P_POOL: {
                     processP2PMessage(nodeId, msg, msgC);

@@ -450,25 +450,6 @@ public class GridCachePartitionExchangeManager<K, V> extends GridCacheSharedMana
                 }
             });
 
-        // todo
-        if (cctx.preloader().persistenceRebalanceApplicable()) {
-            cctx.gridIO().addMessageListener(rebalanceThreadTopic(), new GridMessageListener() {
-                @Override public void onMessage(UUID nodeId, Object msg, byte plc) {
-                    if (msg instanceof GridPartitionBatchDemandMessage) {
-                        if (!enterBusy())
-                            return;
-
-                        try {
-                            cctx.preloader().handleDemandMessage(nodeId, (GridPartitionBatchDemandMessage)msg);
-                        }
-                        finally {
-                            leaveBusy();
-                        }
-                    }
-                }
-            });
-        }
-
         if (!cctx.kernalContext().clientNode()) {
             for (int cnt = 0; cnt < cctx.gridConfig().getRebalanceThreadPoolSize(); cnt++) {
                 final int idx = cnt;
@@ -510,6 +491,30 @@ public class GridCachePartitionExchangeManager<K, V> extends GridCacheSharedMana
                     }
                 });
             }
+        }
+
+        // todo
+        if (cctx.preloader().persistenceRebalanceApplicable()) {
+            if (log.isInfoEnabled())
+                log.info("Starting batch demand messages handler.");
+
+            cctx.gridIO().addMessageListener(rebalanceThreadTopic(), new GridMessageListener() {
+                @Override public void onMessage(UUID nodeId, Object msg, byte plc) {
+                    System.out.println(">>> msg " + msg.getClass().getSimpleName());
+
+                    if (msg instanceof GridPartitionBatchDemandMessage) {
+                        if (!enterBusy())
+                            return;
+
+                        try {
+                            cctx.preloader().handleDemandMessage(nodeId, (GridPartitionBatchDemandMessage)msg);
+                        }
+                        finally {
+                            leaveBusy();
+                        }
+                    }
+                }
+            });
         }
 
         MetricRegistry mreg = cctx.kernalContext().metric().registry(PME_METRICS);

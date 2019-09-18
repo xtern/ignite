@@ -163,7 +163,7 @@ public class FilePageStore implements PageStore {
                 if (fileExists == null) {
                     File file = pathProvider.apply().toFile();
 
-                    System.out.println("file (exists="+file.exists()+"): " + file);
+//                    System.out.println("file (exists="+file.exists()+"): " + file);
 
                     fileExists = file.exists() && file.length() > headerSize();
                 }

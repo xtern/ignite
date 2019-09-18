@@ -16,6 +16,9 @@ import org.apache.ignite.plugin.extensions.communication.MessageWriter;
 
 public class GridPartitionBatchDemandMessage implements Message {
     /** */
+    public static final short TYPE_CODE = 176;
+
+    /** */
     private static final long serialVersionUID = 0L;
 
     /** */
@@ -155,7 +158,7 @@ public class GridPartitionBatchDemandMessage implements Message {
 
     /** {@inheritDoc} */
     @Override public short directType() {
-        return 175;
+        return TYPE_CODE;
     }
 
     /** {@inheritDoc} */

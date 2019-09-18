@@ -13,16 +13,12 @@ import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.IgniteLogger;
-import org.apache.ignite.cluster.ClusterNode;
 import org.apache.ignite.internal.GridKernalContext;
 import org.apache.ignite.internal.IgniteInternalFuture;
 import org.apache.ignite.internal.managers.communication.GridIoManager;
 import org.apache.ignite.internal.managers.communication.TransmissionPolicy;
-import org.apache.ignite.internal.pagemem.store.IgnitePageStoreManager;
 import org.apache.ignite.internal.processors.affinity.AffinityTopologyVersion;
 import org.apache.ignite.internal.processors.cache.GridCacheSharedContext;
-import org.apache.ignite.internal.processors.cache.persistence.file.FilePageStore;
-import org.apache.ignite.internal.processors.cache.persistence.file.FilePageStoreManager;
 import org.apache.ignite.internal.processors.cache.persistence.file.RandomAccessFileIOFactory;
 import org.apache.ignite.internal.util.GridIntIterator;
 import org.apache.ignite.internal.util.GridIntList;
@@ -33,6 +29,7 @@ import org.apache.ignite.internal.util.typedef.internal.CU;
 import org.apache.ignite.internal.util.typedef.internal.S;
 import org.apache.ignite.internal.util.typedef.internal.U;
 
+import static org.apache.ignite.internal.processors.cache.distributed.dht.preloader.GridCachePreloadSharedManager.REBALANCE_CP_REASON;
 import static org.apache.ignite.internal.processors.cache.distributed.dht.preloader.GridCachePreloadSharedManager.rebalanceThreadTopic;
 
 public class PartitionUploadManager {
@@ -130,6 +127,8 @@ public class PartitionUploadManager {
 //
         CachePartitionUploadFuture uploadFut = null;
 
+        log.info("Processing demand message from " + nodeId);
+
         try {
             // todo compute if absent?
             synchronized (uploadFutMap) {
@@ -182,6 +181,9 @@ public class PartitionUploadManager {
      * @param nodeId Node id.
      */
     private IgniteInternalFuture sendPartitions(CachePartitionUploadFuture fut, UUID nodeId) {
+        if (log.isDebugEnabled())
+            log.debug("Offering checkpoint request for sending partitions to ndoe " + nodeId);
+
         cctx.preloader().offerCheckpointTask(() -> {
             try {
                 Map<Integer, Map<Integer, File>> filesToSnd = new HashMap<>();
@@ -238,6 +240,9 @@ public class PartitionUploadManager {
                 //todo should we cleanup files on error?
             }
         );
+
+        if (!fut.isDone())
+            cctx.database().wakeupForCheckpoint(String.format(REBALANCE_CP_REASON, fut.getAssigns().keySet()));
 
         // todo
         return fut;

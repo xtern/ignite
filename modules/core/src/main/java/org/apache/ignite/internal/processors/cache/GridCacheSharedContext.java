@@ -249,6 +249,7 @@ public class GridCacheSharedContext<K, V> {
             dbMgr,
             snpMgr,
             depMgr,
+            preloadMgr,
             exchMgr,
             affMgr,
             ioMgr,
@@ -256,8 +257,7 @@ public class GridCacheSharedContext<K, V> {
             evictMgr,
             mvccCachingMgr,
             deadlockDetectionMgr,
-            diagnosticMgr,
-            preloadMgr
+            diagnosticMgr
         );
 
         this.storeSesLsnrs = storeSesLsnrs;
@@ -421,6 +421,7 @@ public class GridCacheSharedContext<K, V> {
             dbMgr,
             snpMgr,
             new GridCacheDeploymentManager<K, V>(),
+            preloadMgr,
             new GridCachePartitionExchangeManager<K, V>(),
             affMgr,
             ioMgr,
@@ -428,8 +429,7 @@ public class GridCacheSharedContext<K, V> {
             evictMgr,
             mvccCachingMgr,
             deadlockDetectionMgr,
-            diagnosticMgr,
-            preloadMgr
+            diagnosticMgr
         );
 
         this.mgrs = mgrs;
@@ -471,6 +471,7 @@ public class GridCacheSharedContext<K, V> {
         IgniteCacheDatabaseSharedManager dbMgr,
         IgniteCacheSnapshotManager snpMgr,
         GridCacheDeploymentManager<K, V> depMgr,
+        GridCachePreloadSharedManager preloadMgr,
         GridCachePartitionExchangeManager<K, V> exchMgr,
         CacheAffinitySharedManager affMgr,
         GridCacheIoManager ioMgr,
@@ -478,8 +479,7 @@ public class GridCacheSharedContext<K, V> {
         PartitionsEvictManager evictMgr,
         MvccCachingManager mvccCachingMgr,
         DeadlockDetectionManager deadlockDetectionMgr,
-        CacheDiagnosticManager diagnosticMgr,
-        GridCachePreloadSharedManager preloadMgr
+        CacheDiagnosticManager diagnosticMgr
     ) {
         this.diagnosticMgr = add(mgrs, diagnosticMgr);
         this.mvccMgr = add(mgrs, mvccMgr);
@@ -492,6 +492,7 @@ public class GridCacheSharedContext<K, V> {
         this.snpMgr = add(mgrs, snpMgr);
         this.jtaMgr = add(mgrs, jtaMgr);
         this.depMgr = add(mgrs, depMgr);
+        this.preloadMgr = add(mgrs, preloadMgr);
         this.exchMgr = add(mgrs, exchMgr);
         this.affMgr = add(mgrs, affMgr);
         this.ioMgr = add(mgrs, ioMgr);
@@ -499,9 +500,6 @@ public class GridCacheSharedContext<K, V> {
         this.evictMgr = add(mgrs, evictMgr);
         this.mvccCachingMgr = add(mgrs, mvccCachingMgr);
         this.deadlockDetectionMgr = add(mgrs, deadlockDetectionMgr);
-
-        // todo think about usages
-        this.preloadMgr = add(mgrs, preloadMgr);
     }
 
     /**

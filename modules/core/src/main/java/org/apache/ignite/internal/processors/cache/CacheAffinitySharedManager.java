@@ -297,13 +297,19 @@ public class CacheAffinitySharedManager<K, V> extends GridCacheSharedManagerAdap
                 }
 
                 if (rebalanced) {
+                    System.out.println(">>> checkRebaalnceState " + rebalanced);
+
                     waitInfo.waitGrps.remove(checkGrpId);
 
                     if (waitInfo.waitGrps.isEmpty()) {
+                        System.out.println(">>> waitInfo.waitGrps empty");
+
                         msg = affinityChangeMessage(waitInfo);
 
                         waitInfo = null;
                     }
+                    else
+                        System.out.println(">>> waitInfo.waitGrps NOT empty: " + waitInfo.waitGrps);
                 }
             }
 
