@@ -1271,6 +1271,8 @@ public class GridCachePartitionExchangeManager<K, V> extends GridCacheSharedMana
                 log.debug("Refreshing local partitions from non-oldest node: " +
                     cctx.localNodeId());
 
+            System.out.println("sending partitions");
+
             sendLocalPartitions(oldest, null, grps);
         }
     }

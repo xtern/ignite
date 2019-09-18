@@ -37,6 +37,7 @@ import org.apache.ignite.internal.IgniteEx;
 import org.apache.ignite.internal.TestRecordingCommunicationSpi;
 import org.apache.ignite.internal.processors.cache.IgniteInternalCache;
 import org.apache.ignite.internal.processors.cache.preload.GridPartitionBatchDemandMessage;
+import org.apache.ignite.internal.util.typedef.internal.CU;
 import org.apache.ignite.internal.util.typedef.internal.U;
 import org.apache.ignite.lang.IgniteBiPredicate;
 import org.apache.ignite.plugin.extensions.communication.Message;
@@ -82,6 +83,7 @@ public class GridCachePersistenceRebalanceSelfTest extends GridCommonAbstractTes
                     .setMaxSize(100L * 1024 * 1024)
                     .setPersistenceEnabled(true))
                 .setWalMode(WALMode.LOG_ONLY)
+                .setCheckpointFrequency(3_000) // todo check with default timeout!
                 .setMaxWalArchiveSize(10 * 1024 * 1024 * 1024L))
             .setCacheConfiguration(new CacheConfiguration(DEFAULT_CACHE_NAME)
                 .setCacheMode(CacheMode.REPLICATED)
@@ -151,7 +153,7 @@ public class GridCachePersistenceRebalanceSelfTest extends GridCommonAbstractTes
 
         System.out.println("print parts map");
 
-        printPartitionState(ignite0.cache(DEFAULT_CACHE_NAME));
+        printPartitionState(CU.UTILITY_CACHE_NAME, 0);
 
         System.out.println("await parts map");
 

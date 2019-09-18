@@ -287,6 +287,7 @@ public class CacheAffinitySharedManager<K, V> extends GridCacheSharedManagerAdap
                         GridDhtPartitionState state = top.partitionState(waitNode, part);
 
                         if (state != GridDhtPartitionState.OWNING) {
+                            System.out.println(">xxx> not owning " + part);
                             rebalanced = false;
 
                             break;
@@ -297,19 +298,22 @@ public class CacheAffinitySharedManager<K, V> extends GridCacheSharedManagerAdap
                 }
 
                 if (rebalanced) {
-                    System.out.println(">>> checkRebaalnceState " + rebalanced);
+                    System.out.println(">>> checkRebaalnceState remove " + checkGrpId);
 
                     waitInfo.waitGrps.remove(checkGrpId);
 
                     if (waitInfo.waitGrps.isEmpty()) {
-                        System.out.println(">>> waitInfo.waitGrps empty");
+                        System.out.println(">>> waitInfo.waitGrps empty ");
 
                         msg = affinityChangeMessage(waitInfo);
 
                         waitInfo = null;
                     }
-                    else
-                        System.out.println(">>> waitInfo.waitGrps NOT empty: " + waitInfo.waitGrps);
+                    else {
+                        Map.Entry<Integer, Map<Integer, UUID>> e = waitInfo.waitGrps.entrySet().iterator().next();
+
+                        System.out.println(">>> waitInfo.waitGrps=" + waitInfo.waitGrps.keySet().size() + ", first=[name=" + cctx.cache().cacheGroup(e.getKey()).cacheOrGroupName() + ", count=" + e.getValue().size() + "]");
+                    }
                 }
             }
 

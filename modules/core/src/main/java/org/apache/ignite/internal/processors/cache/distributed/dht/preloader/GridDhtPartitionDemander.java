@@ -73,6 +73,7 @@ import org.apache.ignite.internal.util.typedef.internal.LT;
 import org.apache.ignite.internal.util.typedef.internal.S;
 import org.apache.ignite.internal.util.typedef.internal.U;
 import org.apache.ignite.lang.IgniteInClosure;
+import org.apache.ignite.spi.IgniteSpiException;
 import org.jetbrains.annotations.Nullable;
 
 import static org.apache.ignite.events.EventType.EVT_CACHE_REBALANCE_OBJECT_LOADED;
@@ -285,6 +286,8 @@ public class GridDhtPartitionDemander {
                     @Override public void applyx(IgniteInternalFuture<Boolean> future) throws IgniteCheckedException {
                         if (future.get())
                             ctx.walState().onGroupRebalanceFinished(grp.groupId(), assignments.topologyVersion());
+                        else
+                            System.out.println("future false");
                     }
                 });
 
@@ -831,7 +834,7 @@ public class GridDhtPartitionDemander {
                             ", topChanged=" + topologyChanged(fut) + ", rebalanceFuture=" + fut + "]");
                 }
             }
-            catch (RuntimeException | IgniteCheckedException e) {
+            catch (IgniteSpiException | IgniteCheckedException e) {
                 fut.cancel(nodeId);
 
                 LT.error(log, e, "Error during rebalancing [" + demandRoutineInfo(nodeId, supplyMsg) +
@@ -1380,8 +1383,11 @@ public class GridDhtPartitionDemander {
          */
         private void partitionDone(UUID nodeId, int p, boolean updateState) {
             synchronized (this) {
-                if (updateState && grp.localWalEnabled())
-                    grp.topology().own(grp.topology().localPartition(p));
+                if (updateState && grp.localWalEnabled()) {
+                    boolean owned = grp.topology().own(grp.topology().localPartition(p));
+
+                    System.out.println(grp.cacheOrGroupName() + " own " + p + (owned ? "OWNED" : "MOVED"));
+                }
 
                 if (isDone())
                     return;
