@@ -240,7 +240,7 @@ public class GridCacheStoreReinitializationTest extends GridCommonAbstractTest {
 
         GridTestUtils.setFieldValue(cctx.shared().exchange(), "rebTopVer", cctx.shared().exchange().readyAffinityVersion());
 
-        preloader.triggerHistoricalRebalance(node0.localNode(), cctx, partsArr, lwms, hwms, backupPartsCnt);
+        preloader.triggerHistoricalRebalance(node0.localNode(), cctx, partsArr, lwms, hwms, backupPartsCnt, 100);
 
         System.out.println("Wait rebalance finish");
 

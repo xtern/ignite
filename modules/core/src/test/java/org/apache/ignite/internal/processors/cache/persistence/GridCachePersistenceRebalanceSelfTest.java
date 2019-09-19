@@ -18,6 +18,7 @@
 package org.apache.ignite.internal.processors.cache.persistence;
 
 import java.util.Collections;
+import java.util.concurrent.atomic.AtomicLong;
 import javax.cache.Cache;
 import org.apache.ignite.Ignite;
 import org.apache.ignite.IgniteCache;
@@ -27,6 +28,7 @@ import org.apache.ignite.cache.CacheAtomicityMode;
 import org.apache.ignite.cache.CacheMode;
 import org.apache.ignite.cache.CachePeekMode;
 import org.apache.ignite.cache.CacheRebalanceMode;
+import org.apache.ignite.cache.CacheWriteSynchronizationMode;
 import org.apache.ignite.cache.affinity.rendezvous.RendezvousAffinityFunction;
 import org.apache.ignite.cluster.ClusterNode;
 import org.apache.ignite.configuration.CacheConfiguration;
@@ -35,9 +37,13 @@ import org.apache.ignite.configuration.DataStorageConfiguration;
 import org.apache.ignite.configuration.IgniteConfiguration;
 import org.apache.ignite.configuration.WALMode;
 import org.apache.ignite.internal.IgniteEx;
+import org.apache.ignite.internal.IgniteInternalFuture;
+import org.apache.ignite.internal.IgniteInterruptedCheckedException;
 import org.apache.ignite.internal.TestRecordingCommunicationSpi;
 import org.apache.ignite.internal.processors.cache.IgniteInternalCache;
+import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtLocalPartition;
 import org.apache.ignite.internal.processors.cache.preload.GridPartitionBatchDemandMessage;
+import org.apache.ignite.internal.util.typedef.internal.U;
 import org.apache.ignite.lang.IgniteBiPredicate;
 import org.apache.ignite.plugin.extensions.communication.Message;
 import org.apache.ignite.testframework.GridTestUtils;
@@ -68,12 +74,6 @@ public class GridCachePersistenceRebalanceSelfTest extends GridCommonAbstractTes
         cleanPersistenceDir();
     }
 
-//    /** */
-//    @After
-//    public void setAfter() {
-//        System.setProperty(IGNITE_PERSISTENCE_REBALANCE_ENABLED, "false");
-//    }
-
     /** {@inheritDoc} */
     @Override protected IgniteConfiguration getConfiguration(String igniteInstanceName) throws Exception {
         return super.getConfiguration(igniteInstanceName)
@@ -82,35 +82,18 @@ public class GridCachePersistenceRebalanceSelfTest extends GridCommonAbstractTes
                     .setMaxSize(100L * 1024 * 1024)
                     .setPersistenceEnabled(true))
                 .setWalMode(WALMode.LOG_ONLY)
-                .setCheckpointFrequency(3_000) // todo check with default timeout!
-                .setMaxWalArchiveSize(10 * 1024 * 1024 * 1024L))
+                .setCheckpointFrequency(3_000)) // todo check with default timeout!
+//                .setWalSegmentSize(4 * 1024 * 1024)
+//                .setMaxWalArchiveSize(8 * 1024 * 1024))
             .setCacheConfiguration(new CacheConfiguration(DEFAULT_CACHE_NAME)
                 .setCacheMode(CacheMode.REPLICATED)
                 .setRebalanceMode(CacheRebalanceMode.ASYNC)
                 .setAtomicityMode(CacheAtomicityMode.TRANSACTIONAL)
-                .setBackups(1)
+                .setWriteSynchronizationMode(CacheWriteSynchronizationMode.FULL_SYNC)
+//                .setBackups(1)
                 .setAffinity(new RendezvousAffinityFunction(false, CACHE_PART_COUNT)));
 //            .setCommunicationSpi(new TestRecordingCommunicationSpi());
     }
-
-//
-//    /**
-//     * @param ignite The ignite instance to check.
-//     * @param check The mode to check.
-//     * @return The number of pending switch requests.
-//     */
-//    private int getPendingSwitchRequests(IgniteEx ignite, CacheDataStoreEx.StorageMode check) {
-//        return ignite.context()
-//            .cache()
-//            .context()
-//            .preloadMgr()
-//            .switcher()
-//            .pendingRequests(new Predicate<CacheDataStoreEx.StorageMode>() {
-//                @Override public boolean test(CacheDataStoreEx.StorageMode mode) {
-//                    return mode == check;
-//                }
-//            });
-//    }
 
     /** */
     @Test
@@ -132,19 +115,46 @@ public class GridCachePersistenceRebalanceSelfTest extends GridCommonAbstractTes
 
         awaitPartitionMapExchange();
 
-        verifyLocalCacheContent(ignite0, ignite1, DEFAULT_CACHE_NAME);
+        verifyLocalCacheContent(ignite0.cachex(DEFAULT_CACHE_NAME), ignite1.cachex(DEFAULT_CACHE_NAME));
     }
 
-    private void verifyLocalCacheContent(IgniteEx node0, IgniteEx node1, String name) throws IgniteCheckedException {
-        CachePeekMode[] peekAll = new CachePeekMode[] {CachePeekMode.ALL};
+    /** */
+    @Test
+    @WithSystemProperty(key = IGNITE_JVM_PAUSE_DETECTOR_DISABLED, value = "true")
+    @WithSystemProperty(key = IGNITE_DUMP_THREADS_ON_FAILURE, value = "false")
+    @WithSystemProperty(key = IGNITE_PERSISTENCE_REBALANCE_ENABLED, value = "true")
+    @WithSystemProperty(key = IGNITE_BASELINE_AUTO_ADJUST_ENABLED, value = "true")
+    public void testPersistenceRebalanceUnderConstantLoad() throws Exception {
+        IgniteEx ignite0 = startGrid(0);
 
-        IgniteInternalCache<Integer, Integer> cache0 = node0.cachex(name);
-        IgniteInternalCache<Integer, Integer> cache1 = node1.cachex(name);
+        ignite0.cluster().active(true);
+        ignite0.cluster().baselineAutoAdjustTimeout(0);
 
-        assertEquals(cache0.localSize(peekAll), cache1.localSize(peekAll));
+        loadData(ignite0, DEFAULT_CACHE_NAME, TEST_SIZE);
 
-        for (Cache.Entry<Integer, Integer> entry : cache0.localEntries(peekAll))
-            assertEquals(entry.getValue(), cache1.localPeek(entry.getKey(), peekAll));
+        AtomicLong cntr = new AtomicLong(TEST_SIZE);
+
+        ConstantLoader ldr = new ConstantLoader(ignite0.cache(DEFAULT_CACHE_NAME), cntr);
+
+        IgniteInternalFuture ldrFut = GridTestUtils.runAsync(ldr);
+
+        U.sleep(1_000);
+
+        forceCheckpoint(ignite0);
+
+        IgniteEx ignite1 = startGrid(1);
+
+        awaitPartitionMapExchange();
+
+        U.sleep(1_000);
+
+        ldr.stop();
+
+        ldrFut.get();
+
+        U.sleep(1_000);
+
+        verifyLocalCacheContent(ignite0.cachex(DEFAULT_CACHE_NAME), ignite1.cachex(DEFAULT_CACHE_NAME));
     }
 
     /** */
@@ -232,7 +242,7 @@ public class GridCachePersistenceRebalanceSelfTest extends GridCommonAbstractTes
      * @param name The cache name to add random data to.
      * @param size The total size of entries.
      */
-    protected void loadData(Ignite ignite, String name, int size) {
+    private void loadData(Ignite ignite, String name, int size) {
         try (IgniteDataStreamer<Integer, Integer> streamer = ignite.dataStreamer(name)) {
             streamer.allowOverwrite(true);
 
@@ -242,6 +252,113 @@ public class GridCachePersistenceRebalanceSelfTest extends GridCommonAbstractTes
 
                 streamer.addData(i, i + name.hashCode());
             }
+        }
+    }
+
+    /**
+     * @param expCache Expected data cache.
+     * @param actCache Actual data cache.
+
+     * @throws IgniteCheckedException If failed.
+     */
+    private void verifyLocalCacheContent(IgniteInternalCache<Integer, Integer> expCache,
+        IgniteInternalCache<Integer, Integer> actCache) throws IgniteCheckedException {
+
+        for (GridDhtLocalPartition actPart : actCache.context().topology().localPartitions()) {
+            GridDhtLocalPartition expPart = expCache.context().topology().localPartition(actPart.id());
+
+            assertEquals("Counter not match p=" + expPart.id(), expPart.updateCounter(), actPart.updateCounter());
+            assertEquals("Size not match p=" + expPart.id(), expPart.fullSize(), actPart.fullSize());
+        }
+
+        CachePeekMode[] peekAll = new CachePeekMode[] {CachePeekMode.ALL};
+
+        assertEquals(expCache.localSize(peekAll), actCache.localSize(peekAll));
+
+        for (Cache.Entry<Integer, Integer> entry : expCache.localEntries(peekAll))
+            assertEquals(entry.getValue(), actCache.localPeek(entry.getKey(), peekAll));
+    }
+
+    /** */
+    private static class ConstantLoader implements Runnable {
+        /** */
+        private final AtomicLong cntr;
+
+        /** */
+        private volatile boolean pause;
+
+        /** */
+        private volatile boolean paused;
+
+        /** */
+        private volatile boolean stop;
+
+        /** */
+        private final IgniteCache<Long, Long> cache;
+
+        /** */
+        public ConstantLoader(IgniteCache<Long, Long> cache, AtomicLong cntr) {
+            this.cache = cache;
+            this.cntr = cntr;
+        }
+
+        /** {@inheritDoc} */
+        @Override public void run() {
+            while (!stop && !Thread.currentThread().isInterrupted()) {
+                if (pause) {
+                    if (!paused)
+                        paused = true;
+
+                    try {
+                        U.sleep(100);
+                    }
+                    catch (IgniteInterruptedCheckedException e) {
+                        break;
+                    }
+
+                    continue;
+                }
+
+                long from = cntr.getAndAdd(100);
+
+                for (long i = from; i < from + 100; i++)
+                    cache.put(i, i);
+
+                for (long i = from; i < from + 100; i += 10)
+                    cache.remove(i);
+            }
+        }
+
+        /**
+         * Stop loader thread.
+         */
+        public void stop() {
+            stop = true;
+        }
+
+        /**
+         * Pause loading.
+         */
+        public void pause() {
+            pause = true;
+
+            while (!paused) {
+                try {
+                    U.sleep(100);
+                }
+                catch (IgniteInterruptedCheckedException e) {
+                    break;
+                }
+            }
+        }
+
+        /**
+         * Resume loading.
+         */
+        public void resume() {
+            paused = false;
+            pause = false;
+
         }
     }
 }

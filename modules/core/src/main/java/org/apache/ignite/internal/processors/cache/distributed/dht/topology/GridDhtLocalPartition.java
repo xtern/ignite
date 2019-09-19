@@ -624,9 +624,6 @@ public class GridDhtLocalPartition extends GridCacheConcurrentMapImpl implements
      * @return {@code True} if transitioned to OWNING state.
      */
     public boolean own() {
-        if (CU.UTILITY_CACHE_NAME.equals(grp.cacheOrGroupName()))
-            U.dumpStack("owning sys cache part=" + id());
-
         while (true) {
             long state = this.state.get();
 

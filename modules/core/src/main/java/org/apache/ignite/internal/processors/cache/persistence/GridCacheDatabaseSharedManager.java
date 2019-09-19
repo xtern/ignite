@@ -1850,8 +1850,6 @@ public class GridCacheDatabaseSharedManager extends IgniteCacheDatabaseSharedMan
         if (cpEntry == null)
             return false;
 
-        U.dumpStack(cctx.localNodeId() + " >xxx> reserve history for preloading");
-
         WALPointer ptr = cpEntry.checkpointMark();
 
         if (ptr == null)

@@ -18,7 +18,9 @@ import org.apache.ignite.internal.IgniteInternalFuture;
 import org.apache.ignite.internal.managers.communication.GridIoManager;
 import org.apache.ignite.internal.managers.communication.TransmissionPolicy;
 import org.apache.ignite.internal.processors.affinity.AffinityTopologyVersion;
+import org.apache.ignite.internal.processors.cache.CacheGroupContext;
 import org.apache.ignite.internal.processors.cache.GridCacheSharedContext;
+import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtLocalPartition;
 import org.apache.ignite.internal.processors.cache.persistence.file.RandomAccessFileIOFactory;
 import org.apache.ignite.internal.util.GridIntIterator;
 import org.apache.ignite.internal.util.GridIntList;
@@ -32,6 +34,9 @@ import org.apache.ignite.internal.util.typedef.internal.U;
 import static org.apache.ignite.internal.processors.cache.distributed.dht.preloader.GridCachePreloadSharedManager.REBALANCE_CP_REASON;
 import static org.apache.ignite.internal.processors.cache.distributed.dht.preloader.GridCachePreloadSharedManager.rebalanceThreadTopic;
 
+/**
+ *
+ */
 public class PartitionUploadManager {
     /** */
     private GridCacheSharedContext<?, ?> cctx;
@@ -153,6 +158,30 @@ public class PartitionUploadManager {
             // Need to start new partition upload routine.
 //            ch = cctx.gridIO().channelToTopic(nodeId, rebalanceThreadTopic(), plc);
 
+            for (Map.Entry<Integer, Set<Integer>> e : uploadFut.getAssigns().entrySet()) {
+                int grpId = e.getKey();
+
+                CacheGroupContext grp = cctx.cache().cacheGroup(grpId);
+
+                // todo handle exceptions somehow
+                for (int partId : e.getValue()) {
+                    GridDhtLocalPartition part = grp.topology().localPartition(partId);
+
+                    boolean reserved = part.reserve();
+
+                    assert reserved : part.id();
+
+                    long updateCntr = part.updateCounter();
+
+                    boolean histReserved = cctx.database().reserveHistoryForPreloading(grpId, partId, updateCntr);
+
+                    assert histReserved : part.id();
+
+                    if (log.isDebugEnabled())
+                        log.debug("Reserved history for preloading [grp=" + grp.cacheOrGroupName() + ", part=" + partId + ", cntr=" + updateCntr);
+                }
+            }
+
             // todo - exec trnasmission on supplier thread!
             sendPartitions(uploadFut, nodeId).get();
 
@@ -189,6 +218,7 @@ public class PartitionUploadManager {
                 Map<Integer, Map<Integer, File>> filesToSnd = new HashMap<>();
 
                 for (Map.Entry<Integer, Set<Integer>> e : fut.getAssigns().entrySet()) {
+
                     int grpId = e.getKey();
 
                     Map<Integer, File> partFiles = new HashMap<>();
@@ -229,6 +259,11 @@ public class PartitionUploadManager {
                             File file = e0.getValue();
 
                             snd.send(file, F.asMap("group", grpId, "part", partId), TransmissionPolicy.FILE);
+
+                            GridDhtLocalPartition part = cctx.cache().cacheGroup(grpId).topology().localPartition(partId);
+
+                            // todo release only once - after historical rebalancing
+                            part.release();
                         }
                     }
 
