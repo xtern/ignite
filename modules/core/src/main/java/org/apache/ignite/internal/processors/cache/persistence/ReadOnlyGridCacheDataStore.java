@@ -71,15 +71,22 @@ public class ReadOnlyGridCacheDataStore implements CacheDataStore {
     /** */
     private final AtomicBoolean disableRemoves = new AtomicBoolean();
 
+    GridCacheSharedContext ctx;
+
+    int grpId;
+
     /**
      * todo
      */
     public ReadOnlyGridCacheDataStore(
         CacheGroupContext grp,
         GridCacheSharedContext ctx,
-        CacheDataStore delegate
+        CacheDataStore delegate,
+        int grpId
     ) {
         this.delegate = delegate;
+        this.ctx = ctx;
+        this.grpId = grpId;
 
         log = ctx.logger(getClass());
 
@@ -318,6 +325,7 @@ public class ReadOnlyGridCacheDataStore implements CacheDataStore {
 
     /** {@inheritDoc} */
     @Override public void destroy() throws IgniteCheckedException {
+//        ((GridCacheOffheapManager)ctx.cache().cacheGroup(grpId).offheap()).destroyPartitionStore(grpId, partId());
         delegate.destroy();
     }
 

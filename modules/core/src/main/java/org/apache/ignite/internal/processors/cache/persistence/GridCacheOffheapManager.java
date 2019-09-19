@@ -203,7 +203,7 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
         boolean exists = ctx.pageStore() != null && ctx.pageStore().exists(grp.groupId(), p);
 
         CacheDataStore store = new GridCacheDataStore(p, exists);
-        CacheDataStore readOnlyStore = new ReadOnlyGridCacheDataStore(grp, ctx, store);
+        CacheDataStore readOnlyStore = new ReadOnlyGridCacheDataStore(grp, ctx, store, grp.groupId());
 
         return new CacheDataStoreExImpl(grp.shared(), store, readOnlyStore, log);
     }

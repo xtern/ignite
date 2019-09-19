@@ -773,6 +773,32 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
         cur.run();
     }
 
+    private void triggerHistoricalRebalance0(ClusterNode node, GridCacheContext cctx, int[] p, long[] lwm, long[] hwm, int partsCnt) {
+        GridDhtPartitionDemandMessage msg = new GridDhtPartitionDemandMessage(
+            cctx.topology().updateSequence(),
+            cctx.topology().readyTopologyVersion(),
+            cctx.groupId());
+
+        for (int i = 0; i < p.length; i++)
+            msg.partitions().addHistorical(p[i], lwm[i], hwm[i], partsCnt);
+
+        GridCompoundFuture<Boolean, Boolean> fut = new GridCompoundFuture<>(CU.boolReducer());
+
+        GridDhtPartitionExchangeId exchId = cctx.shared().exchange().lastFinishedFuture().exchangeId();
+
+        GridDhtPreloaderAssignments assigns = new GridDhtPreloaderAssignments(exchId, cctx.topology().readyTopologyVersion());
+
+        assigns.put(node, msg);
+
+        Runnable cur = cctx.group().preloader().addAssignments(assigns,
+            true,
+            rebalanceIdCntr.getAndIncrement(),
+            null,
+            fut);
+
+        cur.run();
+    }
+
     public IgniteInternalFuture<Void> schedulePartitionDestroy(GridDhtLocalPartition part) {
         GridFutureAdapter<Void> fut = new GridFutureAdapter<>();
 
@@ -799,7 +825,9 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
         part.onClearFinished(c -> {
             cctx.kernalContext().closure().runLocalSafe(() -> {
                 //todo should prevent any removes on DESTROYED partition.
-                ((ReadOnlyGridCacheDataStore)part.dataStore().store(true)).disableRemoves();
+                ReadOnlyGridCacheDataStore store = (ReadOnlyGridCacheDataStore)part.dataStore().store(true);
+
+                store.disableRemoves();
 
                 CacheGroupContext ctx = part.group();
 
@@ -809,11 +837,8 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
                     ctx.offheap().destroyCacheDataStore(part.dataStore());
 
                     // todo something smarter - store will be removed on next checkpoint.
-                    while (ctx.shared().pageStore().exists(grpId, part.id())) {
+                    while (ctx.shared().pageStore().exists(grpId, part.id()))
                         U.sleep(200);
-
-                        System.out.println("wait for truncate " + part.id());
-                    }
 
                     // todo should be executed for all cleared partitions at once.
                     ((PageMemoryEx)ctx.dataRegion().pageMemory())
@@ -846,23 +871,19 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
      * moved.
      */
     public IgniteInternalFuture<T2<Long, Long>> restorePartition(
-        UUID nodeId,
         int grpId,
         int partId,
-        File fsPartFile
+        File fsPartFile,
+        IgniteInternalFuture destroyFut
     ) throws IgniteCheckedException {
         CacheGroupContext ctx = cctx.cache().cacheGroup(grpId);
 
         // Create partition.
         GridDhtLocalPartition part = ctx.topology().forceCreatePartition(partId);
 
-        RebalanceDownloadFuture fut = futMap.get(nodeId);
-
-        IgniteInternalFuture destroyFut = fut.remainDestroy(grpId, partId);
-
         if (!destroyFut.isDone()) {
             if (log.isDebugEnabled())
-                log.debug("Await destroy [grp=" + grpId + ", partId=" + partId);
+                log.debug("Await partition destroy [grp=" + grpId + ", partId=" + partId + "]");
 
             destroyFut.get();
         }
@@ -1031,8 +1052,18 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
                 Integer partId = (Integer)initMeta.params().get("part");
 
                 try {
-                    restorePartition(nodeId, grpId, partId, file).listen(c -> {
-                        fut.partitionDone(grpId, partId);
+                    IgniteInternalFuture destroyFut = fut.remainDestroy(grpId, partId);
+
+                    restorePartition(grpId, partId, file, destroyFut).listen(c -> {
+                        try {
+                            T2<Long, Long> t2 = c.get();
+
+                            assert t2 != null;
+
+                            fut.onPartitionRestored(grpId, partId, t2.get1(), t2.get2());
+                        } catch (IgniteCheckedException e) {
+                            fut.onDone(e);
+                        }
                     });
                 }
                 catch (IgniteCheckedException e) {
@@ -1125,9 +1156,8 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
         /**
          * @param grpId Cache group id to search.
          * @param partId Cache partition to remove;
-         * @throws IgniteCheckedException If fails.
          */
-        public synchronized void partitionDone(int grpId, int partId) {
+        public synchronized void onPartitionRestored(int grpId, int partId, long startCntr, long endCntr) {
             Set<Integer> parts = remaining.get(grpId);
 
             if (parts == null)
