@@ -451,10 +451,29 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
                 @Override public void applyx(IgniteInternalFuture<Boolean> fut0) throws IgniteCheckedException {
                     cctx.kernalContext().io().removeTransmissionHandler(rebalanceThreadTopic());
 
-                    if (fut0.get())
+                    if (fut0.get()) {
                         U.log(log, "The final persistence rebalance future is done [result=" + fut0.isDone() + ']');
 
-                    cctx.exchange().scheduleResendPartitions();
+                        for (int grpId : assignsMap.keySet()) {
+                            CacheGroupContext grp = cctx.cache().cacheGroup(grpId);
+
+                            // todo onFinishGroup
+                            if (!grp.localWalEnabled()) {
+//                                fut.listen(new IgniteInClosureX<IgniteInternalFuture<Boolean>>() {
+//                                    @Override
+//                                    public void applyx(
+//                                IgniteInternalFuture<Boolean> future) throws IgniteCheckedException {
+//                                if (future.get())
+                                cctx.walState().onGroupRebalanceFinished(grp.groupId(), topVer);
+//                                else
+//                                    System.out.println("future false");
+//                                    }
+//                                });
+                            }
+                        }
+                    }
+
+                    //cctx.exchange().scheduleResendPartitions();
                 }
             });
 
@@ -1120,18 +1139,22 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
 
             CacheGroupContext ctx = cctx.cache().cacheGroup(grpId);
 
-            if (log.isDebugEnabled())
-                log.debug("Owning partition [cache=" + ctx.cacheOrGroupName() + ", part="+partId);
+            boolean locWalEnabled = ctx.localWalEnabled();
 
-            boolean isOwned = ctx.topology().own(ctx.topology().localPartition(partId));
+            if (locWalEnabled) {
+                if (log.isDebugEnabled())
+                    log.debug("Owning partition [cache=" + ctx.cacheOrGroupName() + ", part=" + partId);
 
-            assert isOwned : "Partition must be owned: " + partId;
+                boolean isOwned = ctx.topology().own(ctx.topology().localPartition(partId));
 
-            System.out.println("node2part state part=" + partId + " state=" + ctx.topology().partitionState(cctx.localNodeId(), partId));
-
+                assert isOwned : "Partition must be owned: " + partId;
+            }
 
             if (parts.isEmpty()) {
                 remaining.remove(grpId);
+
+                if (locWalEnabled)
+                    cctx.exchange().scheduleResendPartitions();
 
                 if (remaining.isEmpty())
                     onDone(true);

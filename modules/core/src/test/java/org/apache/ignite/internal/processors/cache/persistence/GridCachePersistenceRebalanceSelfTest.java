@@ -21,6 +21,7 @@ import java.util.Collections;
 import javax.cache.Cache;
 import org.apache.ignite.Ignite;
 import org.apache.ignite.IgniteCache;
+import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.IgniteDataStreamer;
 import org.apache.ignite.cache.CacheAtomicityMode;
 import org.apache.ignite.cache.CacheMode;
@@ -37,8 +38,6 @@ import org.apache.ignite.internal.IgniteEx;
 import org.apache.ignite.internal.TestRecordingCommunicationSpi;
 import org.apache.ignite.internal.processors.cache.IgniteInternalCache;
 import org.apache.ignite.internal.processors.cache.preload.GridPartitionBatchDemandMessage;
-import org.apache.ignite.internal.util.typedef.internal.CU;
-import org.apache.ignite.internal.util.typedef.internal.U;
 import org.apache.ignite.lang.IgniteBiPredicate;
 import org.apache.ignite.plugin.extensions.communication.Message;
 import org.apache.ignite.testframework.GridTestUtils;
@@ -129,50 +128,23 @@ public class GridCachePersistenceRebalanceSelfTest extends GridCommonAbstractTes
 
         forceCheckpoint();
 
-        System.out.println(">>> starting grid 2");
-
         IgniteEx ignite1 = startGrid(1);
-
-        U.sleep(2_000);
-
-        System.out.println("force checkpoint 1");
-
-        forceCheckpoint(ignite1);
-
-        U.sleep(2_000);
-
-        System.out.println("force checkpoint 2");
-
-        U.sleep(2_000);
-
-        System.out.println("force checkpoint 3");
-
-        forceCheckpoint(ignite1);
-
-        U.sleep(4_000);
-
-        System.out.println("print parts map");
-
-        printPartitionState(CU.UTILITY_CACHE_NAME, 0);
-
-        System.out.println("await parts map");
 
         awaitPartitionMapExchange();
 
-        System.out.println("get cache");
+        verifyLocalCacheContent(ignite0, ignite1, DEFAULT_CACHE_NAME);
+    }
 
-        IgniteInternalCache cache = ignite1.cachex(DEFAULT_CACHE_NAME);
+    private void verifyLocalCacheContent(IgniteEx node0, IgniteEx node1, String name) throws IgniteCheckedException {
+        CachePeekMode[] peekAll = new CachePeekMode[] {CachePeekMode.ALL};
 
-        System.out.println("get iterator");
+        IgniteInternalCache<Integer, Integer> cache0 = node0.cachex(name);
+        IgniteInternalCache<Integer, Integer> cache1 = node1.cachex(name);
 
-        Iterable<Cache.Entry<Integer, Integer>> itr = cache.localEntries(new CachePeekMode[] {CachePeekMode.ALL});
+        assertEquals(cache0.localSize(peekAll), cache1.localSize(peekAll));
 
-        System.out.println("print cache entries");
-
-        for (Cache.Entry<Integer, Integer> e : itr)
-            System.out.println(e.getKey() + " : " + e.getValue());
-
-        System.out.println("shutdown testcase");
+        for (Cache.Entry<Integer, Integer> entry : cache0.localEntries(peekAll))
+            assertEquals(entry.getValue(), cache1.localPeek(entry.getKey(), peekAll));
     }
 
     /** */

@@ -64,6 +64,7 @@ import org.apache.ignite.internal.util.collection.IntRWHashMap;
 import org.apache.ignite.internal.util.future.GridFutureAdapter;
 import org.apache.ignite.internal.util.lang.GridIterator;
 import org.apache.ignite.internal.util.tostring.GridToStringExclude;
+import org.apache.ignite.internal.util.typedef.internal.CU;
 import org.apache.ignite.internal.util.typedef.internal.LT;
 import org.apache.ignite.internal.util.typedef.internal.S;
 import org.apache.ignite.internal.util.typedef.internal.U;
@@ -623,6 +624,9 @@ public class GridDhtLocalPartition extends GridCacheConcurrentMapImpl implements
      * @return {@code True} if transitioned to OWNING state.
      */
     public boolean own() {
+        if (CU.UTILITY_CACHE_NAME.equals(grp.cacheOrGroupName()))
+            U.dumpStack("owning sys cache part=" + id());
+
         while (true) {
             long state = this.state.get();
 
