@@ -52,6 +52,7 @@ import org.apache.ignite.internal.processors.cache.mvcc.MvccProcessor;
 import org.apache.ignite.internal.processors.cache.persistence.DataRegion;
 import org.apache.ignite.internal.processors.cache.persistence.IgniteCacheDatabaseSharedManager;
 import org.apache.ignite.internal.processors.cache.persistence.snapshot.IgniteCacheSnapshotManager;
+import org.apache.ignite.internal.processors.cache.distributed.dht.preloader.GridCachePreloadSharedManager;
 import org.apache.ignite.internal.processors.cache.store.CacheStoreManager;
 import org.apache.ignite.internal.processors.cache.transactions.IgniteInternalTx;
 import org.apache.ignite.internal.processors.cache.transactions.IgniteTxManager;
@@ -186,6 +187,9 @@ public class GridCacheSharedContext<K, V> {
     /** Cluster is in read-only mode. */
     private volatile boolean readOnlyMode;
 
+    /** Manager to preload cache partions. Can be {@code null} if presistence is not enabled. */
+    private GridCachePreloadSharedManager preloadMgr;
+
     /**
      * @param kernalCtx  Context.
      * @param txMgr Transaction manager.
@@ -227,7 +231,8 @@ public class GridCacheSharedContext<K, V> {
         Collection<CacheStoreSessionListener> storeSesLsnrs,
         MvccCachingManager mvccCachingMgr,
         DeadlockDetectionManager deadlockDetectionMgr,
-        CacheDiagnosticManager diagnosticMgr
+        CacheDiagnosticManager diagnosticMgr,
+        GridCachePreloadSharedManager preloadMgr
     ) {
         this.kernalCtx = kernalCtx;
 
@@ -243,6 +248,7 @@ public class GridCacheSharedContext<K, V> {
             dbMgr,
             snpMgr,
             depMgr,
+            preloadMgr,
             exchMgr,
             affMgr,
             ioMgr,
@@ -412,6 +418,7 @@ public class GridCacheSharedContext<K, V> {
             dbMgr,
             snpMgr,
             new GridCacheDeploymentManager<K, V>(),
+            preloadMgr,
             new GridCachePartitionExchangeManager<K, V>(),
             affMgr,
             ioMgr,
@@ -461,6 +468,7 @@ public class GridCacheSharedContext<K, V> {
         IgniteCacheDatabaseSharedManager dbMgr,
         IgniteCacheSnapshotManager snpMgr,
         GridCacheDeploymentManager<K, V> depMgr,
+        GridCachePreloadSharedManager preloadMgr,
         GridCachePartitionExchangeManager<K, V> exchMgr,
         CacheAffinitySharedManager affMgr,
         GridCacheIoManager ioMgr,
@@ -481,6 +489,7 @@ public class GridCacheSharedContext<K, V> {
         this.snpMgr = add(mgrs, snpMgr);
         this.jtaMgr = add(mgrs, jtaMgr);
         this.depMgr = add(mgrs, depMgr);
+        this.preloadMgr = add(mgrs, preloadMgr);
         this.exchMgr = add(mgrs, exchMgr);
         this.affMgr = add(mgrs, affMgr);
         this.ioMgr = add(mgrs, ioMgr);
@@ -712,6 +721,10 @@ public class GridCacheSharedContext<K, V> {
      */
     public IgniteCacheDatabaseSharedManager database() {
         return dbMgr;
+    }
+
+    public GridCachePreloadSharedManager preloader() {
+        return preloadMgr;
     }
 
     /**
