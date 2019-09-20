@@ -55,6 +55,8 @@ import org.apache.ignite.internal.pagemem.wal.record.delta.MetaPageInitRecord;
 import org.apache.ignite.internal.pagemem.wal.record.delta.MetaPageUpdatePartitionDataRecordV2;
 import org.apache.ignite.internal.pagemem.wal.record.delta.PartitionDestroyRecord;
 import org.apache.ignite.internal.processors.affinity.AffinityTopologyVersion;
+import org.apache.ignite.internal.processors.cache.CacheDataStoreEx;
+import org.apache.ignite.internal.processors.cache.CacheDataStoreExImpl;
 import org.apache.ignite.internal.processors.cache.CacheDiagnosticManager;
 import org.apache.ignite.internal.processors.cache.CacheEntryPredicate;
 import org.apache.ignite.internal.processors.cache.CacheGroupContext;
@@ -63,6 +65,7 @@ import org.apache.ignite.internal.processors.cache.GridCacheContext;
 import org.apache.ignite.internal.processors.cache.GridCacheEntryEx;
 import org.apache.ignite.internal.processors.cache.GridCacheMvccEntryInfo;
 import org.apache.ignite.internal.processors.cache.GridCacheTtlManager;
+import org.apache.ignite.internal.processors.cache.IgniteCacheOffheapManager.CacheDataStore;
 import org.apache.ignite.internal.processors.cache.IgniteCacheOffheapManagerImpl;
 import org.apache.ignite.internal.processors.cache.KeyCacheObject;
 import org.apache.ignite.internal.processors.cache.PartitionUpdateCounter;
@@ -191,13 +194,18 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
     }
 
     /** {@inheritDoc} */
-    @Override protected CacheDataStore createCacheDataStore0(int p) throws IgniteCheckedException {
+    @Override protected CacheDataStoreEx createCacheDataStore0(int p) throws IgniteCheckedException {
+//        System.out.println(">xxx> fs create " + p);
+
         if (ctx.database() instanceof GridCacheDatabaseSharedManager)
             ((GridCacheDatabaseSharedManager) ctx.database()).cancelOrWaitPartitionDestroy(grp.groupId(), p);
 
         boolean exists = ctx.pageStore() != null && ctx.pageStore().exists(grp.groupId(), p);
 
-        return new GridCacheDataStore(p, exists);
+        CacheDataStore store = new GridCacheDataStore(p, exists);
+        CacheDataStore readOnlyStore = new ReadOnlyGridCacheDataStore(grp, ctx, store, grp.groupId());
+
+        return new CacheDataStoreExImpl(grp.shared(), store, readOnlyStore, log);
     }
 
     /** {@inheritDoc} */
@@ -291,6 +299,9 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
         boolean beforeDestroy,
         boolean needSnapshot
     ) throws IgniteCheckedException {
+        if (store instanceof CacheDataStoreEx && ((CacheDataStoreEx)store).readOnly())
+            return;
+
         RowStore rowStore0 = store.rowStore();
 
         if (rowStore0 != null) {
@@ -1060,6 +1071,11 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
         return size;
     }
 
+//    @Override public void invoke(GridCacheContext cctx, KeyCacheObject key, GridDhtLocalPartition part,
+//        OffheapInvokeClosure c) throws IgniteCheckedException {
+//
+//    }
+
     /** {@inheritDoc} */
     @Override public void preloadPartition(int part) throws IgniteCheckedException {
         if (grp.isLocal()) {
@@ -1571,7 +1587,7 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
      */
     public class GridCacheDataStore implements CacheDataStore {
         /** */
-        private final int partId;
+        protected final int partId;
 
         /** */
         private volatile AbstractFreeList<CacheDataRow> freeList;
@@ -1769,7 +1785,7 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
                         }
                     };
 
-                    PageMemoryEx pageMem = (PageMemoryEx)grp.dataRegion().pageMemory();
+                    PageMemoryEx pageMem = (PageMemoryEx)grp.dataRegion().pageMemory();;
 
                     delegate0 = new CacheDataStoreImpl(partId, rowStore, dataTree) {
                         /** {@inheritDoc} */
@@ -2006,6 +2022,28 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
         @Override public boolean init() {
             try {
                 return init0(true) != null;
+            }
+            catch (IgniteCheckedException e) {
+                throw new IgniteException(e);
+            }
+        }
+
+        /** {@inheritDoc} */
+        @Override public void reinit() {
+            try {
+                if (init.compareAndSet(true, false)) {
+                    delegate = null;
+
+                    init.set(false);
+
+                    // TODO add test when the storage is not inited and the current method called
+                    CacheDataStore delegate0 = init0(false);
+
+                    assert delegate0 != null;
+
+                    // todo initialize properly or don't remove them
+                    partDataStores.put(partId, this);
+                }
             }
             catch (IgniteCheckedException e) {
                 throw new IgniteException(e);

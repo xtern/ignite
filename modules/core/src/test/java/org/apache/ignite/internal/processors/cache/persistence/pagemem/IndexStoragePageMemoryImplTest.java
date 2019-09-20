@@ -104,7 +104,8 @@ public class IndexStoragePageMemoryImplTest extends IndexStorageSelfTest {
             null,
             null,
             null,
-            new CacheDiagnosticManager()
+            new CacheDiagnosticManager(),
+            null
         );
 
         return new PageMemoryImpl(

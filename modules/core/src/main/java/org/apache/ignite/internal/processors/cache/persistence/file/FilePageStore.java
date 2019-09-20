@@ -163,6 +163,8 @@ public class FilePageStore implements PageStore {
                 if (fileExists == null) {
                     File file = pathProvider.apply().toFile();
 
+//                    System.out.println("file (exists="+file.exists()+"): " + file);
+
                     fileExists = file.exists() && file.length() > headerSize();
                 }
             }
@@ -342,6 +344,8 @@ public class FilePageStore implements PageStore {
         init();
 
         Path filePath = pathProvider.apply();
+
+        U.dumpStack(">xxx> truncate " + filePath);
 
         lock.writeLock().lock();
 
