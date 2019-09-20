@@ -18,6 +18,7 @@
 package org.apache.ignite.internal.processors.cache.persistence;
 
 import java.util.Collections;
+import java.util.UUID;
 import java.util.concurrent.atomic.AtomicLong;
 import javax.cache.Cache;
 import org.apache.ignite.Ignite;
@@ -43,6 +44,7 @@ import org.apache.ignite.internal.TestRecordingCommunicationSpi;
 import org.apache.ignite.internal.processors.cache.IgniteInternalCache;
 import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtLocalPartition;
 import org.apache.ignite.internal.processors.cache.preload.GridPartitionBatchDemandMessage;
+import org.apache.ignite.internal.util.IgniteUtils;
 import org.apache.ignite.internal.util.typedef.internal.U;
 import org.apache.ignite.lang.IgniteBiPredicate;
 import org.apache.ignite.plugin.extensions.communication.Message;
@@ -82,7 +84,7 @@ public class GridCachePersistenceRebalanceSelfTest extends GridCommonAbstractTes
                     .setMaxSize(100L * 1024 * 1024)
                     .setPersistenceEnabled(true))
                 .setWalMode(WALMode.LOG_ONLY)
-                .setCheckpointFrequency(3_000)) // todo check with default timeout!
+                .setCheckpointFrequency(500)) // todo check with default timeout!
 //                .setWalSegmentSize(4 * 1024 * 1024)
 //                .setMaxWalArchiveSize(8 * 1024 * 1024))
             .setCacheConfiguration(new CacheConfiguration(DEFAULT_CACHE_NAME)
@@ -115,7 +117,7 @@ public class GridCachePersistenceRebalanceSelfTest extends GridCommonAbstractTes
 
         awaitPartitionMapExchange();
 
-        verifyLocalCacheContent(ignite0.cachex(DEFAULT_CACHE_NAME), ignite1.cachex(DEFAULT_CACHE_NAME));
+        verifyLocalCache(ignite0.cachex(DEFAULT_CACHE_NAME), ignite1.cachex(DEFAULT_CACHE_NAME));
     }
 
     /** */
@@ -140,7 +142,7 @@ public class GridCachePersistenceRebalanceSelfTest extends GridCommonAbstractTes
 
         U.sleep(1_000);
 
-        forceCheckpoint(ignite0);
+//        forceCheckpoint(ignite0);
 
         IgniteEx ignite1 = startGrid(1);
 
@@ -154,7 +156,7 @@ public class GridCachePersistenceRebalanceSelfTest extends GridCommonAbstractTes
 
         U.sleep(1_000);
 
-        verifyLocalCacheContent(ignite0.cachex(DEFAULT_CACHE_NAME), ignite1.cachex(DEFAULT_CACHE_NAME));
+        verifyLocalCache(ignite0.cachex(DEFAULT_CACHE_NAME), ignite1.cachex(DEFAULT_CACHE_NAME));
     }
 
     /** */
@@ -261,8 +263,10 @@ public class GridCachePersistenceRebalanceSelfTest extends GridCommonAbstractTes
 
      * @throws IgniteCheckedException If failed.
      */
-    private void verifyLocalCacheContent(IgniteInternalCache<Integer, Integer> expCache,
+    private void verifyLocalCache(IgniteInternalCache<Integer, Integer> expCache,
         IgniteInternalCache<Integer, Integer> actCache) throws IgniteCheckedException {
+        verifyLocalCacheContent(expCache, actCache);
+        verifyLocalCacheContent(actCache, expCache);
 
         for (GridDhtLocalPartition actPart : actCache.context().topology().localPartitions()) {
             GridDhtLocalPartition expPart = expCache.context().topology().localPartition(actPart.id());
@@ -274,9 +278,24 @@ public class GridCachePersistenceRebalanceSelfTest extends GridCommonAbstractTes
         CachePeekMode[] peekAll = new CachePeekMode[] {CachePeekMode.ALL};
 
         assertEquals(expCache.localSize(peekAll), actCache.localSize(peekAll));
+    }
 
-        for (Cache.Entry<Integer, Integer> entry : expCache.localEntries(peekAll))
-            assertEquals(entry.getValue(), actCache.localPeek(entry.getKey(), peekAll));
+    /**
+     * @param cache1 Expected data cache.
+     * @param cache2 Actual data cache.
+
+     * @throws IgniteCheckedException If failed.
+     */
+    private void verifyLocalCacheContent(IgniteInternalCache<Integer, Integer> cache1,
+        IgniteInternalCache<Integer, Integer> cache2) throws IgniteCheckedException {
+
+        CachePeekMode[] peekAll = new CachePeekMode[] {CachePeekMode.ALL};
+
+        UUID node1 = cache1.context().shared().localNodeId();
+        UUID node2 = cache2.context().shared().localNodeId();
+
+        for (Cache.Entry<Integer, Integer> entry : cache1.localEntries(peekAll))
+            assertEquals(node1 + " vs " + node2, entry.getValue(), cache2.localPeek(entry.getKey(), peekAll));
     }
 
     /** */
