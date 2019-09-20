@@ -218,9 +218,15 @@ public class PartitionUploadManager {
 
                     int grpId = e.getKey();
 
+
+
                     Map<Integer, File> partFiles = new HashMap<>();
 
                     for (int partId : e.getValue()) {
+                        GridDhtLocalPartition part = cctx.cache().cacheGroup(grpId).topology().localPartition(partId);
+
+                        System.out.println("before copy p="+partId+", reserved="+part.reservedCounter()+", cntr="+part.updateCounter());
+
                         String path = cctx.preloader().storePath(grpId, partId);
 
                         File src = new File(path);

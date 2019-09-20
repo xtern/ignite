@@ -84,7 +84,7 @@ public class GridCachePersistenceRebalanceSelfTest extends GridCommonAbstractTes
                     .setMaxSize(100L * 1024 * 1024)
                     .setPersistenceEnabled(true))
                 .setWalMode(WALMode.LOG_ONLY)
-                .setCheckpointFrequency(3_000)) // todo check with default timeout!
+                .setCheckpointFrequency(500)) // todo check with default timeout!
 //                .setWalSegmentSize(4 * 1024 * 1024)
 //                .setMaxWalArchiveSize(8 * 1024 * 1024))
             .setCacheConfiguration(new CacheConfiguration(DEFAULT_CACHE_NAME)
@@ -265,9 +265,6 @@ public class GridCachePersistenceRebalanceSelfTest extends GridCommonAbstractTes
      */
     private void verifyLocalCache(IgniteInternalCache<Integer, Integer> expCache,
         IgniteInternalCache<Integer, Integer> actCache) throws IgniteCheckedException {
-        verifyLocalCacheContent(expCache, actCache);
-        verifyLocalCacheContent(actCache, expCache);
-
         for (GridDhtLocalPartition actPart : actCache.context().topology().localPartitions()) {
             GridDhtLocalPartition expPart = expCache.context().topology().localPartition(actPart.id());
 
@@ -278,6 +275,9 @@ public class GridCachePersistenceRebalanceSelfTest extends GridCommonAbstractTes
         CachePeekMode[] peekAll = new CachePeekMode[] {CachePeekMode.ALL};
 
         assertEquals(expCache.localSize(peekAll), actCache.localSize(peekAll));
+
+        verifyLocalCacheContent(expCache, actCache);
+        verifyLocalCacheContent(actCache, expCache);
     }
 
     /**
