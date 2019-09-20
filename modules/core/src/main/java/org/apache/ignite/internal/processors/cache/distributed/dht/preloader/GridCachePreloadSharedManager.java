@@ -641,6 +641,8 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
             // todo
             part.dataStore().reinit();
 
+            System.out.println("after restore p="+partId+", reserved="+part.reservedCounter()+", cntr="+part.updateCounter() +" to="+to);
+
             return new T2<>(part.updateCounter(), to);
         });
     }

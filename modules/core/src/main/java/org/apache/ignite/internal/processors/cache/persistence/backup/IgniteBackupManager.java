@@ -54,6 +54,7 @@ import org.apache.ignite.internal.pagemem.PageIdUtils;
 import org.apache.ignite.internal.pagemem.store.PageStore;
 import org.apache.ignite.internal.processors.cache.CacheGroupContext;
 import org.apache.ignite.internal.processors.cache.GridCacheSharedManagerAdapter;
+import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtLocalPartition;
 import org.apache.ignite.internal.processors.cache.persistence.CheckpointFuture;
 import org.apache.ignite.internal.processors.cache.persistence.DbCheckpointListener;
 import org.apache.ignite.internal.processors.cache.persistence.GridCacheDatabaseSharedManager;
@@ -240,6 +241,10 @@ public class IgniteBackupManager extends GridCacheSharedManagerAdapter {
 
                             bctx0.partDeltaWriters.get(pair).pagesWrittenBits =
                                 new AtomicIntegerArray(allocRange.getCurrAllocatedPageCnt());
+
+                            GridDhtLocalPartition part = cctx.cache().cacheGroup(pair.getGroupId()).topology().localPartition(pair.getPartitionId());
+
+                            System.out.println("before copy p="+part.id()+", reserved="+part.reservedCounter()+", cntr="+part.updateCounter());
                         }
 
                         // Submit all tasks for partitions and deltas processing.
