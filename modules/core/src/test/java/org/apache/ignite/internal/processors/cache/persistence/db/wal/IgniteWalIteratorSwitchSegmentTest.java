@@ -471,6 +471,7 @@ public class IgniteWalIteratorSwitchSegmentTest extends GridCommonAbstractTest {
             null,
             null,
             null,
+            null,
             new GridCacheIoManager(),
             null,
             null,

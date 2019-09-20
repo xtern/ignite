@@ -4510,6 +4510,16 @@ public class GridCacheDatabaseSharedManager extends IgniteCacheDatabaseSharedMan
                 }
 
                 /** {@inheritDoc} */
+                @Override public Map<Integer, Set<Integer>> gatherPartStats() {
+                    return delegate.gatherPartStats();
+                }
+
+                /** {@inheritDoc} */
+                @Override public void gatherPartStats(Map<Integer, Set<Integer>> parts) {
+                    delegate.gatherPartStats(parts);
+                }
+
+                /** {@inheritDoc} */
                 @Override public PartitionAllocationMap partitionStatMap() {
                     return delegate.partitionStatMap();
                 }
@@ -4653,6 +4663,9 @@ public class GridCacheDatabaseSharedManager extends IgniteCacheDatabaseSharedMan
             /** Partition map. */
             private final PartitionAllocationMap map;
 
+            /** Collection of partitions to gather statistics. */
+            private final Map<Integer, Set<Integer>> gatherParts = new HashMap<>();
+
             /** Pending tasks from executor. */
             private GridCompoundFuture pendingTaskFuture;
 
@@ -4669,6 +4682,19 @@ public class GridCacheDatabaseSharedManager extends IgniteCacheDatabaseSharedMan
             /** {@inheritDoc} */
             @Override public boolean nextSnapshot() {
                 return curr.nextSnapshot;
+            }
+
+            /** {@inheritDoc} */
+            @Override public Map<Integer, Set<Integer>> gatherPartStats() {
+                return gatherParts;
+            }
+
+            /** {@inheritDoc} */
+            @Override public void gatherPartStats(Map<Integer, Set<Integer>> parts) {
+                for (Map.Entry<Integer, Set<Integer>> e : parts.entrySet()) {
+                    gatherParts.computeIfAbsent(e.getKey(), g -> new HashSet<>())
+                        .addAll(e.getValue());
+                }
             }
 
             /** {@inheritDoc} */
