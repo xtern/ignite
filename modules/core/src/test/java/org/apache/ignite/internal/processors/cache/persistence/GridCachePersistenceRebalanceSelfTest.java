@@ -138,7 +138,7 @@ public class GridCachePersistenceRebalanceSelfTest extends GridCommonAbstractTes
 
         ConstantLoader ldr = new ConstantLoader(ignite0.cache(DEFAULT_CACHE_NAME), cntr);
 
-        IgniteInternalFuture ldrFut = GridTestUtils.runAsync(ldr);
+        IgniteInternalFuture ldrFut = GridTestUtils.runMultiThreadedAsync(ldr, 8, "thread");
 
         U.sleep(1_000);
 
