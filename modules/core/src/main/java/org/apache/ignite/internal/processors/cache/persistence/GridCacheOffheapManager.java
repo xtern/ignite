@@ -1384,6 +1384,8 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
 
                                 return;
                             }
+                            else
+                                System.out.println("p=" + entry.partitionId() + ", cntr=" + entry.partitionCounter() + " e=" + entry.key());
                         }
                     }
                 }
@@ -1424,12 +1426,14 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
 
                                 doneParts.add(rbRec.partitionId()); // Add to done set immediately.
                             }
+                            else
+                                System.out.println("p=" + rbRec.partitionId() + ", overlap=" + rbRec.overlap(from, to));
                         }
                     }
                 }
 
                 assert entryIt != null || doneParts.size() == partMap.size() :
-                    "Reached end of WAL but not all partitions are done";
+                    "Reached end of WAL but not all partitions are done ; done=" + doneParts + ", parts=" + partMap;
             }
         }
     }

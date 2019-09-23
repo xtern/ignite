@@ -273,6 +273,14 @@ class GridDhtPartitionSupplier {
 
                 CachePartitionPartialCountersMap histMap = demandMsg.partitions().historicalMap();
 
+                // todo force checkpoint only for file rebalancing
+//                if (!histMap.isEmpty()) {
+//                    if (log.isInfoEnabled())
+//                        log.info("Wait for checkpoint");
+//
+//                    grp.shared().database().forceCheckpoint("file rebalancing").finishFuture().get();
+//                }
+
                 for (int i = 0; i < histMap.size(); i++) {
                     int p = histMap.partitionAt(i);
 
@@ -296,6 +304,11 @@ class GridDhtPartitionSupplier {
 
                     if (iter.isPartitionMissing(p))
                         continue;
+
+                    assert grp.topology().localPartition(p).updateCounter() > histMap.updateCounterAt(i) : "Invalid update counter [p="+p + " curr=" + grp.topology().localPartition(p).updateCounter() + ", req="+histMap.updateCounterAt(i)+"]";
+
+                    if (log.isDebugEnabled())
+                        log.debug("p="+p+" range ["+histMap.initialUpdateCounterAt(i) + " - " + histMap.updateCounterAt(i)+"]");
 
                     supplyMsg.addEstimatedKeysCount(histMap.updateCounterAt(i) - histMap.initialUpdateCounterAt(i));
                 }

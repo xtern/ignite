@@ -25,6 +25,7 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.NavigableMap;
@@ -55,7 +56,9 @@ import org.apache.ignite.internal.processors.affinity.AffinityAssignment;
 import org.apache.ignite.internal.processors.affinity.AffinityTopologyVersion;
 import org.apache.ignite.internal.processors.cache.CacheGroupContext;
 import org.apache.ignite.internal.processors.cache.GridCacheContext;
+import org.apache.ignite.internal.processors.cache.GridCacheMapEntry;
 import org.apache.ignite.internal.processors.cache.GridCacheSharedManagerAdapter;
+import org.apache.ignite.internal.processors.cache.KeyCacheObject;
 import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtLocalPartition;
 import org.apache.ignite.internal.processors.cache.persistence.DbCheckpointListener;
 import org.apache.ignite.internal.processors.cache.persistence.GridCacheDatabaseSharedManager;
@@ -582,8 +585,22 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
 
                             // todo should be called on reinitilization?
                             // todo check on large partition
-                            part.entriesMap(null).map.clear();
+                            Iterator<Map.Entry<KeyCacheObject, GridCacheMapEntry>> itr = part.entriesMap(null).map.entrySet().iterator();
 
+                            while (itr.hasNext()) {
+                                Map.Entry<KeyCacheObject, GridCacheMapEntry> e = itr.next();
+
+                                if (!e.getValue().isLockedEntry()) {
+                                    if (log.isDebugEnabled())
+                                        log.debug("removing heap entry: " + e.getKey());
+
+                                    itr.remove();
+                                }
+                                else {
+                                    if (log.isDebugEnabled())
+                                        log.debug("entry is locked: " + e.getKey());
+                                }
+                            }
                             destroyFut.onDone();
                         });
                 }

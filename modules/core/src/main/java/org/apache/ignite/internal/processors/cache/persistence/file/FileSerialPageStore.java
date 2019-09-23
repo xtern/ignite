@@ -157,9 +157,11 @@ public class FileSerialPageStore implements Closeable {
             int crc32 = FastCrc.calcCrc(new CRC32(), pageBuf, pageBuf.limit());
             int crc = PageIO.getCrc(pageBuf);
 
-            U.log(log, "Read page from serial storage [path=" + cfgPath.get().toFile().getName() +
-                ", pageId=" + pageId + ", seq=" + seq + ", pages=" + pages.get() + ", crcBuff=" + crc32 +
-                ", crcPage=" + crc + ']');
+            if (log.isTraceEnabled()) {
+                log.trace("Read page from serial storage [path=" + cfgPath.get().toFile().getName() +
+                    ", pageId=" + pageId + ", seq=" + seq + ", pages=" + pages.get() + ", crcBuff=" + crc32 +
+                    ", crcPage=" + crc + ']');
+            }
 
             pageBuf.rewind();
         }

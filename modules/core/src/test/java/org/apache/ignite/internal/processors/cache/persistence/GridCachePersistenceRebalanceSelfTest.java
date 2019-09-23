@@ -18,6 +18,7 @@
 package org.apache.ignite.internal.processors.cache.persistence;
 
 import java.util.Collections;
+import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicLong;
 import javax.cache.Cache;
@@ -83,7 +84,7 @@ public class GridCachePersistenceRebalanceSelfTest extends GridCommonAbstractTes
                     .setMaxSize(8 * 1024L * 1024 * 1024)
                     .setPersistenceEnabled(true))
                 .setWalMode(WALMode.LOG_ONLY)
-                .setCheckpointFrequency(3000) // todo check with default timeout!
+                .setCheckpointFrequency(3_000) // todo check with default timeout!
 //                .setWalSegmentSize(4 * 1024 * 1024)
                 .setMaxWalArchiveSize(32 * 1024 * 1024 * 1024L))
             .setCacheConfiguration(new CacheConfiguration(DEFAULT_CACHE_NAME)
@@ -144,6 +145,8 @@ public class GridCachePersistenceRebalanceSelfTest extends GridCommonAbstractTes
         forceCheckpoint(ignite0);
 
         IgniteEx ignite1 = startGrid(1);
+
+        U.sleep(1_000);
 
         awaitPartitionMapExchange();
 
@@ -264,19 +267,32 @@ public class GridCachePersistenceRebalanceSelfTest extends GridCommonAbstractTes
      */
     private void verifyLocalCache(IgniteInternalCache<Integer, Integer> expCache,
         IgniteInternalCache<Integer, Integer> actCache) throws IgniteCheckedException {
-        verifyLocalCacheContent(expCache, actCache);
-        verifyLocalCacheContent(actCache, expCache);
+        StringBuilder buf = new StringBuilder();
+
+        buf.append(verifyLocalCacheContent(expCache, actCache));
+        buf.append(verifyLocalCacheContent(actCache, expCache));
 
         for (GridDhtLocalPartition actPart : actCache.context().topology().localPartitions()) {
             GridDhtLocalPartition expPart = expCache.context().topology().localPartition(actPart.id());
 
-            assertEquals("Counter not match p=" + expPart.id(), expPart.updateCounter(), actPart.updateCounter());
-            assertEquals("Size not match p=" + expPart.id(), expPart.fullSize(), actPart.fullSize());
+            long expCntr = expPart.updateCounter();
+            long actCntr = actPart.updateCounter();
+
+            if (expCntr != actCntr)
+                buf.append("\n").append("Counter not match p=").append(expPart.id()).append(", exp=").append(expCntr).append(", act=").append(actCntr);
+
+            long expSize = expPart.fullSize();
+            long actSize = actPart.fullSize();
+
+            if (expSize != actSize)
+                buf.append("\n").append("Size not match p=").append(expPart.id()).append(", exp=").append(expSize).append(", act=").append(actSize);
         }
 
-        CachePeekMode[] peekAll = new CachePeekMode[] {CachePeekMode.ALL};
+//        CachePeekMode[] peekAll = new CachePeekMode[] {CachePeekMode.ALL};
+//
+//        assertEquals(expCache.localSize(peekAll), actCache.localSize(peekAll));
 
-        assertEquals(expCache.localSize(peekAll), actCache.localSize(peekAll));
+        assertTrue(buf.toString(), buf.length() == 0);
     }
 
     /**
@@ -284,8 +300,9 @@ public class GridCachePersistenceRebalanceSelfTest extends GridCommonAbstractTes
      * @param cache2 Actual data cache.
 
      * @throws IgniteCheckedException If failed.
+     * @return
      */
-    private void verifyLocalCacheContent(IgniteInternalCache<Integer, Integer> cache1,
+    private StringBuilder verifyLocalCacheContent(IgniteInternalCache<Integer, Integer> cache1,
         IgniteInternalCache<Integer, Integer> cache2) throws IgniteCheckedException {
 
         CachePeekMode[] peekAll = new CachePeekMode[] {CachePeekMode.ALL};
@@ -293,8 +310,23 @@ public class GridCachePersistenceRebalanceSelfTest extends GridCommonAbstractTes
         UUID node1 = cache1.context().shared().localNodeId();
         UUID node2 = cache2.context().shared().localNodeId();
 
-        for (Cache.Entry<Integer, Integer> entry : cache1.localEntries(peekAll))
-            assertEquals(node1 + " vs " + node2, entry.getValue(), cache2.localPeek(entry.getKey(), peekAll));
+        StringBuilder buf = new StringBuilder();
+
+        for (Cache.Entry<Integer, Integer> entry : cache1.localEntries(peekAll)) {
+            Object expect = entry.getValue();
+            Object actual = cache2.localPeek(entry.getKey(), peekAll);
+
+            if (!Objects.equals(expect, actual))
+                buf.append("\n").append(node1).append(" vs ").append(node2).append(", expected=").append(expect).append(", actual=").append(actual);
+
+            if (buf.length() > 10 * 1024) {
+                buf.append("\n").append("... and so on");
+
+                break;
+            }
+        }
+
+        return buf;
     }
 
     /** */
