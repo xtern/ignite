@@ -580,6 +580,10 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
                             if (log.isDebugEnabled())
                                 log.debug("Eviction is done [grp=" + grpId + ", part=" + part.id() + "]");
 
+                            // todo should be called on reinitilization?
+                            // todo check on large partition
+                            part.entriesMap(null).map.clear();
+
                             destroyFut.onDone();
                         });
                 }
@@ -638,7 +642,6 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
 
             part.readOnly(false);
 
-            // todo
             part.dataStore().reinit();
 
             System.out.println("after restore p="+partId+", reserved="+part.reservedCounter()+", cntr="+part.updateCounter() +" to="+to);

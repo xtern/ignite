@@ -364,8 +364,12 @@ public class CheckpointHistory {
 
                 Long foundCntr = entry.partitionCounter(cctx, grpId, part);
 
-                if (foundCntr != null && foundCntr <= partCntrSince)
+                if (foundCntr != null && foundCntr <= partCntrSince) {
+                    if (log.isInfoEnabled())
+                        log.info(">xxx> searchCheckpointEntry [p=" + part + ", partCntrSince=" + partCntrSince + ", found=" + foundCntr);
+
                     return entry;
+                }
             }
             catch (IgniteCheckedException ignore) {
                 break;
