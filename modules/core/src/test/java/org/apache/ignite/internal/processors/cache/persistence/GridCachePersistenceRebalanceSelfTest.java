@@ -44,7 +44,6 @@ import org.apache.ignite.internal.TestRecordingCommunicationSpi;
 import org.apache.ignite.internal.processors.cache.IgniteInternalCache;
 import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtLocalPartition;
 import org.apache.ignite.internal.processors.cache.preload.GridPartitionBatchDemandMessage;
-import org.apache.ignite.internal.util.IgniteUtils;
 import org.apache.ignite.internal.util.typedef.internal.U;
 import org.apache.ignite.lang.IgniteBiPredicate;
 import org.apache.ignite.plugin.extensions.communication.Message;
@@ -81,12 +80,12 @@ public class GridCachePersistenceRebalanceSelfTest extends GridCommonAbstractTes
         return super.getConfiguration(igniteInstanceName)
             .setDataStorageConfiguration(new DataStorageConfiguration()
                 .setDefaultDataRegionConfiguration(new DataRegionConfiguration()
-                    .setMaxSize(100L * 1024 * 1024)
+                    .setMaxSize(8 * 1024L * 1024 * 1024)
                     .setPersistenceEnabled(true))
                 .setWalMode(WALMode.LOG_ONLY)
-                .setCheckpointFrequency(3000)) // todo check with default timeout!
+                .setCheckpointFrequency(3000) // todo check with default timeout!
 //                .setWalSegmentSize(4 * 1024 * 1024)
-//                .setMaxWalArchiveSize(8 * 1024 * 1024))
+                .setMaxWalArchiveSize(32 * 1024 * 1024 * 1024L))
             .setCacheConfiguration(new CacheConfiguration(DEFAULT_CACHE_NAME)
                 .setCacheMode(CacheMode.REPLICATED)
                 .setRebalanceMode(CacheRebalanceMode.ASYNC)
