@@ -49,6 +49,7 @@ import org.apache.ignite.cluster.ClusterNode;
 import org.apache.ignite.internal.GridKernalContext;
 import org.apache.ignite.internal.IgniteFeatures;
 import org.apache.ignite.internal.IgniteInternalFuture;
+import org.apache.ignite.internal.IgniteInterruptedCheckedException;
 import org.apache.ignite.internal.managers.communication.TransmissionHandler;
 import org.apache.ignite.internal.managers.communication.TransmissionMeta;
 import org.apache.ignite.internal.pagemem.PageIdUtils;
@@ -583,24 +584,6 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
                             if (log.isDebugEnabled())
                                 log.debug("Eviction is done [grp=" + grpId + ", part=" + part.id() + "]");
 
-                            // todo should be called on reinitilization?
-                            // todo check on large partition
-                            Iterator<Map.Entry<KeyCacheObject, GridCacheMapEntry>> itr = part.entriesMap(null).map.entrySet().iterator();
-
-                            while (itr.hasNext()) {
-                                Map.Entry<KeyCacheObject, GridCacheMapEntry> e = itr.next();
-
-                                if (!e.getValue().isLockedEntry()) {
-                                    if (log.isDebugEnabled())
-                                        log.debug("removing heap entry: " + e.getKey());
-
-                                    itr.remove();
-                                }
-                                else {
-                                    if (log.isDebugEnabled())
-                                        log.debug("entry is locked: " + e.getKey());
-                                }
-                            }
                             destroyFut.onDone();
                         });
                 }
@@ -656,8 +639,53 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
 
         return offerCheckpointTask(() -> {
             long to = part.dataStore().updateCounter();
+            // todo should be called on reinitilization?
+            // todo check on large partition
+//            part.entriesMap(null).map.clear();
+            Iterator<Map.Entry<KeyCacheObject, GridCacheMapEntry>> itr = part.entriesMap(null).map.entrySet().iterator();
+
+            while (itr.hasNext()) {
+                Map.Entry<KeyCacheObject, GridCacheMapEntry> e = itr.next();
+
+                if (!e.getValue().isLockedEntry()) {
+
+                    GridCacheMapEntry entry = e.getValue();
+
+                    entry.lockEntry();
+
+                    try {
+                        if (log.isDebugEnabled())
+                            log.debug("removing heap entry: " + e.getKey());
+
+                        itr.remove();
+                    } finally {
+                        entry.unlockEntry();
+                    }
+                }
+                else {
+                    if (log.isDebugEnabled())
+                        log.debug("entry is locked: " + e.getKey());
+                }
+            }
 
             part.readOnly(false);
+
+//            itr = part.entriesMap(null).map.entrySet().iterator();
+//
+//            while (itr.hasNext()) {
+//                Map.Entry<KeyCacheObject, GridCacheMapEntry> e = itr.next();
+//
+//                if (!e.getValue().isLockedEntry()) {
+//                    if (log.isDebugEnabled())
+//                        log.debug("removing heap entry: " + e.getKey());
+//
+//                    itr.remove();
+//                }
+//                else {
+//                    if (log.isDebugEnabled())
+//                        log.debug("entry is locked: " + e.getKey());
+//                }
+//            }
 
             part.dataStore().reinit();
 
@@ -801,26 +829,30 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
                 Integer grpId = (Integer)initMeta.params().get("group");
                 Integer partId = (Integer)initMeta.params().get("part");
 
-                try {
+//                try {
                     IgniteInternalFuture destroyFut = fut.remainDestroy(grpId, partId);
 
-                    restorePartition(grpId, partId, file, destroyFut).listen(c -> {
-                        try {
-                            T2<Long, Long> cntrs = c.get();
+//                    Executor exec = cctx.kernalContext().pools().poolForPolicy(PUBLIC_POOL);
+                    try {
+                        T2<Long, Long> cntrs = restorePartition(grpId, partId, file, destroyFut).get();
 
-                            assert cntrs != null;
+                        assert cntrs != null;
 
-                            fut.onPartitionRestored(grpId, partId, cntrs.get1(), cntrs.get2());
-                        } catch (IgniteCheckedException e) {
-                            fut.onDone(e);
-                        }
-                    });
-                }
-                catch (IgniteCheckedException e) {
-                    fut.onDone(e);
+//                        cctx.kernalContext().closure().runLocalSafe( () -> {
+                        fut.onPartitionRestored(grpId, partId, cntrs.get1(), cntrs.get2());
+//                        });
 
-                    throw new IgniteException("File transfer exception.", e);
-                }
+                    } catch (IgniteCheckedException e) {
+                        fut.onDone(e);
+                    }
+
+//                    return true;
+//                }
+//                catch (IgniteCheckedException e) {
+//                    fut.onDone(e);
+//
+//                    throw new IgniteException("File transfer exception.", e);
+//                }
             };
         }
     }
@@ -971,6 +1003,13 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
             remainingHist.computeIfAbsent(grpId, v -> new TreeSet<>()).add(new HistoryDesc(partId, startCntr, endCntr));
 
             if (parts.isEmpty()) {
+                try {
+                    U.sleep(1_000);
+                }
+                catch (IgniteInterruptedCheckedException e) {
+                    e.printStackTrace();
+                }
+
                 remaining.remove(grpId);
 
                 Set<HistoryDesc> parts0 = remainingHist.remove(grpId);

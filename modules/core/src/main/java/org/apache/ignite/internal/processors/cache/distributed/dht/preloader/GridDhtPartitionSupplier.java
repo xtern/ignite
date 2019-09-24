@@ -305,10 +305,10 @@ class GridDhtPartitionSupplier {
                     if (iter.isPartitionMissing(p))
                         continue;
 
-                    assert grp.topology().localPartition(p).updateCounter() > histMap.updateCounterAt(i) : "Invalid update counter [p="+p + " curr=" + grp.topology().localPartition(p).updateCounter() + ", req="+histMap.updateCounterAt(i)+"]";
+                    assert grp.topology().localPartition(p).updateCounter() >= histMap.updateCounterAt(i) : "Invalid update counter [p="+p + " curr=" + grp.topology().localPartition(p).updateCounter() + ", req="+histMap.updateCounterAt(i)+"]";
 
                     if (log.isDebugEnabled())
-                        log.debug("p="+p+" range ["+histMap.initialUpdateCounterAt(i) + " - " + histMap.updateCounterAt(i)+"]");
+                        log.debug("Supply hist rebalancing p="+p+" range ["+histMap.initialUpdateCounterAt(i) + " - " + histMap.updateCounterAt(i)+"]");
 
                     supplyMsg.addEstimatedKeysCount(histMap.updateCounterAt(i) - histMap.initialUpdateCounterAt(i));
                 }

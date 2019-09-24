@@ -84,7 +84,7 @@ public class GridCachePersistenceRebalanceSelfTest extends GridCommonAbstractTes
                     .setMaxSize(8 * 1024L * 1024 * 1024)
                     .setPersistenceEnabled(true))
                 .setWalMode(WALMode.LOG_ONLY)
-                .setCheckpointFrequency(400) // todo check with default timeout!
+                .setCheckpointFrequency(3_000) // todo check with default timeout!
 //                .setWalSegmentSize(4 * 1024 * 1024)
                 .setMaxWalArchiveSize(32 * 1024 * 1024 * 1024L))
             .setCacheConfiguration(new CacheConfiguration(DEFAULT_CACHE_NAME)

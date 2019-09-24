@@ -1377,15 +1377,18 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
                             if (entry.partitionCounter() > from && entry.partitionCounter() <= to) {
                                 // Partition will be marked as done for current entry on next iteration.
                                 if (++rebalancedCntrs[idx] == to ||
-                                    entry.partitionCounter() == to && grp.hasAtomicCaches())
+                                    entry.partitionCounter() == to && grp.hasAtomicCaches()) {
                                     donePart = entry.partitionId();
+
+                                    System.out.println("p=" + entry.partitionId() + ", cntr=" + entry.partitionCounter() + " DONE e=" + entry.key());
+                                }
 
                                 next = entry;
 
                                 return;
                             }
                             else
-                                System.out.println("p=" + entry.partitionId() + ", cntr=" + entry.partitionCounter() + " e=" + entry.key());
+                                System.out.println("p=" + entry.partitionId() + ", cntr=" + entry.partitionCounter() + " e=" + entry.key() + " rebCntr=" + rebalancedCntrs[idx]);
                         }
                     }
                 }

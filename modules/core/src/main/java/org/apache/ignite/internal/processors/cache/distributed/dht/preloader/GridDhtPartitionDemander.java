@@ -1006,11 +1006,11 @@ public class GridDhtPartitionDemander {
 
             assert row.expireTime() >= 0 : row.expireTime();
 
-//            if (!CU.UTILITY_CACHE_NAME.equals(cctx.name()) && row.value() != null) {
-//                log.info("Rebalancing ADD key=" + row.key().value(cctx.cacheObjectContext(), false));
-//
-////                TRACE_REMOVE = firstRemove.compareAndSet(true, false);
-//            }
+            if (!CU.UTILITY_CACHE_NAME.equals(cctx.name()) && row.value() == null) {
+                log.info("Rebalancing REMOVE key=" + row.key().value(cctx.cacheObjectContext(), false));
+
+//                TRACE_REMOVE = firstRemove.compareAndSet(true, false);
+            }
 
             if (cached.initialValue(
                 row.value(),

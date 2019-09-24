@@ -13,6 +13,7 @@ import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.IgniteLogger;
+import org.apache.ignite.IgniteSystemProperties;
 import org.apache.ignite.internal.GridKernalContext;
 import org.apache.ignite.internal.IgniteInternalFuture;
 import org.apache.ignite.internal.managers.communication.GridIoManager;
@@ -21,17 +22,15 @@ import org.apache.ignite.internal.processors.affinity.AffinityTopologyVersion;
 import org.apache.ignite.internal.processors.cache.CacheGroupContext;
 import org.apache.ignite.internal.processors.cache.GridCacheSharedContext;
 import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtLocalPartition;
-import org.apache.ignite.internal.processors.cache.persistence.file.RandomAccessFileIOFactory;
+import org.apache.ignite.internal.processors.cache.persistence.file.FilePageStoreManager;
 import org.apache.ignite.internal.util.GridIntIterator;
 import org.apache.ignite.internal.util.GridIntList;
 import org.apache.ignite.internal.util.future.GridFutureAdapter;
-import org.apache.ignite.internal.util.io.GridFileUtils;
 import org.apache.ignite.internal.util.typedef.F;
 import org.apache.ignite.internal.util.typedef.internal.CU;
 import org.apache.ignite.internal.util.typedef.internal.S;
 import org.apache.ignite.internal.util.typedef.internal.U;
 
-import static org.apache.ignite.internal.processors.cache.distributed.dht.preloader.GridCachePreloadSharedManager.REBALANCE_CP_REASON;
 import static org.apache.ignite.internal.processors.cache.distributed.dht.preloader.GridCachePreloadSharedManager.rebalanceThreadTopic;
 
 /**
@@ -51,7 +50,7 @@ public class PartitionUploadManager {
     private final ReadWriteLock lock = new ReentrantReadWriteLock();
 
     /** */
-    private IgniteBackupPageStoreManager backupMgr;
+//    private IgniteBackupPageStoreManager backupMgr;
 
     /**
      * @param ktx Kernal context to process.
@@ -209,75 +208,92 @@ public class PartitionUploadManager {
      * @param fut Future.
      * @param nodeId Node id.
      */
-    private IgniteInternalFuture sendPartitions(CachePartitionUploadFuture fut, UUID nodeId) {
+    private IgniteInternalFuture sendPartitions(CachePartitionUploadFuture fut, UUID nodeId) throws IgniteCheckedException {
+        File tmpDir = new File(IgniteSystemProperties.getString("java.io.tmpdir"));
+
+        assert tmpDir.exists() : tmpDir;
+
         if (log.isDebugEnabled())
-            log.debug("Offering checkpoint request for sending partitions to ndoe " + nodeId);
+            log.debug("Creating partitions snapshot for node=" + nodeId + " in " + tmpDir);
 
-        cctx.preloader().offerCheckpointTask(() -> {
+        String backupDir = "preload-" + fut.rebalanceId;
+
+        cctx.backup().createLocalBackup(backupDir, fut.getAssigns(), tmpDir).get();
+
+//        cctx.preloader().offerCheckpointTask(() -> {
+//            try {
+//                Map<Integer, Map<Integer, File>> filesToSnd = new HashMap<>();
+//
+//                for (Map.Entry<Integer, Set<Integer>> e : fut.getAssigns().entrySet()) {
+//
+//                    int grpId = e.getKey();
+//
+//                    Map<Integer, File> partFiles = new HashMap<>();
+//
+//                    for (int partId : e.getValue()) {
+//                        String path = cctx.preloader().storePath(grpId, partId);
+//
+//                        File src = new File(path);
+//                        File dest = new File(path +  ".cpy");
+//
+//                        log.info("Copying file \"" + src + "\" to \"" + dest + "\"");
+//
+//                        RandomAccessFileIOFactory ioFactory = new RandomAccessFileIOFactory();
+//
+//                        GridFileUtils.copy(ioFactory, src, ioFactory, dest, Long.MAX_VALUE);
+//
+//                        partFiles.put(partId, dest);
+//                    }
+//
+//                    filesToSnd.put(grpId, partFiles);
+//                }
+//
+//                fut.partFiles(filesToSnd);
+//            } catch (IgniteCheckedException | IOException e) {
+//                fut.onDone(e);
+//            }
+//        }).listen(
+//            c -> {
+        // send files
+        GridIoManager io = cctx.kernalContext().io();
+
+        String dir = tmpDir + "/" + backupDir + "/";
+
+        try (GridIoManager.TransmissionSender snd = io.openTransmissionSender(nodeId, rebalanceThreadTopic())) {
             try {
-                Map<Integer, Map<Integer, File>> filesToSnd = new HashMap<>();
-
                 for (Map.Entry<Integer, Set<Integer>> e : fut.getAssigns().entrySet()) {
+                    Integer grpId = e.getKey();
 
-                    int grpId = e.getKey();
+                    String grpDir = dir + FilePageStoreManager.cacheDirName(cctx.cache().cacheGroup(grpId).config());
 
-                    Map<Integer, File> partFiles = new HashMap<>();
+                    for (Integer partId : e.getValue()) {
+                        File file = new File(grpDir + "/" + "part-" + partId + ".bin");
 
-                    for (int partId : e.getValue()) {
-                        String path = cctx.preloader().storePath(grpId, partId);
+                        assert file.exists() : file;
 
-                        File src = new File(path);
-                        File dest = new File(path +  ".cpy");
+                        snd.send(file, F.asMap("group", grpId, "part", partId), TransmissionPolicy.FILE);
 
-                        log.info("Copying file \"" + src + "\" to \"" + dest + "\"");
+                        GridDhtLocalPartition part = cctx.cache().cacheGroup(grpId).topology().localPartition(partId);
 
-                        RandomAccessFileIOFactory ioFactory = new RandomAccessFileIOFactory();
-
-                        GridFileUtils.copy(ioFactory, src, ioFactory, dest, Long.MAX_VALUE);
-
-                        partFiles.put(partId, dest);
+                        // todo release only once - after historical rebalancing
+                        part.release();
                     }
-
-                    filesToSnd.put(grpId, partFiles);
                 }
-
-                fut.partFiles(filesToSnd);
-            } catch (IgniteCheckedException | IOException e) {
-                fut.onDone(e);
+            } finally {
+                U.delete(new File(dir));
             }
-        }).listen(
-            c -> {
-                // send files
-                GridIoManager io = cctx.kernalContext().io();
 
-                try (GridIoManager.TransmissionSender snd = io.openTransmissionSender(nodeId, rebalanceThreadTopic())) {
-                    for (Map.Entry<Integer, Map<Integer, File>> e : fut.partFiles().entrySet()) {
-                        Integer grpId = e.getKey();
+            fut.onDone();
+        }
+        catch (IOException | IgniteCheckedException | InterruptedException e) {
+            fut.onDone(e);
+        }
+        //todo should we cleanup files on error?
+//            }
+//        );
 
-                        for (Map.Entry<Integer, File> e0 : e.getValue().entrySet()) {
-                            Integer partId = e0.getKey();
-                            File file = e0.getValue();
-
-                            snd.send(file, F.asMap("group", grpId, "part", partId), TransmissionPolicy.FILE);
-
-                            GridDhtLocalPartition part = cctx.cache().cacheGroup(grpId).topology().localPartition(partId);
-
-                            // todo release only once - after historical rebalancing
-                            part.release();
-                        }
-                    }
-
-                    fut.onDone();
-                }
-                catch (IOException | IgniteCheckedException | InterruptedException e) {
-                    fut.onDone(e);
-                }
-                //todo should we cleanup files on error?
-            }
-        );
-
-        if (!fut.isDone())
-            cctx.database().wakeupForCheckpoint(String.format(REBALANCE_CP_REASON, fut.getAssigns().keySet()));
+//        if (!fut.isDone())
+//            cctx.database().wakeupForCheckpoint(String.format(REBALANCE_CP_REASON, fut.getAssigns().keySet()));
 
         // todo
         return fut;
