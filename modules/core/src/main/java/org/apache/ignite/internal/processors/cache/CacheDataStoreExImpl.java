@@ -59,7 +59,7 @@ public class CacheDataStoreExImpl implements CacheDataStoreEx {
     private final GridCacheSharedContext<?, ?> cctx;
 
     /** Currently used data storage state. <tt>FULL</tt> mode is used by default. */
-    private volatile AtomicBoolean readOnly = new AtomicBoolean();
+    private final AtomicBoolean readOnly = new AtomicBoolean();
 
     /** */
     private final CacheDataStore store;

@@ -25,7 +25,6 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.NavigableMap;
@@ -57,9 +56,9 @@ import org.apache.ignite.internal.processors.affinity.AffinityAssignment;
 import org.apache.ignite.internal.processors.affinity.AffinityTopologyVersion;
 import org.apache.ignite.internal.processors.cache.CacheGroupContext;
 import org.apache.ignite.internal.processors.cache.GridCacheContext;
-import org.apache.ignite.internal.processors.cache.GridCacheMapEntry;
+import org.apache.ignite.internal.processors.cache.GridCacheMessage;
 import org.apache.ignite.internal.processors.cache.GridCacheSharedManagerAdapter;
-import org.apache.ignite.internal.processors.cache.KeyCacheObject;
+import org.apache.ignite.internal.processors.cache.PartitionUpdateCounter;
 import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtLocalPartition;
 import org.apache.ignite.internal.processors.cache.persistence.DbCheckpointListener;
 import org.apache.ignite.internal.processors.cache.persistence.GridCacheDatabaseSharedManager;
@@ -615,9 +614,6 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
     ) throws IgniteCheckedException {
         CacheGroupContext ctx = cctx.cache().cacheGroup(grpId);
 
-        // Create partition.
-        GridDhtLocalPartition part = ctx.topology().forceCreatePartition(partId);
-
         if (!destroyFut.isDone()) {
             if (log.isDebugEnabled())
                 log.debug("Await partition destroy [grp=" + grpId + ", partId=" + partId + "]");
@@ -638,60 +634,23 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
         }
 
         return offerCheckpointTask(() -> {
-            long to = part.dataStore().updateCounter();
-            // todo should be called on reinitilization?
-            // todo check on large partition
-//            part.entriesMap(null).map.clear();
-            Iterator<Map.Entry<KeyCacheObject, GridCacheMapEntry>> itr = part.entriesMap(null).map.entrySet().iterator();
+            // Create partition.
+            GridDhtLocalPartition part = ctx.topology().forceCreatePartition(partId);
 
-            while (itr.hasNext()) {
-                Map.Entry<KeyCacheObject, GridCacheMapEntry> e = itr.next();
+            PartitionUpdateCounter readOnlyCntr = part.dataStore().partUpdateCounter();
 
-                if (!e.getValue().isLockedEntry()) {
+            readOnlyCntr.finalizeUpdateCounters();
 
-                    GridCacheMapEntry entry = e.getValue();
+            part.dataStore().store(false).reinit();
 
-                    entry.lockEntry();
-
-                    try {
-                        if (log.isDebugEnabled())
-                            log.debug("removing heap entry: " + e.getKey());
-
-                        itr.remove();
-                    } finally {
-                        entry.unlockEntry();
-                    }
-                }
-                else {
-                    if (log.isDebugEnabled())
-                        log.debug("entry is locked: " + e.getKey());
-                }
-            }
+            // todo clean-up heap entries
+            part.entriesMap(null).map.clear();
 
             part.readOnly(false);
 
-//            itr = part.entriesMap(null).map.entrySet().iterator();
-//
-//            while (itr.hasNext()) {
-//                Map.Entry<KeyCacheObject, GridCacheMapEntry> e = itr.next();
-//
-//                if (!e.getValue().isLockedEntry()) {
-//                    if (log.isDebugEnabled())
-//                        log.debug("removing heap entry: " + e.getKey());
-//
-//                    itr.remove();
-//                }
-//                else {
-//                    if (log.isDebugEnabled())
-//                        log.debug("entry is locked: " + e.getKey());
-//                }
-//            }
+//            System.out.println("after restore p="+partId+", reserved="+part.reservedCounter()+", cntr="+part.updateCounter() +" to="+to);
 
-            part.dataStore().reinit();
-
-            System.out.println("after restore p="+partId+", reserved="+part.reservedCounter()+", cntr="+part.updateCounter() +" to="+to);
-
-            return new T2<>(part.updateCounter(), to);
+            return new T2<>(part.updateCounter(), readOnlyCntr.get());
         });
     }
 
@@ -782,6 +741,17 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
         return ((FilePageStore)((FilePageStoreManager)cctx.pageStore()).getStore(grpId, partId)).getFileAbsolutePath();
     }
 
+    public IgniteInternalFuture partitionRestoreFuture(GridCacheMessage msg) {
+        if (futMap.isEmpty()) // || !(msg instanceof GridCacheIdMessage) || !(msg instanceof GridCacheGroupIdMessage))
+            return null;
+
+        assert futMap.size() == 1 : futMap.size();
+
+        RebalanceDownloadFuture rebFut = futMap.values().iterator().next();
+
+        return rebFut.switchFut();
+    }
+
     private class RebalanceDownloadHandler implements TransmissionHandler {
         /** {@inheritDoc} */
         @Override public void onException(UUID nodeId, Throwable err) {
@@ -834,12 +804,26 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
 
 //                    Executor exec = cctx.kernalContext().pools().poolForPolicy(PUBLIC_POOL);
                     try {
-                        T2<Long, Long> cntrs = restorePartition(grpId, partId, file, destroyFut).get();
+
+                        GridFutureAdapter waitFUt = new GridFutureAdapter();
+
+                        fut.switchFut(waitFUt);
+
+                        // Await while all operations complete.
+//                        U.sleep(1_000);
+
+                        IgniteInternalFuture<T2<Long, Long>> switchFut = restorePartition(grpId, partId, file, destroyFut);
+
+                        T2<Long, Long> cntrs = switchFut.get();
 
                         assert cntrs != null;
 
+                        waitFUt.onDone();
+
 //                        cctx.kernalContext().closure().runLocalSafe( () -> {
                         fut.onPartitionRestored(grpId, partId, cntrs.get1(), cntrs.get2());
+
+
 //                        });
 
                     } catch (IgniteCheckedException e) {
@@ -860,6 +844,16 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
     /** */
     private class RebalanceDownloadFuture extends GridFutureAdapter<Boolean> {
         private final ClusterNode node;
+
+        private volatile IgniteInternalFuture switchFut;
+
+        public IgniteInternalFuture switchFut() {
+            return switchFut;
+        }
+
+        public void switchFut(IgniteInternalFuture switchFut) {
+            this.switchFut = switchFut;
+        }
 
         class HistoryDesc implements Comparable {
             /** Partition id. */

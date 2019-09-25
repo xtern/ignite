@@ -65,7 +65,6 @@ import org.apache.ignite.internal.processors.cache.GridCacheContext;
 import org.apache.ignite.internal.processors.cache.GridCacheEntryEx;
 import org.apache.ignite.internal.processors.cache.GridCacheMvccEntryInfo;
 import org.apache.ignite.internal.processors.cache.GridCacheTtlManager;
-import org.apache.ignite.internal.processors.cache.IgniteCacheOffheapManager.CacheDataStore;
 import org.apache.ignite.internal.processors.cache.IgniteCacheOffheapManagerImpl;
 import org.apache.ignite.internal.processors.cache.KeyCacheObject;
 import org.apache.ignite.internal.processors.cache.PartitionUpdateCounter;
@@ -1434,6 +1433,16 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
                         }
                     }
                 }
+
+//                if (doneParts.size() != partMap.size()) {
+//                    for (int p : CachePartitionPartialCountersMap.toCountersMap(partMap).keySet()) {
+//                        if (!doneParts.contains(p)) {
+//                            log.warning("WAL iterator fail: forcely adding undone partition " + p);
+//
+//                            doneParts.add(p);
+//                        }
+//                    }
+//                }
 
                 assert entryIt != null || doneParts.size() == partMap.size() :
                     "Reached end of WAL but not all partitions are done ; done=" + doneParts + ", parts=" + partMap;
