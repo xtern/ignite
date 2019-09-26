@@ -56,6 +56,8 @@ import org.apache.ignite.internal.processors.affinity.AffinityAssignment;
 import org.apache.ignite.internal.processors.affinity.AffinityTopologyVersion;
 import org.apache.ignite.internal.processors.cache.CacheGroupContext;
 import org.apache.ignite.internal.processors.cache.GridCacheContext;
+import org.apache.ignite.internal.processors.cache.GridCacheGroupIdMessage;
+import org.apache.ignite.internal.processors.cache.GridCacheIdMessage;
 import org.apache.ignite.internal.processors.cache.GridCacheMessage;
 import org.apache.ignite.internal.processors.cache.GridCacheSharedManagerAdapter;
 import org.apache.ignite.internal.processors.cache.PartitionUpdateCounter;
@@ -742,8 +744,14 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
     }
 
     public IgniteInternalFuture partitionRestoreFuture(GridCacheMessage msg) {
-        if (futMap.isEmpty()) // || !(msg instanceof GridCacheIdMessage) || !(msg instanceof GridCacheGroupIdMessage))
+        if (futMap.isEmpty())
             return null;
+
+        if (!(msg instanceof GridCacheIdMessage) && !(msg instanceof GridCacheGroupIdMessage)) {
+            log.warning("Skipping message: " + msg.getClass().getSimpleName());
+
+            return null;
+        }
 
         assert futMap.size() == 1 : futMap.size();
 

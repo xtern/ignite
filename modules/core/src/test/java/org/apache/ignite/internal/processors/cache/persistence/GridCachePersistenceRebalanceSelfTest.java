@@ -84,14 +84,14 @@ public class GridCachePersistenceRebalanceSelfTest extends GridCommonAbstractTes
                     .setMaxSize(8 * 1024L * 1024 * 1024)
                     .setPersistenceEnabled(true))
                 .setWalMode(WALMode.LOG_ONLY)
-                .setCheckpointFrequency(3_000) // todo check with default timeout!
+                .setCheckpointFrequency(500)) // todo check with default timeout!
 //                .setWalSegmentSize(4 * 1024 * 1024)
-                .setMaxWalArchiveSize(32 * 1024 * 1024 * 1024L))
+//                .setMaxWalArchiveSize(32 * 1024 * 1024 * 1024L))
             .setCacheConfiguration(new CacheConfiguration(DEFAULT_CACHE_NAME)
                 .setCacheMode(CacheMode.REPLICATED)
                 .setRebalanceMode(CacheRebalanceMode.ASYNC)
                 .setAtomicityMode(CacheAtomicityMode.TRANSACTIONAL)
-                .setWriteSynchronizationMode(CacheWriteSynchronizationMode.FULL_SYNC)
+                //.setWriteSynchronizationMode(CacheWriteSynchronizationMode.PRIMARY_SYNC)
 //                .setBackups(1)
                 .setAffinity(new RendezvousAffinityFunction(false, CACHE_PART_COUNT)));
 //            .setCommunicationSpi(new TestRecordingCommunicationSpi());

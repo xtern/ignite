@@ -4349,8 +4349,8 @@ public abstract class GridCacheMapEntry extends GridMetadataAwareAdapter impleme
             else
                 op = this.val == null ? GridCacheOperation.CREATE : UPDATE;
 
-            if (cctx.localNodeId().toString().endsWith("0"))
-                log.info(">>> wal tx update [p=" + key.partition() + ", key=" + key.value(cctx.cacheObjectContext(), false) + ", cntr=" + updCntr);
+//            if (cctx.localNodeId().toString().endsWith("0"))
+//                log.info(">>> wal tx update [p=" + key.partition() + ", key=" + key.value(cctx.cacheObjectContext(), false) + ", cntr=" + updCntr);
 
             return cctx.shared().wal().log(new DataRecord(new DataEntry(
                 cctx.cacheId(),

@@ -1017,7 +1017,13 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
             long initCntr = partCntrs.initialUpdateCounterAt(i);
 
             FileWALPointer startPtr = (FileWALPointer)database.checkpointHistory().searchPartitionCounter(
-                grp.groupId(), p, initCntr);
+                grp.groupId(), p, initCntr -1);
+
+            if (startPtr == null) {
+                log.warning("CP hist not found for " + (initCntr - 1) + " search for " + initCntr + " p=" + p);
+
+                startPtr = (FileWALPointer)database.checkpointHistory().searchPartitionCounter(grp.groupId(), p, initCntr);
+            }
 
             if (startPtr == null)
                 throw new IgniteCheckedException("Could not find start pointer for partition [part=" + p + ", partCntrSince=" + initCntr + "]");
@@ -1383,12 +1389,12 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
                                     System.out.println("p=" + entry.partitionId() + ", cntr=" + entry.partitionCounter() + " DONE e=" + entry.key());
                                 }
 
+                                System.out.println("p=" + entry.partitionId() + ", cntr=" + entry.partitionCounter() + " e=" + entry.key() + " rebCntr=" + rebalancedCntrs[idx]);
+
                                 next = entry;
 
                                 return;
                             }
-                            else
-                                System.out.println("p=" + entry.partitionId() + ", cntr=" + entry.partitionCounter() + " e=" + entry.key() + " rebCntr=" + rebalancedCntrs[idx]);
                         }
                     }
                 }
