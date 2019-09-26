@@ -733,9 +733,6 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
             return;
         }
 
-//        IgniteSocketChannel ch = null;
-//        CachePartitionUploadFuture uploadFut = null;
-
         uploadMgr.onDemandMessage(nodeId, msg, PUBLIC_POOL);
     }
 

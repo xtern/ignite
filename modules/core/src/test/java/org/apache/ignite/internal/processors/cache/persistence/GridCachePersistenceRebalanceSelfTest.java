@@ -288,10 +288,6 @@ public class GridCachePersistenceRebalanceSelfTest extends GridCommonAbstractTes
                 buf.append("\n").append("Size not match p=").append(expPart.id()).append(", exp=").append(expSize).append(", act=").append(actSize);
         }
 
-//        CachePeekMode[] peekAll = new CachePeekMode[] {CachePeekMode.ALL};
-//
-//        assertEquals(expCache.localSize(peekAll), actCache.localSize(peekAll));
-
         assertTrue(buf.toString(), buf.length() == 0);
     }
 
