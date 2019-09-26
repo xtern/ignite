@@ -106,6 +106,7 @@ import org.apache.ignite.internal.util.lang.GridCursor;
 import org.apache.ignite.internal.util.lang.IgniteInClosure2X;
 import org.apache.ignite.internal.util.lang.IgnitePredicateX;
 import org.apache.ignite.internal.util.tostring.GridToStringInclude;
+import org.apache.ignite.internal.util.typedef.T2;
 import org.apache.ignite.internal.util.typedef.internal.CU;
 import org.apache.ignite.internal.util.typedef.internal.S;
 import org.apache.ignite.internal.util.typedef.internal.U;
@@ -1444,6 +1445,18 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
 //                    }
 //                }
 
+                if (doneParts.size() != partMap.size()) {
+                    for (Map.Entry<Integer, T2<Long, Long>> e : CachePartitionPartialCountersMap.toCountersMap(partMap).entrySet()) {
+                        int p = e.getKey();
+                        long from = e.getValue().get1();
+                        long to = e.getValue().get2();
+
+                        if (!doneParts.contains(p))
+                            log.warning("WAL iterator failed to restore history: [p=" + p + ", from="+from+", to="+ to+", rebCtr="+rebalancedCntrs[partMap.partitionIndex(p)]);
+                    }
+                }
+
+                //rebalancedCntrs[idx]
                 assert entryIt != null || doneParts.size() == partMap.size() :
                     "Reached end of WAL but not all partitions are done ; done=" + doneParts + ", parts=" + partMap;
             }
