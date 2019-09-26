@@ -65,6 +65,7 @@ import org.apache.ignite.internal.processors.cache.GridCacheContext;
 import org.apache.ignite.internal.processors.cache.GridCacheEntryEx;
 import org.apache.ignite.internal.processors.cache.GridCacheMvccEntryInfo;
 import org.apache.ignite.internal.processors.cache.GridCacheTtlManager;
+import org.apache.ignite.internal.processors.cache.IgniteCacheOffheapManager.CacheDataStore;
 import org.apache.ignite.internal.processors.cache.IgniteCacheOffheapManagerImpl;
 import org.apache.ignite.internal.processors.cache.KeyCacheObject;
 import org.apache.ignite.internal.processors.cache.PartitionUpdateCounter;
@@ -1081,11 +1082,6 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
         return size;
     }
 
-//    @Override public void invoke(GridCacheContext cctx, KeyCacheObject key, GridDhtLocalPartition part,
-//        OffheapInvokeClosure c) throws IgniteCheckedException {
-//
-//    }
-
     /** {@inheritDoc} */
     @Override public void preloadPartition(int part) throws IgniteCheckedException {
         if (grp.isLocal()) {
@@ -1383,13 +1379,10 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
                             if (entry.partitionCounter() > from && entry.partitionCounter() <= to) {
                                 // Partition will be marked as done for current entry on next iteration.
                                 if (++rebalancedCntrs[idx] == to ||
-                                    entry.partitionCounter() == to && grp.hasAtomicCaches()) {
+                                    entry.partitionCounter() == to && grp.hasAtomicCaches())
                                     donePart = entry.partitionId();
-
-                                    System.out.println("p=" + entry.partitionId() + ", cntr=" + entry.partitionCounter() + " DONE e=" + entry.key());
-                                }
-
-                                System.out.println("p=" + entry.partitionId() + ", cntr=" + entry.partitionCounter() + " e=" + entry.key() + " rebCntr=" + rebalancedCntrs[idx]);
+//                                    System.out.println("p=" + entry.partitionId() + ", cntr=" + entry.partitionCounter() + " DONE e=" + entry.key());
+//                                System.out.println("p=" + entry.partitionId() + ", cntr=" + entry.partitionCounter() + " e=" + entry.key() + " rebCntr=" + rebalancedCntrs[idx]);
 
                                 next = entry;
 
@@ -1435,21 +1428,11 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
 
                                 doneParts.add(rbRec.partitionId()); // Add to done set immediately.
                             }
-                            else
-                                System.out.println("p=" + rbRec.partitionId() + ", overlap=" + rbRec.overlap(from, to));
+//                            else
+//                                System.out.println("p=" + rbRec.partitionId() + ", overlap=" + rbRec.overlap(from, to));
                         }
                     }
                 }
-
-//                if (doneParts.size() != partMap.size()) {
-//                    for (int p : CachePartitionPartialCountersMap.toCountersMap(partMap).keySet()) {
-//                        if (!doneParts.contains(p)) {
-//                            log.warning("WAL iterator fail: forcely adding undone partition " + p);
-//
-//                            doneParts.add(p);
-//                        }
-//                    }
-//                }
 
                 if (doneParts.size() != partMap.size()) {
                     for (Map.Entry<Integer, T2<Long, Long>> e : CachePartitionPartialCountersMap.toCountersMap(partMap).entrySet()) {
@@ -1458,7 +1441,7 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
                         long to = e.getValue().get2();
 
                         if (!doneParts.contains(p))
-                            log.warning("WAL iterator failed to restore history: [p=" + p + ", from="+from+", to="+ to+", rebCtr="+rebalancedCntrs[partMap.partitionIndex(p)]);
+                            log.error("WAL iterator failed to restore history: [p=" + p + ", from=" + from + ", to=" + to + ", rebCtr=" + rebalancedCntrs[partMap.partitionIndex(p)]);
                     }
                 }
 

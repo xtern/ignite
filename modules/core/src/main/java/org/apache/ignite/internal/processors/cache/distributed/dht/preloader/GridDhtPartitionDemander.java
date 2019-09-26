@@ -26,7 +26,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.atomic.LongAdder;
@@ -971,10 +970,6 @@ public class GridDhtPartitionDemander {
         });
     }
 
-    public static AtomicBoolean firstRemove = new AtomicBoolean(true);
-
-    public static volatile boolean TRACE_REMOVE = false;
-
     /**
      * Adds {@code entry} to partition {@code p}.
      *
@@ -1006,12 +1001,6 @@ public class GridDhtPartitionDemander {
 
             assert row.expireTime() >= 0 : row.expireTime();
 
-            if (!CU.UTILITY_CACHE_NAME.equals(cctx.name()) && row.value() == null) {
-                log.info("Rebalancing REMOVE key=" + row.key().value(cctx.cacheObjectContext(), false));
-
-//                TRACE_REMOVE = firstRemove.compareAndSet(true, false);
-            }
-
             if (cached.initialValue(
                 row.value(),
                 row.version(),
@@ -1039,8 +1028,8 @@ public class GridDhtPartitionDemander {
             else {
                 cached.touch(); // Start tracking.
 
-                if (log.isInfoEnabled())
-                    log.info("Rebalancing entry is already in cache (will ignore) [key=" + cached.key() +
+                if (log.isTraceEnabled())
+                    log.trace("Rebalancing entry is already in cache (will ignore) [key=" + cached.key() +
                         ", part=" + cached.partition() + ']');
             }
         }

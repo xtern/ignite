@@ -90,7 +90,7 @@ public class GridCachePersistenceRebalanceSelfTest extends GridCommonAbstractTes
             .setCacheConfiguration(new CacheConfiguration(DEFAULT_CACHE_NAME)
                 .setCacheMode(CacheMode.REPLICATED)
                 .setRebalanceMode(CacheRebalanceMode.ASYNC)
-                .setAtomicityMode(CacheAtomicityMode.TRANSACTIONAL)
+                .setAtomicityMode(CacheAtomicityMode.ATOMIC)
                 //.setWriteSynchronizationMode(CacheWriteSynchronizationMode.PRIMARY_SYNC)
 //                .setBackups(1)
                 .setAffinity(new RendezvousAffinityFunction(false, CACHE_PART_COUNT)));
