@@ -196,8 +196,6 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
 
     /** {@inheritDoc} */
     @Override protected CacheDataStoreEx createCacheDataStore0(int p) throws IgniteCheckedException {
-//        System.out.println(">xxx> fs create " + p);
-
         if (ctx.database() instanceof GridCacheDatabaseSharedManager)
             ((GridCacheDatabaseSharedManager) ctx.database()).cancelOrWaitPartitionDestroy(grp.groupId(), p);
 
@@ -533,7 +531,7 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
 
                 processed++;
 
-                GridDhtLocalPartition part = grp.topology().forceCreatePartition(p);
+                GridDhtLocalPartition part = grp.topology().forceCreatePartition(p, false);
 
                 // Triggers initialization of existing(having datafile) partition before acquiring cp read lock.
                 part.dataStore().init();
@@ -586,7 +584,7 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
                 }
             }
             else if (recoverState != null) { // Pre-create partition if having valid state.
-                GridDhtLocalPartition part = grp.topology().forceCreatePartition(p);
+                GridDhtLocalPartition part = grp.topology().forceCreatePartition(p, false);
 
                 updateState(part, recoverState);
 
@@ -1691,15 +1689,22 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
         private CacheDataStore init0(boolean checkExists) throws IgniteCheckedException {
             CacheDataStoreImpl delegate0 = delegate;
 
+//            System.out.println("init0 " + (delegate0 != null));
+
             if (delegate0 != null)
                 return delegate0;
 
             if (checkExists) {
-                if (!exists)
+                if (!exists) {
+//                    System.out.println("not exists - exit");
+
                     return null;
+                }
             }
 
             if (init.compareAndSet(false, true)) {
+                System.out.println("initialize: " + partId);
+
                 IgniteCacheDatabaseSharedManager dbMgr = ctx.database();
 
                 dbMgr.checkpointReadLock();

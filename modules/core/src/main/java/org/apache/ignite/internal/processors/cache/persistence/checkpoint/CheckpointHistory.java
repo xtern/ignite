@@ -185,7 +185,7 @@ public class CheckpointHistory {
                 break;
 
             if (cctx.wal().reserved(cpEntry.checkpointMark())) {
-                U.warn(log, "Could not clear historyMap due to WAL reservation on cp: " + cpEntry +
+                U.dumpStack(log, "Could not clear historyMap due to WAL reservation on cp: " + cpEntry +
                     ", history map size is " + histMap.size());
 
                 break;

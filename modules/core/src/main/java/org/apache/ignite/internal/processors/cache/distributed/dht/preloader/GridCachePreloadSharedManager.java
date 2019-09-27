@@ -37,6 +37,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
@@ -48,7 +49,6 @@ import org.apache.ignite.cluster.ClusterNode;
 import org.apache.ignite.internal.GridKernalContext;
 import org.apache.ignite.internal.IgniteFeatures;
 import org.apache.ignite.internal.IgniteInternalFuture;
-import org.apache.ignite.internal.IgniteInterruptedCheckedException;
 import org.apache.ignite.internal.managers.communication.TransmissionHandler;
 import org.apache.ignite.internal.managers.communication.TransmissionMeta;
 import org.apache.ignite.internal.pagemem.PageIdUtils;
@@ -635,24 +635,27 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
             throw new IgniteCheckedException("Unable to move file from " + fsPartFile + " to " + dst, e);
         }
 
+        // Reinitialize file store afte rmoving partition file.
+        cctx.pageStore().ensure(grpId, partId);
+
         return offerCheckpointTask(() -> {
-            // Create partition.
-            GridDhtLocalPartition part = ctx.topology().forceCreatePartition(partId);
+            // Save current update counter.
+            PartitionUpdateCounter maxCntr = ctx.topology().localPartition(partId).dataStore().partUpdateCounter();
 
-            PartitionUpdateCounter readOnlyCntr = part.dataStore().partUpdateCounter();
+            // Replacing partition and cache data store with the new one.
+            // After this operation all on-heap cached entries should be cleaned.
+            // At this point all partition updates are queued.
+            // File page store should be reinitialized.
+            assert cctx.pageStore().exists(grpId, partId) : "File doesn't exist [grpId=" + grpId + ", p=" + partId + "]";
 
-            readOnlyCntr.finalizeUpdateCounters();
+            GridDhtLocalPartition part = ctx.topology().forceCreatePartition(partId, true);
 
-            part.dataStore().store(false).reinit();
-
-            // todo clean-up heap entries
-            part.entriesMap(null).map.clear();
-
+            // Switching to new datastore.
             part.readOnly(false);
 
-//            System.out.println("after restore p="+partId+", reserved="+part.reservedCounter()+", cntr="+part.updateCounter() +" to="+to);
+            maxCntr.finalizeUpdateCounters();
 
-            return new T2<>(part.updateCounter(), readOnlyCntr.get());
+            return new T2<>(part.updateCounter(), maxCntr.get());
         });
     }
 
@@ -744,17 +747,31 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
         if (futMap.isEmpty())
             return null;
 
-        if (!(msg instanceof GridCacheIdMessage) && !(msg instanceof GridCacheGroupIdMessage)) {
-            log.warning("Skipping message: " + msg.getClass().getSimpleName());
+        int grpId;
 
+        if (msg instanceof GridCacheGroupIdMessage)
+            grpId = ((GridCacheGroupIdMessage)msg).groupId();
+        else
+        if (msg instanceof GridCacheIdMessage) {
+            GridCacheIdMessage msg0 = ((GridCacheIdMessage)msg);
+
+            int cacheId = msg0.cacheId();
+
+            GridCacheContext ctx = cctx.cacheContext(cacheId);
+
+            if (ctx == null) {
+                grpId = cctx.cache().cache("default").context().groupId();
+            }
+            else
+                grpId = ctx.groupId();
+        } else
             return null;
-        }
 
         assert futMap.size() == 1 : futMap.size();
 
         RebalanceDownloadFuture rebFut = futMap.values().iterator().next();
 
-        return rebFut.switchFut();
+        return rebFut.switchFut(grpId, msg.partition());
     }
 
     private class RebalanceDownloadHandler implements TransmissionHandler {
@@ -807,30 +824,34 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
 //                try {
                     IgniteInternalFuture destroyFut = fut.remainDestroy(grpId, partId);
 
+
 //                    Executor exec = cctx.kernalContext().pools().poolForPolicy(PUBLIC_POOL);
                     try {
 
                         GridFutureAdapter waitFUt = new GridFutureAdapter();
 
-                        fut.switchFut(waitFUt);
+                        fut.switchFut(grpId, partId, waitFUt);
 
                         // Await while all operations complete.
-//                        U.sleep(1_000);
+//                        U.sleep(200);
 
                         IgniteInternalFuture<T2<Long, Long>> switchFut = restorePartition(grpId, partId, file, destroyFut);
 
-                        T2<Long, Long> cntrs = switchFut.get();
+                        switchFut.listen( f -> {
+                            try {
+                                T2<Long, Long> cntrs = f.get();
 
-                        assert cntrs != null;
+                                assert cntrs != null;
 
-                        waitFUt.onDone();
-
-//                        cctx.kernalContext().closure().runLocalSafe( () -> {
-                        fut.onPartitionRestored(grpId, partId, cntrs.get1(), cntrs.get2());
-
-
-//                        });
-
+                                cctx.kernalContext().closure().runLocalSafe(() -> {
+                                    fut.onPartitionRestored(grpId, partId, cntrs.get1(), cntrs.get2());
+                                });
+                            } catch (IgniteCheckedException e) {
+                                fut.onDone(e);
+                            } finally {
+                                //waitFUt.onDone();
+                            }
+                        });
                     } catch (IgniteCheckedException e) {
                         fut.onDone(e);
                     }
@@ -850,14 +871,21 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
     private class RebalanceDownloadFuture extends GridFutureAdapter<Boolean> {
         private final ClusterNode node;
 
-        private volatile IgniteInternalFuture switchFut;
+        private final AtomicReference<GridFutureAdapter> switchFut = new AtomicReference<>();
 
-        public IgniteInternalFuture switchFut() {
-            return switchFut;
+//        private Map<Long, IgniteInternalFuture> switchFuts = new ConcurrentHashMap<>();
+
+        public void switchFut(int grpId, int partId, GridFutureAdapter waitFUt) {
+
+            switchFut.compareAndSet(null, waitFUt);
+
+            //switchFuts.put(((long)grpId << 32) + partId, waitFUt);
         }
 
-        public void switchFut(IgniteInternalFuture switchFut) {
-            this.switchFut = switchFut;
+        public IgniteInternalFuture switchFut(int grpId, int partId) {
+//            System.out.println("partId=" + partId);
+
+            return switchFut.get();
         }
 
         class HistoryDesc implements Comparable {
@@ -1002,12 +1030,18 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
             remainingHist.computeIfAbsent(grpId, v -> new TreeSet<>()).add(new HistoryDesc(partId, startCntr, endCntr));
 
             if (parts.isEmpty()) {
-                try {
-                    U.sleep(1_000);
-                }
-                catch (IgniteInterruptedCheckedException e) {
-                    e.printStackTrace();
-                }
+//                try {
+//                    U.sleep(1_000);
+//                }
+//                catch (IgniteInterruptedCheckedException e) {
+//                    e.printStackTrace();
+//                }
+
+                GridFutureAdapter fut0 = switchFut.get();
+
+                assert fut0 != null;
+
+                fut0.onDone();
 
                 remaining.remove(grpId);
 

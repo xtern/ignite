@@ -17,7 +17,9 @@
 
 package org.apache.ignite.internal.processors.cache.persistence;
 
+import java.util.ArrayList;
 import java.util.Collections;
+import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicLong;
@@ -30,7 +32,6 @@ import org.apache.ignite.cache.CacheAtomicityMode;
 import org.apache.ignite.cache.CacheMode;
 import org.apache.ignite.cache.CachePeekMode;
 import org.apache.ignite.cache.CacheRebalanceMode;
-import org.apache.ignite.cache.CacheWriteSynchronizationMode;
 import org.apache.ignite.cache.affinity.rendezvous.RendezvousAffinityFunction;
 import org.apache.ignite.cluster.ClusterNode;
 import org.apache.ignite.configuration.CacheConfiguration;
@@ -51,9 +52,12 @@ import org.apache.ignite.plugin.extensions.communication.Message;
 import org.apache.ignite.testframework.GridTestUtils;
 import org.apache.ignite.testframework.junits.WithSystemProperty;
 import org.apache.ignite.testframework.junits.common.GridCommonAbstractTest;
+import org.junit.After;
 import org.junit.Before;
 import org.junit.Ignore;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
 
 import static org.apache.ignite.IgniteSystemProperties.IGNITE_BASELINE_AUTO_ADJUST_ENABLED;
 import static org.apache.ignite.IgniteSystemProperties.IGNITE_DUMP_THREADS_ON_FAILURE;
@@ -63,6 +67,7 @@ import static org.apache.ignite.IgniteSystemProperties.IGNITE_PERSISTENCE_REBALA
 /**
  * Test cases for checking cancellation rebalancing process if some events occurs.
  */
+@RunWith(Parameterized.class)
 public class GridCachePersistenceRebalanceSelfTest extends GridCommonAbstractTest {
     /** */
     private static final int CACHE_PART_COUNT = 8;
@@ -70,10 +75,30 @@ public class GridCachePersistenceRebalanceSelfTest extends GridCommonAbstractTes
     /** */
     private static final int TEST_SIZE = GridTestUtils.SF.applyLB(100_000, 10_000);
 
+    @Parameterized.Parameter
+    public CacheAtomicityMode cacheAtomicityMode;
+
     /** */
     @Before
     public void setup() throws Exception {
         cleanPersistenceDir();
+    }
+
+    /** */
+    @After
+    public void tearDown() {
+        stopAllGrids();
+    }
+
+    /** Parameters. */
+    @Parameterized.Parameters(name = "{0}")
+    public static Iterable<Object[]> data() {
+        List<Object[]> params = new ArrayList<>(2);
+
+        params.add(new CacheAtomicityMode[] {CacheAtomicityMode.TRANSACTIONAL});
+//        params.add(new CacheAtomicityMode[] {CacheAtomicityMode.ATOMIC});
+
+        return params;
     }
 
     /** {@inheritDoc} */
@@ -84,13 +109,13 @@ public class GridCachePersistenceRebalanceSelfTest extends GridCommonAbstractTes
                     .setMaxSize(8 * 1024L * 1024 * 1024)
                     .setPersistenceEnabled(true))
                 .setWalMode(WALMode.LOG_ONLY)
-                .setCheckpointFrequency(500)) // todo check with default timeout!
+                .setCheckpointFrequency(3_000)) // todo check with default timeout!
 //                .setWalSegmentSize(4 * 1024 * 1024)
 //                .setMaxWalArchiveSize(32 * 1024 * 1024 * 1024L))
             .setCacheConfiguration(new CacheConfiguration(DEFAULT_CACHE_NAME)
                 .setCacheMode(CacheMode.REPLICATED)
                 .setRebalanceMode(CacheRebalanceMode.ASYNC)
-                .setAtomicityMode(CacheAtomicityMode.ATOMIC)
+                .setAtomicityMode(cacheAtomicityMode)
                 //.setWriteSynchronizationMode(CacheWriteSynchronizationMode.PRIMARY_SYNC)
 //                .setBackups(1)
                 .setAffinity(new RendezvousAffinityFunction(false, CACHE_PART_COUNT)));
@@ -296,7 +321,7 @@ public class GridCachePersistenceRebalanceSelfTest extends GridCommonAbstractTes
      * @param cache2 Actual data cache.
 
      * @throws IgniteCheckedException If failed.
-     * @return
+     * @return Buffer with descriptions of found problems during verification.
      */
     private StringBuilder verifyLocalCacheContent(IgniteInternalCache<Integer, Integer> cache1,
         IgniteInternalCache<Integer, Integer> cache2) throws IgniteCheckedException {

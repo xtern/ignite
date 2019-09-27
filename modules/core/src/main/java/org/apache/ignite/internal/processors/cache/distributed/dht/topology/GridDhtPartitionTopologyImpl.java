@@ -907,13 +907,15 @@ public class GridDhtPartitionTopologyImpl implements GridDhtPartitionTopology {
     }
 
     /** {@inheritDoc} */
-    @Override public GridDhtLocalPartition forceCreatePartition(int p) throws IgniteCheckedException {
+    @Override public GridDhtLocalPartition forceCreatePartition(int p, boolean replace) throws IgniteCheckedException {
         lock.writeLock().lock();
 
         try {
             GridDhtLocalPartition part = locParts.get(p);
 
-            if (part != null) {
+            assert !replace || part.state() == MOVING : part.state();
+
+            if (part != null && !replace) {
                 if (part.state() != EVICTED)
                     return part;
                 else
