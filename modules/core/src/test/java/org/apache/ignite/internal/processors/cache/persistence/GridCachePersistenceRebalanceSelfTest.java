@@ -70,7 +70,7 @@ import static org.apache.ignite.IgniteSystemProperties.IGNITE_PERSISTENCE_REBALA
 @RunWith(Parameterized.class)
 public class GridCachePersistenceRebalanceSelfTest extends GridCommonAbstractTest {
     /** */
-    private static final int CACHE_PART_COUNT = 8;
+    private static final int CACHE_PART_COUNT = 16;
 
     /** */
     private static final int TEST_SIZE = GridTestUtils.SF.applyLB(100_000, 10_000);

@@ -366,7 +366,8 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
                     for (Integer partId : e.getValue()) {
                         GridDhtLocalPartition part = grp.topology().localPartition(partId);
 
-                        log.debug("Add destroy future for partition " + part.id());
+                        if (log.isDebugEnabled())
+                            log.debug("Add destroy future for partition " + part.id());
 
                         rebFut.remainDestroy(grpId, partId, destroyPartition(part));
                     }
@@ -554,7 +555,9 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
         return fut;
     }
 
-    // todo destroy partition but don't change state in node2part map
+    /**
+     * Completely destroy partition without changing state in node2part map.
+     */
     private IgniteInternalFuture<Void> destroyPartition(GridDhtLocalPartition part) {
         GridFutureAdapter<Void> destroyFut = new GridFutureAdapter<>();
 
@@ -821,48 +824,31 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
                 Integer grpId = (Integer)initMeta.params().get("group");
                 Integer partId = (Integer)initMeta.params().get("part");
 
-//                try {
-                    IgniteInternalFuture destroyFut = fut.remainDestroy(grpId, partId);
+                IgniteInternalFuture destroyFut = fut.remainDestroy(grpId, partId);
 
+                try {
+                    GridFutureAdapter waitFUt = new GridFutureAdapter();
 
-//                    Executor exec = cctx.kernalContext().pools().poolForPolicy(PUBLIC_POOL);
-                    try {
+                    fut.switchFut(grpId, partId, waitFUt);
 
-                        GridFutureAdapter waitFUt = new GridFutureAdapter();
+                    IgniteInternalFuture<T2<Long, Long>> switchFut = restorePartition(grpId, partId, file, destroyFut);
 
-                        fut.switchFut(grpId, partId, waitFUt);
+                    switchFut.listen( f -> {
+                        try {
+                            T2<Long, Long> cntrs = f.get();
 
-                        // Await while all operations complete.
-//                        U.sleep(200);
+                            assert cntrs != null;
 
-                        IgniteInternalFuture<T2<Long, Long>> switchFut = restorePartition(grpId, partId, file, destroyFut);
-
-                        switchFut.listen( f -> {
-                            try {
-                                T2<Long, Long> cntrs = f.get();
-
-                                assert cntrs != null;
-
-                                cctx.kernalContext().closure().runLocalSafe(() -> {
-                                    fut.onPartitionRestored(grpId, partId, cntrs.get1(), cntrs.get2());
-                                });
-                            } catch (IgniteCheckedException e) {
-                                fut.onDone(e);
-                            } finally {
-                                //waitFUt.onDone();
-                            }
-                        });
-                    } catch (IgniteCheckedException e) {
-                        fut.onDone(e);
-                    }
-
-//                    return true;
-//                }
-//                catch (IgniteCheckedException e) {
-//                    fut.onDone(e);
-//
-//                    throw new IgniteException("File transfer exception.", e);
-//                }
+                            cctx.kernalContext().closure().runLocalSafe(() -> {
+                                fut.onPartitionRestored(grpId, partId, cntrs.get1(), cntrs.get2());
+                            });
+                        } catch (IgniteCheckedException e) {
+                            fut.onDone(e);
+                        }
+                    });
+                } catch (IgniteCheckedException e) {
+                    fut.onDone(e);
+                }
             };
         }
     }
