@@ -40,6 +40,7 @@ import org.apache.ignite.IgniteLogger;
 import org.apache.ignite.IgniteSystemProperties;
 import org.apache.ignite.failure.FailureContext;
 import org.apache.ignite.failure.FailureType;
+import org.apache.ignite.internal.IgniteInternalFuture;
 import org.apache.ignite.internal.NodeStoppingException;
 import org.apache.ignite.internal.metric.IoStatisticsHolder;
 import org.apache.ignite.internal.pagemem.FullPageId;
@@ -1319,7 +1320,7 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
     }
 
     /** {@inheritDoc} */
-    @Override public void destroyCacheDataStore(CacheDataStore store) throws IgniteCheckedException {
+    @Override public IgniteInternalFuture<Boolean> destroyCacheDataStore(CacheDataStore store) {
         int p = store.partId();
 
         partStoreLock.lock(p);
@@ -1327,9 +1328,9 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
         try {
             boolean removed = partDataStores.remove(p, store);
 
-            assert removed;
+            assert removed : "cache=" + grp.cacheOrGroupName() + " p=" + p;
 
-            destroyCacheDataStore0(store);
+            return destroyCacheDataStore0(store);
         }
         catch (IgniteCheckedException e) {
             throw new IgniteException(e);
@@ -1343,8 +1344,10 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
      * @param store Cache data store.
      * @throws IgniteCheckedException If failed.
      */
-    protected void destroyCacheDataStore0(CacheDataStore store) throws IgniteCheckedException {
+    protected IgniteInternalFuture<Boolean> destroyCacheDataStore0(CacheDataStore store) throws IgniteCheckedException {
         store.destroy();
+
+        return null;
     }
 
     /**

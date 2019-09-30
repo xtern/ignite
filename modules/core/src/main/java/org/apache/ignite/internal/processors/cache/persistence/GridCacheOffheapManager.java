@@ -37,6 +37,7 @@ import org.apache.ignite.IgniteLogger;
 import org.apache.ignite.IgniteSystemProperties;
 import org.apache.ignite.failure.FailureContext;
 import org.apache.ignite.failure.FailureType;
+import org.apache.ignite.internal.IgniteInternalFuture;
 import org.apache.ignite.internal.pagemem.FullPageId;
 import org.apache.ignite.internal.pagemem.PageIdAllocator;
 import org.apache.ignite.internal.pagemem.PageIdUtils;
@@ -843,7 +844,7 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
     }
 
     /** {@inheritDoc} */
-    @Override protected void destroyCacheDataStore0(CacheDataStore store) throws IgniteCheckedException {
+    @Override protected IgniteInternalFuture<Boolean> destroyCacheDataStore0(CacheDataStore store) throws IgniteCheckedException {
         assert ctx.database() instanceof GridCacheDatabaseSharedManager
             : "Destroying cache data store when persistence is not enabled: " + ctx.database();
 
@@ -858,7 +859,7 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
             ctx.database().checkpointReadUnlock();
         }
 
-        ((GridCacheDatabaseSharedManager)ctx.database()).schedulePartitionDestroy(grp.groupId(), partId);
+        return ((GridCacheDatabaseSharedManager)ctx.database()).schedulePartitionDestroy(grp.groupId(), partId);
     }
 
     /**

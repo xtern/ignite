@@ -321,13 +321,12 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
                 if (staleFuture(rebFut))
                     return;
 
-                U.log(log, "Start partitions preloading [from=" + node.id() + ", fut=" + rebFut + ']');
+                if (log.isInfoEnabled())
+                    log.info("Start partitions preloading [from=" + node.id() + ", fut=" + rebFut + ']');
 
                 final Map<Integer, Set<Integer>> assigns = rebFut.nodeAssigns;
 
                 IgniteInternalFuture<Void> switchFut = cctx.preloader().offerCheckpointTask(() -> {
-                    log.info("switching partitions");
-
                         for (Map.Entry<Integer, Set<Integer>> e : assigns.entrySet()) {
                             CacheGroupContext grp = cctx.cache().cacheGroup(e.getKey());
 
@@ -557,6 +556,9 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
 
     /**
      * Completely destroy partition without changing state in node2part map.
+     *
+     * @param part
+     * @return
      */
     private IgniteInternalFuture<Void> destroyPartition(GridDhtLocalPartition part) {
         GridFutureAdapter<Void> destroyFut = new GridFutureAdapter<>();
@@ -575,21 +577,27 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
                 int grpId = ctx.groupId();
 
                 try {
-                    ctx.offheap().destroyCacheDataStore(part.dataStore());
+                    ctx.offheap().destroyCacheDataStore(part.dataStore()).listen( f -> {
+                        try {
+                            if (f.get()) {
+                                // todo something smarter - store will be removed on next checkpoint.
+                                while (ctx.shared().pageStore().exists(grpId, part.id()))
+                                    U.sleep(200);
 
-                    // todo something smarter - store will be removed on next checkpoint.
-                    while (ctx.shared().pageStore().exists(grpId, part.id()))
-                        U.sleep(200);
+                                // todo should be executed for all cleared partitions at once.
+                                ((PageMemoryEx)ctx.dataRegion().pageMemory())
+                                    .clearAsync((grp, pageId) -> grp == grpId && part.id() == PageIdUtils.partId(pageId), true)
+                                    .listen(c1 -> {
+                                        if (log.isDebugEnabled())
+                                            log.debug("Eviction is done [grp=" + grpId + ", part=" + part.id() + "]");
 
-                    // todo should be executed for all cleared partitions at once.
-                    ((PageMemoryEx)ctx.dataRegion().pageMemory())
-                        .clearAsync((grp, pageId) -> grp == grpId && part.id() == PageIdUtils.partId(pageId), true)
-                        .listen(c1 -> {
-                            if (log.isDebugEnabled())
-                                log.debug("Eviction is done [grp=" + grpId + ", part=" + part.id() + "]");
-
-                            destroyFut.onDone();
-                        });
+                                        destroyFut.onDone();
+                                    });
+                            }
+                        } catch (IgniteCheckedException e) {
+                            destroyFut.onDone(e);
+                        }
+                    });
                 }
                 catch (IgniteCheckedException e) {
                     destroyFut.onDone(e);

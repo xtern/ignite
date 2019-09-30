@@ -130,8 +130,6 @@ import org.apache.ignite.internal.processors.cache.GridCacheSharedContext;
 import org.apache.ignite.internal.processors.cache.distributed.dht.preloader.GridDhtPartitionsExchangeFuture;
 import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtLocalPartition;
 import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtPartitionState;
-import org.apache.ignite.internal.processors.cache.mvcc.MvccUpdateVersionAware;
-import org.apache.ignite.internal.processors.cache.mvcc.MvccVersionAware;
 import org.apache.ignite.internal.processors.cache.mvcc.txlog.TxLog;
 import org.apache.ignite.internal.processors.cache.mvcc.txlog.TxState;
 import org.apache.ignite.internal.processors.cache.persistence.checkpoint.CheckpointEntry;
@@ -3339,11 +3337,13 @@ public class GridCacheDatabaseSharedManager extends IgniteCacheDatabaseSharedMan
      * @param grpId Group ID.
      * @param partId Partition ID.
      */
-    public void schedulePartitionDestroy(int grpId, int partId) {
+    public IgniteInternalFuture<Boolean> schedulePartitionDestroy(int grpId, int partId) {
         Checkpointer cp = checkpointer;
 
         if (cp != null)
-            cp.schedulePartitionDestroy(cctx.cache().cacheGroup(grpId), grpId, partId);
+            return cp.schedulePartitionDestroy(cctx.cache().cacheGroup(grpId), grpId, partId);
+
+        return null;
     }
 
     /**
@@ -3502,7 +3502,7 @@ public class GridCacheDatabaseSharedManager extends IgniteCacheDatabaseSharedMan
          * @param grpCtx Group context.
          * @param partId Partition ID to destroy.
          */
-        private void addDestroyRequest(@Nullable CacheGroupContext grpCtx, int grpId, int partId) {
+        private IgniteInternalFuture<Boolean> addDestroyRequest(@Nullable CacheGroupContext grpCtx, int grpId, int partId) {
             PartitionDestroyRequest req = new PartitionDestroyRequest(grpId, partId);
 
             PartitionDestroyRequest old = pendingReqs.putIfAbsent(new T2<>(grpId, partId), req);
@@ -3511,6 +3511,8 @@ public class GridCacheDatabaseSharedManager extends IgniteCacheDatabaseSharedMan
                 + "[grpId=" + grpId
                 + ", grpName=" + grpCtx.cacheOrGroupName()
                 + ", partId=" + partId + ']';
+
+            return old != null ? old.reqFut : req.reqFut;
         }
 
         /**
@@ -3551,6 +3553,9 @@ public class GridCacheDatabaseSharedManager extends IgniteCacheDatabaseSharedMan
         /** Destroy future. Not null if partition destroy has begun. */
         private GridFutureAdapter<Void> destroyFut;
 
+        /** Destroy future. Not null if partition destroy has begun. */
+        private GridFutureAdapter<Boolean> reqFut = new GridFutureAdapter<>();
+
         /**
          * @param grpId Group ID.
          * @param partId Partition ID.
@@ -3573,6 +3578,8 @@ public class GridCacheDatabaseSharedManager extends IgniteCacheDatabaseSharedMan
             }
 
             cancelled = true;
+
+            reqFut.onDone(false);
 
             return true;
         }
@@ -3604,6 +3611,11 @@ public class GridCacheDatabaseSharedManager extends IgniteCacheDatabaseSharedMan
             assert destroyFut != null;
 
             destroyFut.onDone(err);
+
+            if (err == null)
+                reqFut.onDone(true);
+            else
+                reqFut.onDone(err);
         }
 
         /**
@@ -4107,9 +4119,11 @@ public class GridCacheDatabaseSharedManager extends IgniteCacheDatabaseSharedMan
          * @param grpId Group ID.
          * @param partId Partition ID.
          */
-        private void schedulePartitionDestroy(@Nullable CacheGroupContext grpCtx, int grpId, int partId) {
+        private IgniteInternalFuture<Boolean> schedulePartitionDestroy(@Nullable CacheGroupContext grpCtx, int grpId, int partId) {
+            IgniteInternalFuture<Boolean> resFut;
+
             synchronized (this) {
-                scheduledCp.destroyQueue.addDestroyRequest(grpCtx, grpId, partId);
+                resFut = scheduledCp.destroyQueue.addDestroyRequest(grpCtx, grpId, partId);
             }
 
             if (log.isDebugEnabled())
@@ -4117,6 +4131,8 @@ public class GridCacheDatabaseSharedManager extends IgniteCacheDatabaseSharedMan
 
             if (grpCtx != null)
                 wakeupForCheckpoint(PARTITION_DESTROY_CHECKPOINT_TIMEOUT, "partition destroy");
+
+            return resFut;
         }
 
         /**
