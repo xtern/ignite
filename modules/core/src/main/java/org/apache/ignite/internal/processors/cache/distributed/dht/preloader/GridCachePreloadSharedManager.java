@@ -24,7 +24,6 @@ import java.nio.file.Files;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.NavigableMap;
@@ -62,6 +61,7 @@ import org.apache.ignite.internal.processors.cache.GridCacheMessage;
 import org.apache.ignite.internal.processors.cache.GridCacheSharedManagerAdapter;
 import org.apache.ignite.internal.processors.cache.PartitionUpdateCounter;
 import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtLocalPartition;
+import org.apache.ignite.internal.processors.cache.persistence.DataRegion;
 import org.apache.ignite.internal.processors.cache.persistence.DbCheckpointListener;
 import org.apache.ignite.internal.processors.cache.persistence.GridCacheDatabaseSharedManager;
 import org.apache.ignite.internal.processors.cache.persistence.ReadOnlyGridCacheDataStore;
@@ -70,6 +70,7 @@ import org.apache.ignite.internal.processors.cache.persistence.file.FilePageStor
 import org.apache.ignite.internal.processors.cache.persistence.pagemem.PageMemoryEx;
 import org.apache.ignite.internal.processors.cache.preload.GridPartitionBatchDemandMessage;
 import org.apache.ignite.internal.processors.cache.preload.PartitionUploadManager;
+import org.apache.ignite.internal.util.GridConcurrentHashSet;
 import org.apache.ignite.internal.util.GridIntList;
 import org.apache.ignite.internal.util.future.GridCompoundFuture;
 import org.apache.ignite.internal.util.future.GridFutureAdapter;
@@ -324,7 +325,7 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
                 if (log.isInfoEnabled())
                     log.info("Start partitions preloading [from=" + node.id() + ", fut=" + rebFut + ']');
 
-                final Map<Integer, Set<Integer>> assigns = rebFut.nodeAssigns;
+                final Map<Integer, Set<Integer>> assigns = rebFut.assigns;
 
                 IgniteInternalFuture<Void> switchFut = cctx.preloader().offerCheckpointTask(() -> {
                         for (Map.Entry<Integer, Set<Integer>> e : assigns.entrySet()) {
@@ -360,15 +361,30 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
                 for (Map.Entry<Integer, Set<Integer>> e : assigns.entrySet()) {
                     int grpId = e.getKey();
 
-                    CacheGroupContext grp = cctx.cache().cacheGroup(grpId);
+                    CacheGroupContext gctx = cctx.cache().cacheGroup(grpId);
 
                     for (Integer partId : e.getValue()) {
-                        GridDhtLocalPartition part = grp.topology().localPartition(partId);
+                        GridDhtLocalPartition part = gctx.topology().localPartition(partId);
 
                         if (log.isDebugEnabled())
                             log.debug("Add destroy future for partition " + part.id());
 
-                        rebFut.remainDestroy(grpId, partId, destroyPartition(part));
+                        evictPartitionAsync(part).listen(fut -> {
+                            try {
+                                if (!fut.get())
+                                    throw new IgniteCheckedException("Partition was not destroyed " +
+                                        "properly [grp=" + gctx.cacheOrGroupName() + ", p=" + part.id() + "]");
+
+                                boolean exists = gctx.shared().pageStore().exists(grpId, part.id());
+
+                                assert !exists : "File exists [grp=" + gctx.cacheOrGroupName() + ", p=" + part.id() + "]";
+
+                                rebFut.onPartitionEvicted(grpId, partId);
+                            }
+                            catch (IgniteCheckedException ex) {
+                                rebFut.onDone(ex);
+                            }
+                        });
                     }
                 }
 
@@ -543,8 +559,8 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
      * @param part
      * @return
      */
-    private IgniteInternalFuture<Void> destroyPartition(GridDhtLocalPartition part) {
-        GridFutureAdapter<Void> destroyFut = new GridFutureAdapter<>();
+    private IgniteInternalFuture<Boolean> evictPartitionAsync(GridDhtLocalPartition part) {
+        GridFutureAdapter<Boolean> fut = new GridFutureAdapter<>();
 
         part.clearAsync();
 
@@ -554,43 +570,23 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
 
             store.disableRemoves();
 
-            CacheGroupContext ctx = part.group();
-
-            int grpId = ctx.groupId();
-
             try {
-                ctx.offheap().destroyCacheDataStore(part.dataStore())
-                    .listen(f -> {
+                part.group().offheap().destroyCacheDataStore(part.dataStore()).listen(f -> {
                         try {
-                            if (!f.get())
-                                throw new IgniteCheckedException("Partition was not destroyed " +
-                                    "properly [grp=" + ctx.cacheOrGroupName() + ", p=" + part.id() + "]");
-
-                            boolean exists = ctx.shared().pageStore().exists(grpId, part.id());
-
-                            assert !exists : "File exists [grp=" + ctx.cacheOrGroupName() + ", p=" + part.id() + "]";
-
-                            // todo should be executed for all cleared partitions at once.
-                            ((PageMemoryEx)ctx.dataRegion().pageMemory())
-                                .clearAsync((grp, pageId) -> grp == grpId && part.id() == PageIdUtils.partId(pageId), true)
-                                .listen(c1 -> {
-                                    if (log.isDebugEnabled())
-                                        log.debug("Eviction is done [grp=" + grpId + ", part=" + part.id() + "]");
-
-                                    destroyFut.onDone();
-                                });
+                            fut.onDone(f.get());
                         }
                         catch (IgniteCheckedException e) {
-                            destroyFut.onDone(e);
+                            fut.onDone(e);
                         }
-                    });
+                    }
+                );
             }
             catch (IgniteCheckedException e) {
-                destroyFut.onDone(e);
+                fut.onDone(e);
             }
         });
 
-        return destroyFut;
+        return fut;
     }
 
     /**
@@ -817,12 +813,10 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
                 Integer grpId = (Integer)initMeta.params().get("group");
                 Integer partId = (Integer)initMeta.params().get("part");
 
-                IgniteInternalFuture destroyFut = fut.remainDestroy(grpId, partId);
+                IgniteInternalFuture destroyFut = fut.evictionFuture(grpId);
 
                 try {
-                    GridFutureAdapter waitFUt = new GridFutureAdapter();
-
-                    fut.switchFut(grpId, partId, waitFUt);
+                    fut.switchFut(grpId, partId, new GridFutureAdapter());
 
                     IgniteInternalFuture<T2<Long, Long>> switchFut = restorePartition(grpId, partId, file, destroyFut);
 
@@ -848,63 +842,12 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
 
     /** */
     private class RebalanceDownloadFuture extends GridFutureAdapter<Boolean> {
-        private final ClusterNode node;
-
-        private final AtomicReference<GridFutureAdapter> switchFut = new AtomicReference<>();
-
-//        private Map<Long, IgniteInternalFuture> switchFuts = new ConcurrentHashMap<>();
-
-        public void switchFut(int grpId, int partId, GridFutureAdapter waitFUt) {
-
-            switchFut.compareAndSet(null, waitFUt);
-
-            //switchFuts.put(((long)grpId << 32) + partId, waitFUt);
-        }
-
-        public IgniteInternalFuture switchFut(int grpId, int partId) {
-//            System.out.println("partId=" + partId);
-
-            return switchFut.get();
-        }
-
-        class HistoryDesc implements Comparable {
-            /** Partition id. */
-            final int partId;
-
-            /** From counter. */
-            final long fromCntr;
-
-            /** To counter. */
-            final long toCntr;
-
-            public HistoryDesc(int partId, long fromCntr, long toCntr) {
-                this.partId = partId;
-                this.fromCntr = fromCntr;
-                this.toCntr = toCntr;
-            }
-
-            @Override public int compareTo(@NotNull Object o) {
-                HistoryDesc otherDesc = (HistoryDesc)o;
-
-                if (partId > otherDesc.partId)
-                    return 1;
-
-                if (partId < otherDesc.partId)
-                    return -1;
-
-                return 0;
-            }
-        }
-
-        /** */
-        private UUID nodeId;
-
         /** */
         private long rebalanceId;
 
         /** */
         @GridToStringInclude
-        private Map<Integer, Set<Integer>> nodeAssigns;
+        private Map<Integer, Set<Integer>> assigns;
 
         /** */
         private AffinityTopologyVersion topVer;
@@ -918,6 +861,17 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
         /** {@code True} if the initial demand request has been sent. */
         private AtomicBoolean initReq = new AtomicBoolean();
 
+        /** */
+        private final ClusterNode node;
+
+        private final AtomicReference<GridFutureAdapter> switchFut = new AtomicReference<>();
+
+        private final Map<String, GridFutureAdapter> remainEvictionFuts = new ConcurrentHashMap<>();
+
+        private final Map<String, Set<Long>> cleanupRegions = new ConcurrentHashMap<>();
+
+        private final Map<String, Set<Long>> partsRegions = new HashMap<>();
+
         /**
          * Default constructor for the dummy future.
          */
@@ -928,56 +882,59 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
         }
 
         /**
-         * @param nodeId The remote nodeId.
-         * @param nodeAssigns Map of assignments to request from remote.
+         * @param node Supplier node.
+         * @param rebalanceId Rebalance id.
+         * @param assigns Map of assignments to request from remote.
+         * @param topVer Topology version.
          */
         public RebalanceDownloadFuture(
             ClusterNode node,
             long rebalanceId,
-            Map<Integer, Set<Integer>> nodeAssigns,
+            Map<Integer, Set<Integer>> assigns,
             AffinityTopologyVersion topVer
         ) {
             this.node = node;
-            this.nodeId = nodeId;
             this.rebalanceId = rebalanceId;
-            this.nodeAssigns = nodeAssigns;
+            this.assigns = assigns;
             this.topVer = topVer;
 
-            remaining = U.newHashMap(nodeAssigns.size());
-            remainingHist = U.newHashMap(nodeAssigns.size());
+            remaining = U.newHashMap(assigns.size());
+            remainingHist = U.newHashMap(assigns.size());
 
-            for (Map.Entry<Integer, Set<Integer>> grpPartEntry : nodeAssigns.entrySet())
-                remaining.putIfAbsent(grpPartEntry.getKey(), new HashSet<>(grpPartEntry.getValue()));
+            for (Map.Entry<Integer, Set<Integer>> entry : assigns.entrySet()) {
+                String regName = cctx.cache().cacheGroup(entry.getKey()).dataRegion().config().getName();
+                Set<Integer> parts = entry.getValue();
+                int partsCnt = parts.size();
+                int grpId = entry.getKey();
+
+                assert !remaining.containsKey(grpId);
+
+                Set<Integer> parts0 = U.newHashSet(partsCnt);
+
+                remaining.put(grpId, parts0);
+
+                Set<Long> regionParts = cleanupRegions.computeIfAbsent(regName, v -> new GridConcurrentHashSet<>());
+                // todo check mem usage - can be optimized (just move from cleanup when remove)
+                Set<Long> partsReadOnly = partsRegions.computeIfAbsent(regName, v -> U.newHashSet(partsCnt));
+
+                remainEvictionFuts.putIfAbsent(regName, new GridFutureAdapter());
+
+                for (Integer partId : entry.getValue()) {
+                    long grpPart = ((long)entry.getKey() << 32) + partId;
+
+                    regionParts.add(grpPart);
+
+                    partsReadOnly.add(grpPart);
+
+                    parts0.add(partId);
+                }
+            }
         }
-
-        Map<Long, IgniteInternalFuture> remainDestroy = new HashMap<>();
-
-        void remainDestroy(int grpId, int partId, IgniteInternalFuture fut) {
-            remainDestroy.put(((long)grpId << 32) + partId, fut);
-        }
-
-        IgniteInternalFuture remainDestroy(int grpId, int partId) {
-            return remainDestroy.get(((long)grpId << 32) + partId);
-        }
-
 
         /** {@inheritDoc} */
         @Override public boolean cancel() {
             return onCancelled();
         }
-
-//        /** */
-//        public synchronized void onCompleteSuccess() {
-//            assert remaining.isEmpty();
-//
-//            U.log(log, "Partitions have been scheduled to resend. Files have been transferred " +
-//                "[from=" + nodeId + ", to=" + cctx.localNodeId() + ']');
-//
-//            // Late affinity assignment
-//            cctx.exchange().scheduleResendPartitions();
-//
-//            onDone(true);
-//        }
 
         /**
          * @param grpId Cache group id to search.
@@ -986,8 +943,7 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
         public synchronized void onPartitionRestored(int grpId, int partId, long startCntr, long endCntr) {
             Set<Integer> parts = remaining.get(grpId);
 
-            if (parts == null)
-                onDone(new IgniteCheckedException("Partition index incorrect [grpId=" + grpId + ", partId=" + partId + ']'));
+            assert parts != null : "Invalid identifier [grpId=" + grpId + "]";
 
             boolean success = parts.remove(partId);
 
@@ -1009,13 +965,6 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
             remainingHist.computeIfAbsent(grpId, v -> new TreeSet<>()).add(new HistoryDesc(partId, startCntr, endCntr));
 
             if (parts.isEmpty()) {
-//                try {
-//                    U.sleep(1_000);
-//                }
-//                catch (IgniteInterruptedCheckedException e) {
-//                    e.printStackTrace();
-//                }
-
                 GridFutureAdapter fut0 = switchFut.get();
 
                 assert fut0 != null;
@@ -1074,14 +1023,84 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
             }
         }
 
-//        // todo when historical rebalancing finishes.
-//        public void onPartitionDone(int grpId, int partId) {
-//
-//        }
+        public void onPartitionEvicted(int grpId, int partId) {
+            DataRegion region = cctx.cache().cacheGroup(grpId).dataRegion();
+
+            String regName = region.config().getName();
+
+            Set<Long> parts = cleanupRegions.get(regName);
+
+            boolean rmvd = parts.remove(((long)grpId << 32) + partId);
+
+            assert rmvd : "grpId=" + grpId + " p=" + partId;
+
+            if (parts.isEmpty()) {
+                Set<Long> cleanupParts = partsRegions.get(regName);
+
+                ((PageMemoryEx)region.pageMemory())
+                    .clearAsync(
+                        (grp, pageId) ->
+                            cleanupParts.contains(((long)grp << 32) + PageIdUtils.partId(pageId)), true)
+                    .listen(c1 -> {
+                        if (log.isDebugEnabled())
+                            log.debug("Eviction is done [region=" + regName + "]");
+
+                        cleanupRegions.remove(regName);
+
+                        if (cleanupRegions.isEmpty())
+                            remainEvictionFuts.get(regName).onDone();
+                    });
+            }
+        }
+
+        public void switchFut(int grpId, int partId, GridFutureAdapter waitFUt) {
+            switchFut.compareAndSet(null, waitFUt);
+
+            //switchFuts.put(((long)grpId << 32) + partId, waitFUt);
+        }
+
+        public IgniteInternalFuture switchFut(int grpId, int partId) {
+            return switchFut.get();
+        }
+
+        public IgniteInternalFuture evictionFuture(int grpId) {
+            String regName = cctx.cache().cacheGroup(grpId).dataRegion().config().getName();
+
+            return remainEvictionFuts.get(regName);
+        }
 
         /** {@inheritDoc} */
         @Override public String toString() {
             return S.toString(RebalanceDownloadFuture.class, this);
+        }
+
+        class HistoryDesc implements Comparable {
+            /** Partition id. */
+            final int partId;
+
+            /** From counter. */
+            final long fromCntr;
+
+            /** To counter. */
+            final long toCntr;
+
+            public HistoryDesc(int partId, long fromCntr, long toCntr) {
+                this.partId = partId;
+                this.fromCntr = fromCntr;
+                this.toCntr = toCntr;
+            }
+
+            @Override public int compareTo(@NotNull Object o) {
+                HistoryDesc otherDesc = (HistoryDesc)o;
+
+                if (partId > otherDesc.partId)
+                    return 1;
+
+                if (partId < otherDesc.partId)
+                    return -1;
+
+                return 0;
+            }
         }
     }
 }
