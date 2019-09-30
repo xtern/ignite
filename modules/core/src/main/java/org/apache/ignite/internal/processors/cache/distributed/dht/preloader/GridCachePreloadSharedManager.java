@@ -537,23 +537,6 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
         cur.run();
     }
 
-    public IgniteInternalFuture<Void> schedulePartitionDestroy(GridDhtLocalPartition part) {
-        GridFutureAdapter<Void> fut = new GridFutureAdapter<>();
-
-        offerCheckpointTask(
-            () -> part.readOnly(true)
-        ).listen(
-            c -> destroyPartition(part)
-                .listen(
-                    c0 -> {
-                        fut.onDone();
-                    }
-                )
-        );
-
-        return fut;
-    }
-
     /**
      * Completely destroy partition without changing state in node2part map.
      *
@@ -566,43 +549,45 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
         part.clearAsync();
 
         part.onClearFinished(c -> {
-            cctx.kernalContext().closure().runLocalSafe(() -> {
-                //todo should prevent any removes on DESTROYED partition.
-                ReadOnlyGridCacheDataStore store = (ReadOnlyGridCacheDataStore)part.dataStore().store(true);
+            //todo should prevent any removes on DESTROYED partition.
+            ReadOnlyGridCacheDataStore store = (ReadOnlyGridCacheDataStore)part.dataStore().store(true);
 
-                store.disableRemoves();
+            store.disableRemoves();
 
-                CacheGroupContext ctx = part.group();
+            CacheGroupContext ctx = part.group();
 
-                int grpId = ctx.groupId();
+            int grpId = ctx.groupId();
 
-                try {
-                    ctx.offheap().destroyCacheDataStore(part.dataStore()).listen( f -> {
+            try {
+                ctx.offheap().destroyCacheDataStore(part.dataStore())
+                    .listen(f -> {
                         try {
-                            if (f.get()) {
-                                // todo something smarter - store will be removed on next checkpoint.
-                                while (ctx.shared().pageStore().exists(grpId, part.id()))
-                                    U.sleep(200);
+                            if (!f.get())
+                                throw new IgniteCheckedException("Partition was not destroyed " +
+                                    "properly [grp=" + ctx.cacheOrGroupName() + ", p=" + part.id() + "]");
 
-                                // todo should be executed for all cleared partitions at once.
-                                ((PageMemoryEx)ctx.dataRegion().pageMemory())
-                                    .clearAsync((grp, pageId) -> grp == grpId && part.id() == PageIdUtils.partId(pageId), true)
-                                    .listen(c1 -> {
-                                        if (log.isDebugEnabled())
-                                            log.debug("Eviction is done [grp=" + grpId + ", part=" + part.id() + "]");
+                            boolean exists = ctx.shared().pageStore().exists(grpId, part.id());
 
-                                        destroyFut.onDone();
-                                    });
-                            }
-                        } catch (IgniteCheckedException e) {
+                            assert !exists : "File exists [grp=" + ctx.cacheOrGroupName() + ", p=" + part.id() + "]";
+
+                            // todo should be executed for all cleared partitions at once.
+                            ((PageMemoryEx)ctx.dataRegion().pageMemory())
+                                .clearAsync((grp, pageId) -> grp == grpId && part.id() == PageIdUtils.partId(pageId), true)
+                                .listen(c1 -> {
+                                    if (log.isDebugEnabled())
+                                        log.debug("Eviction is done [grp=" + grpId + ", part=" + part.id() + "]");
+
+                                    destroyFut.onDone();
+                                });
+                        }
+                        catch (IgniteCheckedException e) {
                             destroyFut.onDone(e);
                         }
                     });
-                }
-                catch (IgniteCheckedException e) {
-                    destroyFut.onDone(e);
-                }
-            });
+            }
+            catch (IgniteCheckedException e) {
+                destroyFut.onDone(e);
+            }
         });
 
         return destroyFut;
