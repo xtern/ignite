@@ -75,6 +75,12 @@ public class GridCachePersistenceRebalanceSelfTest extends GridCommonAbstractTes
     /** */
     private static final int TEST_SIZE = GridTestUtils.SF.applyLB(100_000, 10_000);
 
+    /** */
+    private static final String CACHE1 = "cache1";
+
+    /** */
+    private static final String CACHE2 = "cache2";
+
     @Parameterized.Parameter
     public CacheAtomicityMode cacheAtomicityMode;
 
@@ -112,14 +118,17 @@ public class GridCachePersistenceRebalanceSelfTest extends GridCommonAbstractTes
                 .setCheckpointFrequency(3_000)) // todo check with default timeout!
 //                .setWalSegmentSize(4 * 1024 * 1024)
 //                .setMaxWalArchiveSize(32 * 1024 * 1024 * 1024L))
-            .setCacheConfiguration(new CacheConfiguration(DEFAULT_CACHE_NAME)
-                .setCacheMode(CacheMode.REPLICATED)
-                .setRebalanceMode(CacheRebalanceMode.ASYNC)
-                .setAtomicityMode(cacheAtomicityMode)
-                //.setWriteSynchronizationMode(CacheWriteSynchronizationMode.PRIMARY_SYNC)
+            .setCacheConfiguration(cacheConfig(DEFAULT_CACHE_NAME), cacheConfig(CACHE1), cacheConfig(CACHE2));
+    }
+
+    private CacheConfiguration cacheConfig(String name) {
+        return new CacheConfiguration(name).setCacheMode(CacheMode.REPLICATED)
+            .setRebalanceMode(CacheRebalanceMode.ASYNC)
+            .setAtomicityMode(cacheAtomicityMode)
+            //.setWriteSynchronizationMode(CacheWriteSynchronizationMode.PRIMARY_SYNC)
 //                .setBackups(1)
-                .setAffinity(new RendezvousAffinityFunction(false, CACHE_PART_COUNT)));
-//            .setCommunicationSpi(new TestRecordingCommunicationSpi());
+            .setAffinity(new RendezvousAffinityFunction(false, CACHE_PART_COUNT));
+//            .setCommunicationSpi(new TestRecordingCommunicationSpi()
     }
 
     /** */
@@ -185,6 +194,50 @@ public class GridCachePersistenceRebalanceSelfTest extends GridCommonAbstractTes
 
         verifyLocalCache(ignite0.cachex(DEFAULT_CACHE_NAME), ignite1.cachex(DEFAULT_CACHE_NAME));
     }
+
+    /** */
+    @Test
+    @WithSystemProperty(key = IGNITE_JVM_PAUSE_DETECTOR_DISABLED, value = "true")
+    @WithSystemProperty(key = IGNITE_DUMP_THREADS_ON_FAILURE, value = "false")
+    @WithSystemProperty(key = IGNITE_PERSISTENCE_REBALANCE_ENABLED, value = "true")
+    @WithSystemProperty(key = IGNITE_BASELINE_AUTO_ADJUST_ENABLED, value = "true")
+    public void testPersistenceRebalanceMultipleCaches() throws Exception {
+        IgniteEx ignite0 = startGrid(0);
+
+        ignite0.cluster().active(true);
+        ignite0.cluster().baselineAutoAdjustTimeout(0);
+
+        loadData(ignite0, CACHE1, TEST_SIZE);
+        loadData(ignite0, CACHE2, TEST_SIZE);
+
+//        AtomicLong cntr = new AtomicLong(TEST_SIZE);
+//
+//        ConstantLoader ldr = new ConstantLoader(ignite0.cache(DEFAULT_CACHE_NAME), cntr);
+//
+//        IgniteInternalFuture ldrFut = GridTestUtils.runMultiThreadedAsync(ldr, 8, "thread");
+//
+//        U.sleep(1_000);
+
+        forceCheckpoint(ignite0);
+
+        IgniteEx ignite1 = startGrid(1);
+
+        U.sleep(1_000);
+
+        awaitPartitionMapExchange();
+
+        U.sleep(1_000);
+
+//        ldr.stop();
+//
+//        ldrFut.get();
+
+        U.sleep(1_000);
+
+        verifyLocalCache(ignite0.cachex(CACHE1), ignite1.cachex(CACHE1));
+        verifyLocalCache(ignite0.cachex(CACHE2), ignite1.cachex(CACHE2));
+    }
+
 
     /** */
     @Test

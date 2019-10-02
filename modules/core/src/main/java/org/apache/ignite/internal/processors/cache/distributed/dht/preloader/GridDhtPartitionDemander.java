@@ -286,8 +286,6 @@ public class GridDhtPartitionDemander {
                     @Override public void applyx(IgniteInternalFuture<Boolean> future) throws IgniteCheckedException {
                         if (future.get())
                             ctx.walState().onGroupRebalanceFinished(grp.groupId(), assignments.topologyVersion());
-                        else
-                            System.out.println("future false");
                     }
                 });
 
@@ -1278,7 +1276,7 @@ public class GridDhtPartitionDemander {
          * @return {@code True}.
          */
         @Override public boolean cancel() {
-            U.dumpStack("canceled " + grp.cacheOrGroupName());
+            U.dumpStack("Rebalancing canceled [grp=" + grp.cacheOrGroupName() + "]");
 
             // Cancel lock is needed only for case when some message might be on the fly while rebalancing is
             // cancelled.

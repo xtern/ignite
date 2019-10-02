@@ -407,6 +407,7 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
 
                     rebFut.onDone(e);
 
+
                     futMap.remove(node.id());
                 }
             }
@@ -438,6 +439,23 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
             return false;
 
         if (grp.mvccEnabled())
+            return false;
+
+        Map<Integer, Long> globalSizes = grp.topology().globalPartSizes();
+
+        assert !globalSizes.isEmpty() : grp.cacheOrGroupName();
+
+        boolean notEnoughData = true;
+
+        for (Long partSize : globalSizes.values()) {
+            if (partSize > 0) {
+                notEnoughData = false;
+
+                break;
+            }
+        }
+
+        if (notEnoughData)
             return false;
 
         return presistenceRebalanceEnabled &&
@@ -634,19 +652,18 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
      * @param msg Message.
      * @return Partition restore future or {@code null} if no partition currently restored.
      */
-    public IgniteInternalFuture partitionRestoreFuture(GridCacheMessage msg) {
+    public IgniteInternalFuture partitionRestoreFuture(UUID nodeId, GridCacheMessage msg) {
         if (futMap.isEmpty())
             return null;
 
         if (!(msg instanceof GridCacheGroupIdMessage) && !(msg instanceof GridCacheIdMessage))
             return null;
 
-        assert futMap.size() == 1 : futMap.size();
-
-        RebalanceDownloadFuture rebFut = futMap.values().iterator().next();
+        // todo we don't care from where request is coming - we should lock partition for all updates! nodeId is redundant
+        RebalanceDownloadFuture currFut = futMap.get(nodeId);
 
         // todo how to get partition and group
-        return rebFut.switchFut(-1, -1);
+        return staleFuture(currFut) ? null : currFut.switchFut(-1, -1);
     }
 
     /**
@@ -922,7 +939,7 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
         @Override public boolean cancel() {
             cpLsnr.cancelAll();
 
-            return onCancelled();
+            return onDone(false, null, true);
         }
 
         /**
@@ -1058,7 +1075,9 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
 
         private class PageMemCleanupFuture extends GridFutureAdapter {
             private final Set<Long> parts;
+
             private final AtomicInteger evictedCntr;
+
             private final String name;
 
             public PageMemCleanupFuture(String regName, Set<Long> remainingParts) {
