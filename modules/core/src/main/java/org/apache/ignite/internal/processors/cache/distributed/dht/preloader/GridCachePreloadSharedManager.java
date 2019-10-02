@@ -362,7 +362,7 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
                         if (log.isDebugEnabled())
                             log.debug("Add destroy future for partition " + part.id());
 
-                        evictPartitionAsync(part).listen(fut -> {
+                        destroyPartitionAsync(part).listen(fut -> {
                             try {
                                 if (!fut.get())
                                     throw new IgniteCheckedException("Partition was not destroyed " +
@@ -463,38 +463,6 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
             IgniteFeatures.allNodesSupports(assigns.keySet(), IgniteFeatures.CACHE_PARTITION_FILE_REBALANCE);
     }
 
-//    /**
-//     * @param grp The corresponding to assignments cache group context.
-//     * @param topVer Topology versions to calculate assignmets at.
-//     * @return {@code True} if cache might be rebalanced by sending cache partition files.
-//     */
-//    public boolean rebalanceByPartitionSupported(CacheGroupContext grp, AffinityTopologyVersion topVer) {
-//        AffinityAssignment aff = grp.affinity().cachedAffinity(topVer);
-//
-//        // All of affinity nodes must support to new persistence rebalance feature.
-//        List<ClusterNode> affNodes =  aff.idealAssignment().stream()
-//            .flatMap(List::stream)
-//            .collect(Collectors.toList());
-//
-//
-//    }
-
-//    /**
-//     * @param grp The corresponding to assignments cache group context.
-//     * @param nodes The list of nodes to check ability of file transferring.
-//     * @return {@code True} if cache might be rebalanced by sending cache partition files.
-//     */
-//    private boolean rebalanceByPartitionSupported(CacheGroupContext grp, Collection<ClusterNode> nodes) {
-//
-//    }
-
-//    /**
-//     * @return The instantiated upload mamanger.
-//     */
-//    public PartitionUploadManager upload() {
-//        return uploadMgr;
-//    }
-
     /**
      * @param fut Exchange future.
      */
@@ -505,13 +473,59 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
         // switch partitions without exchange
     }
 
+    public void handleDemandMessage(UUID nodeId, GridPartitionBatchDemandMessage msg) {
+        if (log.isDebugEnabled())
+            log.debug("Handling demand request " + msg.rebalanceId());
+
+        if (msg.rebalanceId() < 0) // Demand node requested context cleanup.
+            return;
+
+        ClusterNode demanderNode = cctx.discovery().node(nodeId);
+
+        if (demanderNode == null) {
+            log.error("The demand message rejected (demander node left the cluster) ["
+                + ", nodeId=" + nodeId + ", topVer=" + msg.topologyVersion() + ']');
+
+            return;
+        }
+
+        if (msg.assignments() == null || msg.assignments().isEmpty()) {
+            log.error("The Demand message rejected. Node assignments cannot be empty ["
+                + "nodeId=" + nodeId + ", topVer=" + msg.topologyVersion() + ']');
+
+            return;
+        }
+
+        uploadMgr.onDemandMessage(nodeId, msg, PUBLIC_POOL);
+    }
+
+    /**
+     * Get partition restore future.
+     *
+     * @param msg Message.
+     * @return Partition restore future or {@code null} if no partition currently restored.
+     */
+    public IgniteInternalFuture partitionRestoreFuture(UUID nodeId, GridCacheMessage msg) {
+        if (futMap.isEmpty())
+            return null;
+
+        if (!(msg instanceof GridCacheGroupIdMessage) && !(msg instanceof GridCacheIdMessage))
+            return null;
+
+        // todo we don't care from where request is coming - we should lock partition for all updates! nodeId is redundant
+        RebalanceDownloadFuture currFut = futMap.get(nodeId);
+
+        // todo how to get partition and group
+        return staleFuture(currFut) ? null : currFut.switchFut(-1, -1);
+    }
+
     /**
      * Completely destroy partition without changing state in node2part map.
      *
      * @param part
      * @return
      */
-    private IgniteInternalFuture<Boolean> evictPartitionAsync(GridDhtLocalPartition part) {
+    private IgniteInternalFuture<Boolean> destroyPartitionAsync(GridDhtLocalPartition part) {
         GridFutureAdapter<Boolean> fut = new GridFutureAdapter<>();
 
         part.clearAsync();
@@ -552,7 +566,7 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
      * @throws IgniteCheckedException If file store for specified partition doesn't exists or partition file cannot be
      * moved.
      */
-    public IgniteInternalFuture<T2<Long, Long>> restorePartition(
+    private IgniteInternalFuture<T2<Long, Long>> restorePartition(
         int grpId,
         int partId,
         File fsPartFile,
@@ -619,52 +633,6 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
 //
 //        return task0.fut;
 //    }
-
-    public void handleDemandMessage(UUID nodeId, GridPartitionBatchDemandMessage msg) {
-        if (log.isDebugEnabled())
-            log.debug("Handling demand request " + msg.rebalanceId());
-
-        if (msg.rebalanceId() < 0) // Demand node requested context cleanup.
-            return;
-
-        ClusterNode demanderNode = cctx.discovery().node(nodeId);
-
-        if (demanderNode == null) {
-            log.error("The demand message rejected (demander node left the cluster) ["
-                + ", nodeId=" + nodeId + ", topVer=" + msg.topologyVersion() + ']');
-
-            return;
-        }
-
-        if (msg.assignments() == null || msg.assignments().isEmpty()) {
-            log.error("The Demand message rejected. Node assignments cannot be empty ["
-                + "nodeId=" + nodeId + ", topVer=" + msg.topologyVersion() + ']');
-
-            return;
-        }
-
-        uploadMgr.onDemandMessage(nodeId, msg, PUBLIC_POOL);
-    }
-
-    /**
-     * Get partition restore future.
-     *
-     * @param msg Message.
-     * @return Partition restore future or {@code null} if no partition currently restored.
-     */
-    public IgniteInternalFuture partitionRestoreFuture(UUID nodeId, GridCacheMessage msg) {
-        if (futMap.isEmpty())
-            return null;
-
-        if (!(msg instanceof GridCacheGroupIdMessage) && !(msg instanceof GridCacheIdMessage))
-            return null;
-
-        // todo we don't care from where request is coming - we should lock partition for all updates! nodeId is redundant
-        RebalanceDownloadFuture currFut = futMap.get(nodeId);
-
-        // todo how to get partition and group
-        return staleFuture(currFut) ? null : currFut.switchFut(-1, -1);
-    }
 
     /**
      * Get partition file path.
