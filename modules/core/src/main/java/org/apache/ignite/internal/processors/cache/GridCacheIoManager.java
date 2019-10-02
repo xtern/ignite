@@ -305,14 +305,7 @@ public class GridCacheIoManager extends GridCacheSharedManagerAdapter {
                 return;
             }
             else {
-                IgniteInternalFuture switchFut = null;
-                try {
-                    switchFut = cctx.preloader().partitionRestoreFuture(cacheMsg);
-                } catch (Throwable t) {
-                    t.printStackTrace();
-                }
-
-//                System.out.println("switchFut " + switchFut);
+                IgniteInternalFuture switchFut = cctx.filePreloader().partitionRestoreFuture(cacheMsg);
 
                 if (switchFut != null && !switchFut.isDone()) {
                     System.out.println(">xxx> lock updates " + cacheMsg.getClass().getSimpleName());

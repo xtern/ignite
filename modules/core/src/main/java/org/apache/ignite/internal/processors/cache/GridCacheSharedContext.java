@@ -732,7 +732,10 @@ public class GridCacheSharedContext<K, V> {
         return dbMgr;
     }
 
-    public GridCachePreloadSharedManager preloader() {
+    /**
+     * @return File rebalancing manager.
+     */
+    public GridCachePreloadSharedManager filePreloader() {
         return preloadMgr;
     }
 

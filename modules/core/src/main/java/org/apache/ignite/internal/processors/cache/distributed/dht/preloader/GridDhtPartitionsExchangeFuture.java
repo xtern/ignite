@@ -2275,7 +2275,7 @@ public class GridDhtPartitionsExchangeFuture extends GridDhtTopologyFutureAdapte
                     cctx.walState().changeLocalStatesOnExchangeDone(res, changedBaseline());
             }
 
-            cctx.preloader().onExchangeDone(this);
+            cctx.filePreloader().onExchangeDone(this);
         }
         catch (Throwable t) {
             // In any case, this exchange future has to be completed. The original error should be preserved if exists.

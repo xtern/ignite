@@ -496,7 +496,7 @@ public class GridCachePartitionExchangeManager<K, V> extends GridCacheSharedMana
         }
 
         // todo
-        if (cctx.preloader().persistenceRebalanceApplicable()) {
+        if (cctx.filePreloader().persistenceRebalanceApplicable()) {
             if (log.isInfoEnabled())
                 log.info("Starting batch demand messages handler.");
 
@@ -509,7 +509,7 @@ public class GridCachePartitionExchangeManager<K, V> extends GridCacheSharedMana
                             return;
 
                         try {
-                            cctx.preloader().handleDemandMessage(nodeId, (GridPartitionBatchDemandMessage)msg);
+                            cctx.filePreloader().handleDemandMessage(nodeId, (GridPartitionBatchDemandMessage)msg);
                         }
                         finally {
                             leaveBusy();
@@ -3361,8 +3361,8 @@ public class GridCachePartitionExchangeManager<K, V> extends GridCacheSharedMana
                         if (task instanceof ForceRebalanceExchangeTask)
                             forcedRebFut = ((ForceRebalanceExchangeTask)task).forcedRebalanceFuture();
 
-                        if (cctx.preloader() != null)
-                            loadPartsRun = cctx.preloader().addNodeAssignments(assignsMap, resVer, forcePreload, cnt);
+                        if (cctx.filePreloader() != null)
+                            loadPartsRun = cctx.filePreloader().addNodeAssignments(assignsMap, resVer, forcePreload, cnt);
 
                         for (Integer order : orderMap.descendingKeySet()) {
                             for (Integer grpId : orderMap.get(order)) {
@@ -3373,8 +3373,8 @@ public class GridCachePartitionExchangeManager<K, V> extends GridCacheSharedMana
                                 if (assigns != null)
                                     assignsCancelled |= assigns.cancelled();
 
-                                if (cctx.preloader() != null &&
-                                    cctx.preloader().rebalanceByPartitionSupported(grp, assigns))
+                                if (cctx.filePreloader() != null &&
+                                    cctx.filePreloader().rebalanceByPartitionSupported(grp, assigns))
                                     continue;
 
                                 Runnable cur = grp.preloader().addAssignments(assigns,

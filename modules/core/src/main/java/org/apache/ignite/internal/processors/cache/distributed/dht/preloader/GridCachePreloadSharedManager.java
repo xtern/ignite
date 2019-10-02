@@ -91,7 +91,7 @@ import static org.apache.ignite.internal.managers.communication.GridIoPolicy.SYS
 import static org.apache.ignite.internal.processors.cache.GridCacheUtils.UTILITY_CACHE_NAME;
 
 /** */
-public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter implements DbCheckpointListener {
+public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter {
     /** */
     public static final String REBALANCE_CP_REASON = "Rebalance has been scheduled [grps=%s]";
 
@@ -108,6 +108,9 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
     /** */
     private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock();
 
+    /** Checkpoint listener. */
+    private final CheckpointListener cpLsnr = new CheckpointListener();
+
     /** */
     private final ConcurrentMap<UUID, RebalanceDownloadFuture> futMap = new ConcurrentHashMap<>();
 
@@ -116,9 +119,6 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
 
     /** */
     private PartitionUploadManager uploadMgr;
-
-    /** */
-    private final ConcurrentLinkedQueue<Runnable> checkpointReqs = new ConcurrentLinkedQueue<>();
 
     /**
      * @param ktx Kernal context.
@@ -141,7 +141,7 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
      * @param fut The future to check.
      * @return <tt>true</tt> if future can be processed.
      */
-    static boolean staleFuture(GridFutureAdapter<?> fut) {
+    private boolean staleFuture(GridFutureAdapter<?> fut) {
         return fut == null || fut.isCancelled() || fut.isFailed() || fut.isDone();
     }
 
@@ -155,7 +155,7 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
     @Override protected void start0() throws IgniteCheckedException {
         uploadMgr.start0(cctx);
 
-        ((GridCacheDatabaseSharedManager)cctx.database()).addCheckpointListener(this);
+        ((GridCacheDatabaseSharedManager)cctx.database()).addCheckpointListener(cpLsnr);
     }
 
     /** {@inheritDoc} */
@@ -165,15 +165,12 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
         try {
             uploadMgr.stop0(cancel);
 
-            ((GridCacheDatabaseSharedManager)cctx.database()).removeCheckpointListener(this);
+            ((GridCacheDatabaseSharedManager)cctx.database()).removeCheckpointListener(cpLsnr);
 
             for (RebalanceDownloadFuture rebFut : futMap.values())
                 rebFut.cancel();
 
             futMap.clear();
-
-            // todo
-//            cctx.gridIO().removeChannelListener(rebalanceThreadTopic(), null);
         }
         finally {
             lock.writeLock().unlock();
@@ -194,7 +191,7 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
 
             CacheGroupContext grp = cctx.cache().cacheGroup(grpId);
 
-            if (cctx.preloader().partitionRebalanceRequired(grp, grpEntry.getValue())) {
+            if (cctx.filePreloader().partitionRebalanceRequired(grp, grpEntry.getValue())) {
                 int grpOrderNo = grp.config().getRebalanceOrder();
 
                 result.putIfAbsent(grpOrderNo, new HashMap<>());
@@ -241,12 +238,6 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
         if (!headFut0.isDone())
             headFut0.cancel();
 
-        // TODO Start eviction.
-        // Assume that the partition tag will be changed on eviction process finished,
-        // so we will have no additional writes (via writeInternal method) to current
-        // MOVING partition if checkpoint thread occures. So the current partition file
-        // can be easily replaced with the new one received from the socket.
-
         lock.writeLock().lock();
 
         try {
@@ -261,7 +252,7 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
             for (Map<ClusterNode, Map<Integer, Set<Integer>>> descNodeMap : nodeOrderAssignsMap.descendingMap().values()) {
                 for (Map.Entry<ClusterNode, Map<Integer, Set<Integer>>> assignEntry : descNodeMap.entrySet()) {
                     RebalanceDownloadFuture rebFut = new RebalanceDownloadFuture(cctx, log, assignEntry.getKey(),
-                        rebalanceId, assignEntry.getValue(), topVer);
+                        rebalanceId, assignEntry.getValue(), topVer, cpLsnr);
 
                     final Runnable nextRq0 = rq;
                     final RebalanceDownloadFuture rqFut0 = rqFut;
@@ -330,7 +321,7 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
 
                 final Map<Integer, Set<Integer>> assigns = rebFut.assigns;
 
-                IgniteInternalFuture<Void> switchFut = cctx.preloader().offerCheckpointTask(() -> {
+                IgniteInternalFuture<Void> switchFut = cpLsnr.schedule(() -> {
                         for (Map.Entry<Integer, Set<Integer>> e : assigns.entrySet()) {
                             CacheGroupContext grp = cctx.cache().cacheGroup(e.getKey());
 
@@ -633,7 +624,7 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
         // Reinitialize file store afte rmoving partition file.
         cctx.pageStore().ensure(grpId, partId);
 
-        return offerCheckpointTask(() -> {
+        return cpLsnr.schedule(() -> {
             // Save current update counter.
             PartitionUpdateCounter maxCntr = ctx.topology().localPartition(partId).dataStore().partUpdateCounter();
 
@@ -654,59 +645,22 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
         });
     }
 
-    // todo protected
-    public IgniteInternalFuture<Void> offerCheckpointTask(final Runnable task) {
-        return offerCheckpointTask(() -> {
-           task.run();
+//    // todo protected
+//    private IgniteInternalFuture<Void> offerCheckpointTask(final Runnable task) {
+//        return offerCheckpointTask(() -> {
+//           task.run();
+//
+//           return null;
+//        });
+//    }
 
-           return null;
-        });
-    }
-
-    private <R> IgniteInternalFuture<R> offerCheckpointTask(final Callable<R> task) {
-        class CheckpointTask implements Runnable {
-            final GridFutureAdapter<R> fut = new GridFutureAdapter<>();
-
-            final Callable<R> task;
-
-            CheckpointTask(Callable<R> task) {
-                this.task = task;
-            }
-
-            @Override public void run() {
-                try {
-                    fut.onDone(task.call());
-                }
-                catch (Exception e) {
-                    fut.onDone(e);
-                }
-            }
-        }
-
-        CheckpointTask task0 = new CheckpointTask(task);
-
-        checkpointReqs.offer(task0);
-
-        return task0.fut;
-    }
-
-    /** {@inheritDoc} */
-    @Override public void onMarkCheckpointBegin(Context ctx) {
-        Runnable r;
-
-        while ((r = checkpointReqs.poll()) != null)
-            r.run();
-    }
-
-    /** {@inheritDoc} */
-    @Override public void onCheckpointBegin(Context ctx) {
-
-    }
-
-    /** {@inheritDoc} */
-    @Override public void beforeCheckpointBegin(Context ctx) {
-
-    }
+//    private <R> IgniteInternalFuture<R> offerCheckpointTask(final Callable<R> task) {
+//        CheckpointTask<R> task0 = new CheckpointTask<>(task);
+//
+//        checkpointLsnr.schedule(task0);
+//
+//        return task0.fut;
+//    }
 
     public void handleDemandMessage(UUID nodeId, GridPartitionBatchDemandMessage msg) {
         if (log.isDebugEnabled())
@@ -718,14 +672,14 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
         ClusterNode demanderNode = cctx.discovery().node(nodeId);
 
         if (demanderNode == null) {
-            U.error(log, "The demand message rejected (demander node left the cluster) ["
+            log.error("The demand message rejected (demander node left the cluster) ["
                 + ", nodeId=" + nodeId + ", topVer=" + msg.topologyVersion() + ']');
 
             return;
         }
 
         if (msg.assignments() == null || msg.assignments().isEmpty()) {
-            U.error(log, "The Demand message rejected. Node assignments cannot be empty ["
+            log.error("The Demand message rejected. Node assignments cannot be empty ["
                 + "nodeId=" + nodeId + ", topVer=" + msg.topologyVersion() + ']');
 
             return;
@@ -734,39 +688,118 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
         uploadMgr.onDemandMessage(nodeId, msg, PUBLIC_POOL);
     }
 
-    public String storePath(int grpId, int partId) throws IgniteCheckedException {
-        return ((FilePageStore)((FilePageStoreManager)cctx.pageStore()).getStore(grpId, partId)).getFileAbsolutePath();
-    }
-
+    /**
+     * Get partition restore future.
+     *
+     * @param msg Message.
+     * @return Partition restore future or {@code null} if no partition currently restored.
+     */
     public IgniteInternalFuture partitionRestoreFuture(GridCacheMessage msg) {
         if (futMap.isEmpty())
             return null;
 
-        int grpId;
-
-        if (msg instanceof GridCacheGroupIdMessage)
-            grpId = ((GridCacheGroupIdMessage)msg).groupId();
-        else
-        if (msg instanceof GridCacheIdMessage) {
-            GridCacheIdMessage msg0 = ((GridCacheIdMessage)msg);
-
-            int cacheId = msg0.cacheId();
-
-            GridCacheContext ctx = cctx.cacheContext(cacheId);
-
-            if (ctx == null) {
-                grpId = cctx.cache().cache("default").context().groupId();
-            }
-            else
-                grpId = ctx.groupId();
-        } else
+        if (!(msg instanceof GridCacheGroupIdMessage) && !(msg instanceof GridCacheIdMessage))
             return null;
 
         assert futMap.size() == 1 : futMap.size();
 
         RebalanceDownloadFuture rebFut = futMap.values().iterator().next();
 
-        return rebFut.switchFut(grpId, msg.partition());
+        // todo how to get partition and group
+        return rebFut.switchFut(-1, -1);
+    }
+
+    /**
+     * Get partition file path.
+     *
+     * @param grpId Group ID.
+     * @param partId Partition ID.
+     * @return Absolute partition file path
+     * @throws IgniteCheckedException If cache or partition with the given ID was not created.
+     */
+    private String storePath(int grpId, int partId) throws IgniteCheckedException {
+        return ((FilePageStore)((FilePageStoreManager)cctx.pageStore()).getStore(grpId, partId)).getFileAbsolutePath();
+    }
+
+    /**
+     * @param fut Future.
+     * @return {@code True} if rebalance topology version changed by exchange thread or force
+     * reassing exchange occurs, see {@link RebalanceReassignExchangeTask} for details.
+     */
+    private boolean topologyChanged(RebalanceDownloadFuture fut) {
+        return !cctx.exchange().rebalanceTopologyVersion().equals(fut.topVer);
+                // todo || fut != rebalanceFut; // Same topology, but dummy exchange forced because of missing partitions.
+    }
+
+    /** */
+    private static class CheckpointListener implements DbCheckpointListener {
+        /** Queue. */
+        private final ConcurrentLinkedQueue<Runnable> queue = new ConcurrentLinkedQueue<>();
+
+        /** {@inheritDoc} */
+        @Override public void onMarkCheckpointBegin(Context ctx) {
+            Runnable r;
+
+            while ((r = queue.poll()) != null)
+                r.run();
+        }
+
+        /** {@inheritDoc} */
+        @Override public void onCheckpointBegin(Context ctx) {
+            // No-op.
+        }
+
+        /** {@inheritDoc} */
+        @Override public void beforeCheckpointBegin(Context ctx) {
+            // No-op.
+        }
+
+        /** */
+        public void cancelAll() {
+            queue.clear();
+        }
+
+        public IgniteInternalFuture<Void> schedule(final Runnable task) {
+            return schedule(() -> {
+                task.run();
+
+                return null;
+            });
+        }
+
+        public <R> IgniteInternalFuture<R> schedule(final Callable<R> task) {
+            return schedule(new CheckpointTask<>(task));
+        }
+
+        private <R> IgniteInternalFuture<R> schedule(CheckpointTask<R> task) {
+            queue.offer(task);
+
+            return task.fut;
+        }
+
+        /** */
+        private static class CheckpointTask<R> implements Runnable {
+            /** */
+            final GridFutureAdapter<R> fut = new GridFutureAdapter<>();
+
+            /** */
+            final Callable<R> task;
+
+            /** */
+            CheckpointTask(Callable<R> task) {
+                this.task = task;
+            }
+
+            /** {@inheritDoc} */
+            @Override public void run() {
+                try {
+                    fut.onDone(task.call());
+                }
+                catch (Exception e) {
+                    fut.onDone(e);
+                }
+            }
+        }
     }
 
     /** */
@@ -880,11 +913,14 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
         /** */
         private final Map<String, PageMemCleanupFuture> cleanupRegions = new HashMap<>();
 
+        /** */
+        private final CheckpointListener cpLsnr;
+
         /**
          * Default constructor for the dummy future.
          */
         public RebalanceDownloadFuture() {
-            this(null, null, null, 0, Collections.emptyMap(), null);
+            this(null, null, null, 0, Collections.emptyMap(), null, null);
 
             onDone();
         }
@@ -901,7 +937,8 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
             ClusterNode node,
             long rebalanceId,
             Map<Integer, Set<Integer>> assigns,
-            AffinityTopologyVersion topVer
+            AffinityTopologyVersion topVer,
+            CheckpointListener cpLsnr
         ) {
             this.cctx = cctx;
             this.log = log;
@@ -909,6 +946,7 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
             this.rebalanceId = rebalanceId;
             this.assigns = assigns;
             this.topVer = topVer;
+            this.cpLsnr = cpLsnr;
 
             remaining = new ConcurrentHashMap<>(assigns.size());
             remainingHist = new ConcurrentHashMap<>(assigns.size());
@@ -942,6 +980,8 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
 
         /** {@inheritDoc} */
         @Override public boolean cancel() {
+            cpLsnr.cancelAll();
+
             return onCancelled();
         }
 
