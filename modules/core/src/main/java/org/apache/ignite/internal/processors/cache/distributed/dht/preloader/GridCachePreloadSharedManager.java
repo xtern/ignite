@@ -21,11 +21,9 @@ import java.io.File;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.file.Files;
-import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.List;
 import java.util.Map;
 import java.util.NavigableMap;
 import java.util.Set;
@@ -54,10 +52,8 @@ import org.apache.ignite.internal.IgniteInternalFuture;
 import org.apache.ignite.internal.managers.communication.TransmissionHandler;
 import org.apache.ignite.internal.managers.communication.TransmissionMeta;
 import org.apache.ignite.internal.pagemem.PageIdUtils;
-import org.apache.ignite.internal.processors.affinity.AffinityAssignment;
 import org.apache.ignite.internal.processors.affinity.AffinityTopologyVersion;
 import org.apache.ignite.internal.processors.cache.CacheGroupContext;
-import org.apache.ignite.internal.processors.cache.GridCacheContext;
 import org.apache.ignite.internal.processors.cache.GridCacheGroupIdMessage;
 import org.apache.ignite.internal.processors.cache.GridCacheIdMessage;
 import org.apache.ignite.internal.processors.cache.GridCacheMessage;
@@ -191,12 +187,14 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
 
             CacheGroupContext grp = cctx.cache().cacheGroup(grpId);
 
-            if (cctx.filePreloader().partitionRebalanceRequired(grp, grpEntry.getValue())) {
+            GridDhtPreloaderAssignments assigns = grpEntry.getValue();
+
+            if (cctx.filePreloader().fileRebalanceRequired(grp, assigns)) {
                 int grpOrderNo = grp.config().getRebalanceOrder();
 
                 result.putIfAbsent(grpOrderNo, new HashMap<>());
 
-                for (Map.Entry<ClusterNode, GridDhtPartitionDemandMessage> grpAssigns : grpEntry.getValue().entrySet()) {
+                for (Map.Entry<ClusterNode, GridDhtPartitionDemandMessage> grpAssigns : assigns.entrySet()) {
                     ClusterNode node = grpAssigns.getKey();
 
                     result.get(grpOrderNo).putIfAbsent(node, new HashMap<>());
@@ -244,7 +242,8 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
             RebalanceDownloadFuture rqFut = null;
             Runnable rq = NO_OP;
 
-            U.log(log, "Prepare the chain to demand assignments: " + nodeOrderAssignsMap);
+            if (log.isInfoEnabled())
+                log.info("Prepare the chain to demand assignments: " + nodeOrderAssignsMap);
 
             // Clear the previous rebalance futures if exists.
             futMap.clear();
@@ -415,10 +414,14 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
     }
 
     /**
-     * @return {@code True} if rebalance via sending partitions files enabled. Default <tt>false</tt>.
+     * @param grp The corresponding to assignments cache group context.
+     * @param assigns A generated cache assignments in a cut of cache group [grpId, [nodeId, parts]].
+     * @return {@code True} if cache must be rebalanced by sending files.
      */
-    public boolean isPresistenceRebalanceEnabled() {
-        return presistenceRebalanceEnabled;
+    public boolean fileRebalanceRequired(CacheGroupContext grp, GridDhtPreloaderAssignments assigns) {
+        return FileRebalanceSupported(grp, assigns) &&
+            grp.config().getRebalanceDelay() != -1 &&
+            grp.config().getRebalanceMode() != CacheRebalanceMode.NONE;
     }
 
     /**
@@ -426,35 +429,10 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
      * @param assigns A generated cache assignments in a cut of cache group [grpId, [nodeId, parts]].
      * @return {@code True} if cache might be rebalanced by sending cache partition files.
      */
-    public boolean rebalanceByPartitionSupported(CacheGroupContext grp, GridDhtPreloaderAssignments assigns) {
+    public boolean FileRebalanceSupported(CacheGroupContext grp, GridDhtPreloaderAssignments assigns) {
         if (assigns == null || assigns.isEmpty())
             return false;
 
-        return rebalanceByPartitionSupported(grp, assigns.keySet());
-    }
-
-    /**
-     * @param grp The corresponding to assignments cache group context.
-     * @param topVer Topology versions to calculate assignmets at.
-     * @return {@code True} if cache might be rebalanced by sending cache partition files.
-     */
-    public boolean rebalanceByPartitionSupported(CacheGroupContext grp, AffinityTopologyVersion topVer) {
-        AffinityAssignment aff = grp.affinity().cachedAffinity(topVer);
-
-        // All of affinity nodes must support to new persistence rebalance feature.
-        List<ClusterNode> affNodes =  aff.idealAssignment().stream()
-            .flatMap(List::stream)
-            .collect(Collectors.toList());
-
-        return rebalanceByPartitionSupported(grp, affNodes);
-    }
-
-    /**
-     * @param grp The corresponding to assignments cache group context.
-     * @param nodes The list of nodes to check ability of file transferring.
-     * @return {@code True} if cache might be rebalanced by sending cache partition files.
-     */
-    private boolean rebalanceByPartitionSupported(CacheGroupContext grp, Collection<ClusterNode> nodes) {
         // Do not rebalance system cache with files as they are not exists.
         if (grp.groupId() == CU.cacheId(UTILITY_CACHE_NAME))
             return false;
@@ -464,87 +442,49 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
 
         return presistenceRebalanceEnabled &&
             grp.persistenceEnabled() &&
-            IgniteFeatures.allNodesSupports(nodes, IgniteFeatures.CACHE_PARTITION_FILE_REBALANCE);
+            IgniteFeatures.allNodesSupports(assigns.keySet(), IgniteFeatures.CACHE_PARTITION_FILE_REBALANCE);
     }
 
-    /**
-     * @param grp The corresponding to assignments cache group context.
-     * @param assigns A generated cache assignments in a cut of cache group [grpId, [nodeId, parts]].
-     * @return {@code True} if cache must be rebalanced by sending files.
-     */
-    public boolean partitionRebalanceRequired(CacheGroupContext grp, GridDhtPreloaderAssignments assigns) {
-        return rebalanceByPartitionSupported(grp, assigns) &&
-            grp.config().getRebalanceDelay() != -1 &&
-            grp.config().getRebalanceMode() != CacheRebalanceMode.NONE;
-    }
+//    /**
+//     * @param grp The corresponding to assignments cache group context.
+//     * @param topVer Topology versions to calculate assignmets at.
+//     * @return {@code True} if cache might be rebalanced by sending cache partition files.
+//     */
+//    public boolean rebalanceByPartitionSupported(CacheGroupContext grp, AffinityTopologyVersion topVer) {
+//        AffinityAssignment aff = grp.affinity().cachedAffinity(topVer);
+//
+//        // All of affinity nodes must support to new persistence rebalance feature.
+//        List<ClusterNode> affNodes =  aff.idealAssignment().stream()
+//            .flatMap(List::stream)
+//            .collect(Collectors.toList());
+//
+//
+//    }
 
-    /**
-     * @return The instantiated upload mamanger.
-     */
-    public PartitionUploadManager upload() {
-        return uploadMgr;
-    }
+//    /**
+//     * @param grp The corresponding to assignments cache group context.
+//     * @param nodes The list of nodes to check ability of file transferring.
+//     * @return {@code True} if cache might be rebalanced by sending cache partition files.
+//     */
+//    private boolean rebalanceByPartitionSupported(CacheGroupContext grp, Collection<ClusterNode> nodes) {
+//
+//    }
+
+//    /**
+//     * @return The instantiated upload mamanger.
+//     */
+//    public PartitionUploadManager upload() {
+//        return uploadMgr;
+//    }
 
     /**
      * @param fut Exchange future.
      */
     public void onExchangeDone(GridDhtPartitionsExchangeFuture fut) {
         // todo switch to read-only mode after first exchange
-        System.out.println(">xxx> process");
-    }
+        System.out.println(cctx.localNodeId() + " >xxx> process onExchangeDone");
 
-//    static AtomicLong rebalanceIdCntr = new AtomicLong(100);
-
-    public void triggerHistoricalRebalance(ClusterNode node, GridCacheContext cctx, int[] p, long[] lwm, long[] hwm, int partsCnt, long rebalanceId) {
-        GridDhtPartitionDemandMessage msg = new GridDhtPartitionDemandMessage(
-            cctx.topology().updateSequence(),
-            cctx.topology().readyTopologyVersion(),
-            cctx.groupId());
-
-        for (int i = 0; i < p.length; i++)
-            msg.partitions().addHistorical(p[i], lwm[i], hwm[i], partsCnt);
-
-        GridCompoundFuture<Boolean, Boolean> fut = new GridCompoundFuture<>(CU.boolReducer());
-
-        GridDhtPartitionExchangeId exchId = cctx.shared().exchange().lastFinishedFuture().exchangeId();
-
-        GridDhtPreloaderAssignments assigns = new GridDhtPreloaderAssignments(exchId, cctx.topology().readyTopologyVersion());
-
-        assigns.put(node, msg);
-
-        Runnable cur = cctx.group().preloader().addAssignments(assigns,
-            true,
-            rebalanceId,
-            null,
-            fut);
-
-        cur.run();
-    }
-
-    private void triggerHistoricalRebalance0(ClusterNode node, GridCacheContext cctx, int[] p, long[] lwm, long[] hwm, int partsCnt) {
-        GridDhtPartitionDemandMessage msg = new GridDhtPartitionDemandMessage(
-            cctx.topology().updateSequence(),
-            cctx.topology().readyTopologyVersion(),
-            cctx.groupId());
-
-        for (int i = 0; i < p.length; i++)
-            msg.partitions().addHistorical(p[i], lwm[i], hwm[i], partsCnt);
-
-        GridCompoundFuture<Boolean, Boolean> fut = new GridCompoundFuture<>(CU.boolReducer());
-
-        GridDhtPartitionExchangeId exchId = cctx.shared().exchange().lastFinishedFuture().exchangeId();
-
-        GridDhtPreloaderAssignments assigns = new GridDhtPreloaderAssignments(exchId, cctx.topology().readyTopologyVersion());
-
-        assigns.put(node, msg);
-
-        Runnable cur = cctx.group().preloader().addAssignments(assigns,
-            true,
-            headFut.rebalanceId,
-            null,
-            fut);
-
-        cur.run();
+        // switch partitions without exchange
     }
 
     /**
