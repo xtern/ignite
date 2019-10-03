@@ -188,7 +188,7 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
             if (!mainFut0.isDone())
                 mainFut0.cancel();
 
-            mainFut0 = mainFut = new FileRebalanceFuture(cpLsnr, assignsMap);
+            mainFut0 = mainFut = new FileRebalanceFuture(cpLsnr, assignsMap, topVer);
 
             NodeRebalanceDownloadFuture rqFut = null;
             Runnable rq = NO_OP;
@@ -275,67 +275,6 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
 
                 final Map<Integer, Set<Integer>> assigns = rebFut.assigns;
 
-                IgniteInternalFuture<Void> switchFut = cpLsnr.schedule(() -> {
-                    for (Map.Entry<Integer, Set<Integer>> e : assigns.entrySet()) {
-                        CacheGroupContext grp = cctx.cache().cacheGroup(e.getKey());
-
-                        for (Integer partId : e.getValue()) {
-                            GridDhtLocalPartition part = grp.topology().localPartition(partId);
-
-                            if (part.readOnly())
-                                continue;
-
-                            part.readOnly(true);
-                        }
-                    }
-                });
-
-                if (log.isDebugEnabled())
-                    log.debug("Await partition switch: " + assigns);
-
-                try {
-                    if (!switchFut.isDone())
-                        cctx.database().wakeupForCheckpoint(String.format(REBALANCE_CP_REASON, assigns.keySet()));
-
-                    switchFut.get();
-                }
-                catch (IgniteCheckedException e) {
-                    rebFut.onDone(e);
-
-                    // todo throw exception?
-                    return;
-                }
-
-                for (Map.Entry<Integer, Set<Integer>> e : assigns.entrySet()) {
-                    int grpId = e.getKey();
-
-                    CacheGroupContext gctx = cctx.cache().cacheGroup(grpId);
-
-                    for (Integer partId : e.getValue()) {
-                        GridDhtLocalPartition part = gctx.topology().localPartition(partId);
-
-                        if (log.isDebugEnabled())
-                            log.debug("Add destroy future for partition " + part.id());
-
-                        destroyPartitionAsync(part).listen(fut -> {
-                            try {
-                                if (!fut.get())
-                                    throw new IgniteCheckedException("Partition was not destroyed " +
-                                        "properly [grp=" + gctx.cacheOrGroupName() + ", p=" + part.id() + "]");
-
-                                boolean exists = gctx.shared().pageStore().exists(grpId, part.id());
-
-                                assert !exists : "File exists [grp=" + gctx.cacheOrGroupName() + ", p=" + part.id() + "]";
-
-                                rebFut.onPartitionEvicted(grpId, partId);
-                            }
-                            catch (IgniteCheckedException ex) {
-                                rebFut.onDone(ex);
-                            }
-                        });
-                    }
-                }
-
                 try {
                     if (rebFut.initReq.compareAndSet(false, true)) {
                         if (log.isDebugEnabled())
@@ -384,7 +323,7 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
 
             GridDhtPreloaderAssignments assigns = grpEntry.getValue();
 
-            if (cctx.filePreloader().fileRebalanceRequired(grp, assigns)) {
+            if (fileRebalanceRequired(grp, assigns)) {
                 int grpOrderNo = grp.config().getRebalanceOrder();
 
                 result.putIfAbsent(grpOrderNo, new HashMap<>());
@@ -469,7 +408,11 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
      */
     public void onExchangeDone(GridDhtPartitionsExchangeFuture fut) {
         // todo switch to read-only mode after first exchange
-        System.out.println(cctx.localNodeId() + " >xxx> process onExchangeDone");
+        //System.out.println(cctx.localNodeId() + " >xxx> process onExchangeDone");
+
+        if (!mainFut.isDone() && fut.topologyVersion().equals(mainFut.topVer)) {
+            mainFut.switchAllPartitions();
+        }
 
         // switch partitions without exchange
     }
@@ -808,7 +751,7 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
     }
 
     /** */
-    private static class FileRebalanceFuture extends GridFutureAdapter<Boolean> {
+    private class FileRebalanceFuture extends GridFutureAdapter<Boolean> {
         /** */
         private final Map<UUID, NodeRebalanceDownloadFuture> futMap = new HashMap<>();
 
@@ -819,10 +762,13 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
         private final Map<Integer, Set<Integer>> allPartsMap;
 
         /** */
+        private final AffinityTopologyVersion topVer;
+
+        /** */
         private final AtomicReference<GridFutureAdapter> switchFutRef = new AtomicReference<>();
 
         public FileRebalanceFuture() {
-            this(null, null);
+            this(null, null, null);
 
             onDone(true);
         }
@@ -830,9 +776,10 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
         /**
          * @param lsnr Checkpoint listener.
          */
-        public FileRebalanceFuture(CheckpointListener lsnr, Map<Integer, GridDhtPreloaderAssignments> assignsMap) {
+        public FileRebalanceFuture(CheckpointListener lsnr, Map<Integer, GridDhtPreloaderAssignments> assignsMap, AffinityTopologyVersion startVer) {
             cpLsnr = lsnr;
             allPartsMap = makeAllPartitionsMap(assignsMap);
+            topVer = startVer;
         }
 
         /**
@@ -918,6 +865,69 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
 
             if (futMap.isEmpty())
                 onDone(true);
+        }
+
+        public void switchAllPartitions() {
+//            IgniteInternalFuture<Void> switchFut = cpLsnr.schedule(() -> {
+                for (Map.Entry<Integer, Set<Integer>> e : allPartsMap.entrySet()) {
+                    CacheGroupContext grp = cctx.cache().cacheGroup(e.getKey());
+
+                    for (Integer partId : e.getValue()) {
+                        GridDhtLocalPartition part = grp.topology().localPartition(partId);
+
+                        if (part.readOnly())
+                            continue;
+
+                        part.readOnly(true);
+                    }
+                }
+//            });
+
+//            if (log.isDebugEnabled())
+//                log.debug("Await partition switch: " + assigns);
+//
+//            try {
+//                if (!switchFut.isDone())
+//                    cctx.database().wakeupForCheckpoint(String.format(REBALANCE_CP_REASON, assigns.keySet()));
+//
+//                switchFut.get();
+//            }
+//            catch (IgniteCheckedException e) {
+//                rebFut.onDone(e);
+//
+//                // todo throw exception?
+//                return;
+//            }
+
+            for (Map.Entry<Integer, Set<Integer>> e : assigns.entrySet()) {
+                int grpId = e.getKey();
+
+                CacheGroupContext gctx = cctx.cache().cacheGroup(grpId);
+
+                for (Integer partId : e.getValue()) {
+                    GridDhtLocalPartition part = gctx.topology().localPartition(partId);
+
+                    if (log.isDebugEnabled())
+                        log.debug("Add destroy future for partition " + part.id());
+
+                    destroyPartitionAsync(part).listen(fut -> {
+                        try {
+                            if (!fut.get())
+                                throw new IgniteCheckedException("Partition was not destroyed " +
+                                    "properly [grp=" + gctx.cacheOrGroupName() + ", p=" + part.id() + "]");
+
+                            boolean exists = gctx.shared().pageStore().exists(grpId, part.id());
+
+                            assert !exists : "File exists [grp=" + gctx.cacheOrGroupName() + ", p=" + part.id() + "]";
+
+                            rebFut.onPartitionEvicted(grpId, partId);
+                        }
+                        catch (IgniteCheckedException ex) {
+                            rebFut.onDone(ex);
+                        }
+                    });
+                }
+            }
         }
     }
 
