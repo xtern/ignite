@@ -513,8 +513,6 @@ public class WalStateManager extends GridCacheSharedManagerAdapter {
                     if (X.hasCause(future.error(), NodeStoppingException.class))
                         return;
 
-                    System.out.println(">> on cp finished");
-
                     for (Integer grpId0 : session0.disabledGrps) {
                         try {
                             cctx.database().walEnabled(grpId0, true, true);

@@ -496,14 +496,12 @@ public class GridCachePartitionExchangeManager<K, V> extends GridCacheSharedMana
         }
 
         // todo
-        if (cctx.filePreloader().persistenceRebalanceApplicable()) {
-            if (log.isInfoEnabled())
-                log.info("Starting batch demand messages handler.");
+        if (cctx.filePreloader() != null && cctx.filePreloader().persistenceRebalanceApplicable()) {
+            if (log.isDebugEnabled())
+                log.debug("Starting file rebalancing messages handler.");
 
             cctx.gridIO().addMessageListener(rebalanceThreadTopic(), new GridMessageListener() {
                 @Override public void onMessage(UUID nodeId, Object msg, byte plc) {
-                    System.out.println(">>> msg " + msg.getClass().getSimpleName());
-
                     if (msg instanceof GridPartitionBatchDemandMessage) {
                         if (!enterBusy())
                             return;
