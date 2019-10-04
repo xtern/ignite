@@ -773,6 +773,9 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
         private final Map<Integer, Set<Integer>> allPartsMap = new HashMap<>();
 
         /** */
+        private final Map<Integer, Set<UUID>> allGroupsMap = new ConcurrentHashMap<>();
+
+        /** */
 //        private final Map<Long, UUID> allPartsNodeMap = new HashMap<>();
 
         /** */
@@ -815,6 +818,8 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
                 int grpId = entry.getKey();
                 GridDhtPreloaderAssignments assigns = entry.getValue();
 
+                Set<UUID> nodes = allGroupsMap.computeIfAbsent(grpId, v -> new GridConcurrentHashSet<>());
+
                 CacheGroupContext grp = cctx.cache().cacheGroup(grpId);
 
                 if (!fileRebalanceRequired(grp, assigns))
@@ -829,6 +834,8 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
                 for (Map.Entry<ClusterNode, GridDhtPartitionDemandMessage> e : assigns.entrySet()) {
                     GridDhtPartitionDemandMessage msg = e.getValue();
                     ClusterNode node = e.getKey();
+
+                    nodes.add(node.id());
 
                     Set<Integer> parttitions = msg.partitions().fullSet();
 
@@ -906,6 +913,25 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
             }
 
             return false;
+        }
+
+        public void onNodeGroupDone(int grpId, UUID nodeId, boolean historical) {
+            Set<UUID> remainingNodes = allGroupsMap.get(grpId);
+
+            boolean rmvd = remainingNodes.remove(nodeId);
+
+            assert rmvd : "Duplicate remove " + nodeId;
+
+            if (remainingNodes.isEmpty() && allGroupsMap.remove(grpId) != null && !historical) {
+                CacheGroupContext gctx = cctx.cache().cacheGroup(grpId);
+
+                log.info("Rebalancing complete [group=" + gctx.cacheOrGroupName() + "]");
+
+                if (gctx.localWalEnabled())
+                    cctx.exchange().scheduleResendPartitions();
+                else
+                    cctx.walState().onGroupRebalanceFinished(gctx.groupId(), mainFut.topVer);
+            }
         }
 
         public synchronized void onNodeDone(NodeRebalanceDownloadFuture fut, Boolean res, Throwable err, boolean cancel) {
@@ -1187,15 +1213,7 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
             }
 
             if (!msg.partitions().hasHistorical()) {
-                if (grp.localWalEnabled()) {
-                    // todo finish rebalancing
-                    cctx.exchange().scheduleResendPartitions();
-                }
-                else {
-                    log.info("Complete rebalancing for group " + grp.cacheOrGroupName());
-
-                    cctx.walState().onGroupRebalanceFinished(grp.groupId(), mainFut.topVer);
-                }
+                mainFut.onNodeGroupDone(grpId, nodeId(), false);
 
 //                if (!grp.localWalEnabled())
 //                    cctx.walState().onGroupRebalanceFinished(grp.groupId(), mainFut.topVer);
@@ -1206,6 +1224,9 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
 //                                cctx.walState().onGroupRebalanceFinished(grp.groupId(), mainFut.topVer);
 //                        }
 //                    });
+
+                if (remaining.isEmpty())
+                    onDone(true);
 
                 return;
             }
@@ -1235,6 +1256,8 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
 
             forceFut.listen(c -> {
                 try {
+                    mainFut.onNodeGroupDone(grpId, nodeId(), true);
+
                     if (forceFut.get() && remaining.isEmpty())
                         onDone(true);
                     else
