@@ -1144,57 +1144,106 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
                     ", p=" + partId + ", remaining=" + parts.size() + "]");
             }
 
-            if (parts.isEmpty() && mainFut.unlockMessaging()) {
-                remaining.remove(grpId);
+            if (parts.isEmpty()) {
+                mainFut.unlockMessaging();
 
-                Set<HistoryDesc> parts0 = remainingHist.remove(grpId);
+                onGroupRestored(grpId);
+            }
+        }
 
-                CacheGroupContext grp = cctx.cache().cacheGroup(grpId);
+        // todo should be in a "global" future.
+        private void onGroupRestored(int grpId) {
+            if (remaining.remove(grpId) == null)
+                return;
 
-                GridDhtPartitionDemandMessage msg = new GridDhtPartitionDemandMessage(rebalanceId, topVer, grpId);
+            Set<HistoryDesc> parts0 = remainingHist.remove(grpId);
 
-                for (HistoryDesc desc : parts0) {
-                    if (log.isDebugEnabled()) {
-                        log.debug("Prepare to request historical rebalancing [p=" +
-                            desc.partId + ", from=" + desc.fromCntr + ", to=" + desc.toCntr + "]");
-                    }
+//            assert parts0 != null && parts0.size() == parts.size() : "hist=" + parts0 + ", actual=" + parts;
 
+            CacheGroupContext grp = cctx.cache().cacheGroup(grpId);
+
+            GridDhtPartitionDemandMessage msg = new GridDhtPartitionDemandMessage(rebalanceId, topVer, grpId);
+
+            for (HistoryDesc desc : parts0) {
+                assert desc.toCntr >= desc.fromCntr : "from=" + desc.fromCntr + ", to=" + desc.toCntr;
+
+                if (desc.fromCntr != desc.toCntr) {
                     msg.partitions().addHistorical(desc.partId, desc.fromCntr, desc.toCntr, parts0.size());
+
+                    continue;
                 }
 
-                GridDhtPartitionExchangeId exchId = cctx.exchange().lastFinishedFuture().exchangeId();
+                if (log.isDebugEnabled()) {
+                    log.debug("Prepare to request historical rebalancing [p=" +
+                        desc.partId + ", from=" + desc.fromCntr + ", to=" + desc.toCntr + "]");
+                }
 
-                GridDhtPreloaderAssignments assigns = new GridDhtPreloaderAssignments(exchId, topVer);
+                // No historical rebalancing required  -can own partition.
+                if (grp.localWalEnabled()) {
+                    boolean owned = grp.topology().own(grp.topology().localPartition(desc.partId));
 
-                assigns.put(node, msg);
-
-                GridCompoundFuture<Boolean, Boolean> forceFut = new GridCompoundFuture<>(CU.boolReducer());
-
-                Runnable cur = grp.preloader().addAssignments(assigns,
-                    true,
-                    rebalanceId,
-                    null,
-                    forceFut);
-
-                if (log.isDebugEnabled())
-                    log.debug("Triggering historical rebalancing [node=" + node.id() + ", group=" + grp.cacheOrGroupName() + "]");
-
-                cur.run();
-
-                forceFut.markInitialized();
-
-                forceFut.listen(c -> {
-                    try {
-                        if (forceFut.get() && remaining.isEmpty())
-                            onDone(true);
-                        else
-                            cancel();
-                    }
-                    catch (IgniteCheckedException e) {
-                        onDone(e);
-                    }
-                });
+                    assert owned : "part=" + desc.partId + ", grp=" + grp.cacheOrGroupName();
+                }
             }
+
+            if (!msg.partitions().hasHistorical()) {
+                if (grp.localWalEnabled()) {
+                    // todo finish rebalancing
+                    cctx.exchange().scheduleResendPartitions();
+                }
+                else {
+                    log.info("Complete rebalancing for group " + grp.cacheOrGroupName());
+
+                    cctx.walState().onGroupRebalanceFinished(grp.groupId(), mainFut.topVer);
+                }
+
+//                if (!grp.localWalEnabled())
+//                    cctx.walState().onGroupRebalanceFinished(grp.groupId(), mainFut.topVer);
+//
+//                    fut.listen(new IgniteInClosureX<IgniteInternalFuture<Boolean>>() {
+//                        @Override public void applyx(IgniteInternalFuture<Boolean> future) throws IgniteCheckedException {
+//                            if (future.get())
+//                                cctx.walState().onGroupRebalanceFinished(grp.groupId(), mainFut.topVer);
+//                        }
+//                    });
+
+                return;
+            }
+
+
+
+            GridDhtPartitionExchangeId exchId = cctx.exchange().lastFinishedFuture().exchangeId();
+
+            GridDhtPreloaderAssignments assigns = new GridDhtPreloaderAssignments(exchId, topVer);
+
+            assigns.put(node, msg);
+
+            GridCompoundFuture<Boolean, Boolean> forceFut = new GridCompoundFuture<>(CU.boolReducer());
+
+            Runnable cur = grp.preloader().addAssignments(assigns,
+                true,
+                rebalanceId,
+                null,
+                forceFut);
+
+            if (log.isDebugEnabled())
+                log.debug("Triggering historical rebalancing [node=" + node.id() + ", group=" + grp.cacheOrGroupName() + "]");
+
+            cur.run();
+
+            forceFut.markInitialized();
+
+            forceFut.listen(c -> {
+                try {
+                    if (forceFut.get() && remaining.isEmpty())
+                        onDone(true);
+                    else
+                        cancel();
+                }
+                catch (IgniteCheckedException e) {
+                    onDone(e);
+                }
+            });
         }
 
         public boolean onDone(@Nullable Boolean res, @Nullable Throwable err, boolean cancel) {
