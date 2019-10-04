@@ -66,7 +66,6 @@ import org.apache.ignite.internal.processors.cache.GridCacheContext;
 import org.apache.ignite.internal.processors.cache.GridCacheEntryEx;
 import org.apache.ignite.internal.processors.cache.GridCacheMvccEntryInfo;
 import org.apache.ignite.internal.processors.cache.GridCacheTtlManager;
-import org.apache.ignite.internal.processors.cache.IgniteCacheOffheapManager.CacheDataStore;
 import org.apache.ignite.internal.processors.cache.IgniteCacheOffheapManagerImpl;
 import org.apache.ignite.internal.processors.cache.KeyCacheObject;
 import org.apache.ignite.internal.processors.cache.PartitionUpdateCounter;
@@ -2050,28 +2049,6 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
         @Override public boolean init() {
             try {
                 return init0(true) != null;
-            }
-            catch (IgniteCheckedException e) {
-                throw new IgniteException(e);
-            }
-        }
-
-        /** {@inheritDoc} */
-        @Override public void reinit() {
-            try {
-                if (init.compareAndSet(true, false)) {
-                    delegate = null;
-
-                    init.set(false);
-
-                    // TODO add test when the storage is not inited and the current method called
-                    CacheDataStore delegate0 = init0(false);
-
-                    assert delegate0 != null;
-
-                    // todo initialize properly or don't remove them
-                    partDataStores.put(partId, this);
-                }
             }
             catch (IgniteCheckedException e) {
                 throw new IgniteException(e);

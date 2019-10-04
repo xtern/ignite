@@ -718,13 +718,13 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
                     return;
                 }
 
-                IgniteInternalFuture destroyFut = fut.evictionFuture(grpId);
+                IgniteInternalFuture evictFut = fut.evictionFuture(grpId);
 
                 try {
                     // todo should lock only on checkpoint
                     mainFut.lockMessaging(nodeId, grpId, partId);
 
-                    IgniteInternalFuture<T2<Long, Long>> switchFut = restorePartition(grpId, partId, file, destroyFut);
+                    IgniteInternalFuture<T2<Long, Long>> switchFut = restorePartition(grpId, partId, file, evictFut);
 
                     switchFut.listen( f -> {
                         try {
@@ -1227,24 +1227,6 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
 
             return r;
         }
-
-        public void onPartitionEvicted(int grpId, int partId) throws IgniteCheckedException {
-//            CacheGroupContext gctx = cctx.cache().cacheGroup(grpId);
-//
-//            String regName = gctx.dataRegion().config().getName();
-//
-//            PageMemCleanupFuture fut = cleanupRegions.get(regName);
-//
-//            fut.onPartitionEvicted();
-        }
-
-//        public void switchFut(int grpId, int partId, GridFutureAdapter waitFUt) {
-//            switchFut.compareAndSet(null, waitFUt);
-//        }
-//
-//        public IgniteInternalFuture switchFut(int grpId, int partId) {
-//            return switchFut.get();
-//        }
 
         public IgniteInternalFuture evictionFuture(int grpId) {
             IgniteInternalFuture fut = mainFut.evictionFuture(grpId);
