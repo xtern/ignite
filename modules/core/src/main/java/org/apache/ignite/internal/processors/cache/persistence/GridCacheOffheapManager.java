@@ -1015,14 +1015,17 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
             int p = partCntrs.partitionAt(i);
             long initCntr = partCntrs.initialUpdateCounterAt(i);
 
+            //
+            long pmeTs = ctx.exchange().lastFinishedFuture().firstEvent().timestamp();
+
             FileWALPointer startPtr = (FileWALPointer)database.checkpointHistory().searchPartitionCounter(
-                grp.groupId(), p, initCntr -1);
+                grp.groupId(), p, initCntr, pmeTs);
 
-            if (startPtr == null) {
-                log.warning("CP hist not found for " + (initCntr - 1) + " search for " + initCntr + " p=" + p);
-
-                startPtr = (FileWALPointer)database.checkpointHistory().searchPartitionCounter(grp.groupId(), p, initCntr);
-            }
+//            if (startPtr == null) {
+//                log.warning("CP hist not found for " + (initCntr - 1) + " search for " + initCntr + " p=" + p);
+//
+//                startPtr = (FileWALPointer)database.checkpointHistory().searchPartitionCounter(grp.groupId(), p, initCntr);
+//            }
 
             if (startPtr == null)
                 throw new IgniteCheckedException("Could not find start pointer for partition [part=" + p + ", partCntrSince=" + initCntr + "]");
