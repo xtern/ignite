@@ -21,6 +21,7 @@ import java.io.File;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.file.Files;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -331,7 +332,7 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
 
             GridDhtPreloaderAssignments assigns = grpEntry.getValue();
 
-            if (fileRebalanceRequired(grp, assigns)) {
+            if (fileRebalanceRequired(grp, assigns.keySet())) {
                 int grpOrderNo = grp.config().getRebalanceOrder();
 
                 result.putIfAbsent(grpOrderNo, new HashMap<>());
@@ -364,22 +365,22 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
 
     /**
      * @param grp The corresponding to assignments cache group context.
-     * @param assigns A generated cache assignments in a cut of cache group [grpId, [nodeId, parts]].
+     * @param nodes Assignment nodes for specified cache group.
      * @return {@code True} if cache must be rebalanced by sending files.
      */
-    public boolean fileRebalanceRequired(CacheGroupContext grp, GridDhtPreloaderAssignments assigns) {
-        return FileRebalanceSupported(grp, assigns) &&
+    public boolean fileRebalanceRequired(CacheGroupContext grp, Collection<ClusterNode> nodes) {
+        return FileRebalanceSupported(grp, nodes) &&
             grp.config().getRebalanceDelay() != -1 &&
             grp.config().getRebalanceMode() != CacheRebalanceMode.NONE;
     }
 
     /**
      * @param grp The corresponding to assignments cache group context.
-     * @param assigns A generated cache assignments in a cut of cache group [grpId, [nodeId, parts]].
+     * @param nodes Assignment nodes for specified cache group.
      * @return {@code True} if cache might be rebalanced by sending cache partition files.
      */
-    public boolean FileRebalanceSupported(CacheGroupContext grp, GridDhtPreloaderAssignments assigns) {
-        if (assigns == null || assigns.isEmpty())
+    public boolean FileRebalanceSupported(CacheGroupContext grp, Collection<ClusterNode> nodes) {
+        if (nodes == null || nodes.isEmpty())
             return false;
 
         // Do not rebalance system cache with files as they are not exists.
@@ -408,7 +409,7 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
 
         return presistenceRebalanceEnabled &&
             grp.persistenceEnabled() &&
-            IgniteFeatures.allNodesSupports(assigns.keySet(), IgniteFeatures.CACHE_PARTITION_FILE_REBALANCE);
+            IgniteFeatures.allNodesSupports(nodes, IgniteFeatures.CACHE_PARTITION_FILE_REBALANCE);
     }
 
     /**
@@ -586,6 +587,11 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
     private boolean topologyChanged(FileRebalanceSingleNodeFuture fut) {
         return !cctx.exchange().rebalanceTopologyVersion().equals(fut.topVer);
         // todo || fut != rebalanceFut; // Same topology, but dummy exchange forced because of missing partitions.
+    }
+
+    public void reserveHistoryForFilePreloading(GridDhtPartitionExchangeId exchId,
+        GridDhtPartitionsExchangeFuture exchangeFut) {
+
     }
 
     /** */
@@ -767,7 +773,7 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
         private final AtomicReference<GridFutureAdapter> switchFutRef = new AtomicReference<>();
 
         /** */
-        private final Map<String, PageMemCleanupFuture> cleanupRegions = new HashMap<>();
+        private final Map<String, PageMemCleanupTask> cleanupRegions = new HashMap<>();
 
         public FileRebalanceFuture() {
             this(null, null, null);
@@ -804,7 +810,7 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
 
                 CacheGroupContext grp = cctx.cache().cacheGroup(grpId);
 
-                if (!fileRebalanceRequired(grp, assigns))
+                if (!fileRebalanceRequired(grp, assigns.keySet()))
                     continue;
 
                 String regName = cctx.cache().cacheGroup(grpId).dataRegion().config().getName();
@@ -830,7 +836,7 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
             }
 
             for (Map.Entry<String, Set<Long>> e : regionToParts.entrySet())
-                cleanupRegions.put(e.getKey(), new PageMemCleanupFuture(e.getKey(), e.getValue()));
+                cleanupRegions.put(e.getKey(), new PageMemCleanupTask(e.getKey(), e.getValue()));
         }
 
         public synchronized void add(int order, FileRebalanceSingleNodeFuture fut) {
@@ -967,7 +973,7 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
 
             String regName = gctx.dataRegion().config().getName();
 
-            PageMemCleanupFuture pageMemFut = cleanupRegions.get(regName);
+            PageMemCleanupTask pageMemFut = cleanupRegions.get(regName);
 
             pageMemFut.cleanupMemory();
         }
@@ -978,14 +984,14 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
             return cleanupRegions.get(regName);
         }
 
-        private class PageMemCleanupFuture extends GridFutureAdapter {
+        private class PageMemCleanupTask extends GridFutureAdapter {
             private final Set<Long> parts;
 
             private final AtomicInteger evictedCntr;
 
             private final String name;
 
-            public PageMemCleanupFuture(String regName, Set<Long> remainingParts) {
+            public PageMemCleanupTask(String regName, Set<Long> remainingParts) {
                 name = regName;
                 parts = remainingParts;
                 evictedCntr = new AtomicInteger();

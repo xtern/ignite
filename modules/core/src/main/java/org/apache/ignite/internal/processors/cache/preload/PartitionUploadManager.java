@@ -157,31 +157,35 @@ public class PartitionUploadManager {
             // Need to start new partition upload routine.
 //            ch = cctx.gridIO().channelToTopic(nodeId, rebalanceThreadTopic(), plc);
 
-            for (Map.Entry<Integer, Set<Integer>> e : uploadFut.getAssigns().entrySet()) {
-                int grpId = e.getKey();
+            // History should be reserved on exchange done.
 
-                CacheGroupContext grp = cctx.cache().cacheGroup(grpId);
-
-                // todo handle exceptions somehow
-                for (int partId : e.getValue()) {
-                    GridDhtLocalPartition part = grp.topology().localPartition(partId);
-
-                    boolean reserved = part.reserve();
-
-                    assert reserved : part.id();
-
-                    long updateCntr = part.updateCounter();
-
-                    boolean histReserved = cctx.database().reserveHistoryForPreloading(grpId, partId, updateCntr);
-
-                    assert histReserved : part.id();
-
-                    if (log.isDebugEnabled())
-                        log.debug("Reserved history for preloading [grp=" + grp.cacheOrGroupName() + ", part=" + partId + ", cntr=" + updateCntr);
-                }
-            }
+//            for (Map.Entry<Integer, Set<Integer>> e : uploadFut.getAssigns().entrySet()) {
+//                int grpId = e.getKey();
+//
+//                CacheGroupContext grp = cctx.cache().cacheGroup(grpId);
+//
+//                // todo handle exceptions somehow
+//                // todo should we reserve partition when sending
+////                for (int partId : e.getValue()) {
+////                    GridDhtLocalPartition part = grp.topology().localPartition(partId);
+////
+////                    boolean reserved = part.reserve();
+////
+////                    assert reserved : part.id();
+////
+//////                    long updateCntr = part.updateCounter();
+////
+//////                    boolean histReserved = cctx.database().reserveHistoryForPreloading(grpId, partId, updateCntr);
+//////
+//////                    assert histReserved : part.id();
+//////
+//////                    if (log.isDebugEnabled())
+//////                        log.debug("Reserved history for preloading [grp=" + grp.cacheOrGroupName() + ", part=" + partId + ", cntr=" + updateCntr);
+////                }
+//            }
 
             // todo - exec trnasmission on supplier thread!
+            // History should be reserved on exchange done.
             sendPartitions(uploadFut, nodeId).get();
 
 //            backupMgr.backup(uploadFut.rebalanceId,
