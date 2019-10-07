@@ -1849,7 +1849,7 @@ public class GridCacheDatabaseSharedManager extends IgniteCacheDatabaseSharedMan
 
     /** {@inheritDoc} */
     @Override public boolean reserveHistoryForPreloading(int grpId, int partId, long cntr) {
-        CheckpointEntry cpEntry = cpHistory.searchCheckpointEntry(grpId, partId, cntr, Long.MIN_VALUE);
+        CheckpointEntry cpEntry = cpHistory.searchCheckpointEntry(grpId, partId, cntr, Long.MAX_VALUE);
 
         if (cpEntry == null)
             return false;
@@ -1865,6 +1865,12 @@ public class GridCacheDatabaseSharedManager extends IgniteCacheDatabaseSharedMan
             reservedForPreloading.put(new T2<>(grpId, partId), new T2<>(cntr, ptr));
 
         return reserved;
+    }
+
+    public T2<Long, WALPointer> reservedForPreloading(int grpId, int partId) {
+        assert reservedForPreloading != null;
+
+        return reservedForPreloading.get(new T2<>(grpId, partId));
     }
 
     /** {@inheritDoc} */

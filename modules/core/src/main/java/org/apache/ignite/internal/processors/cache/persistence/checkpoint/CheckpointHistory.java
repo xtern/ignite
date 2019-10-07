@@ -338,19 +338,11 @@ public class CheckpointHistory {
      * @param grpId Cache group ID.
      * @param part Partition ID.
      * @param partCntrSince Partition counter or {@code null} to search for minimal counter.
+     * @param tsSince
      * @return Checkpoint entry or {@code null} if failed to search.
      */
-    @Nullable public WALPointer searchPartitionCounter(int grpId, int part, long partCntrSince) {
-        CheckpointEntry entry = searchCheckpointEntry(grpId, part, partCntrSince, Long.MIN_VALUE);
-
-        if (entry == null)
-            return null;
-
-        return entry.checkpointMark();
-    }
-
-    @Nullable public WALPointer searchPartitionCounter(int grpId, int part, long partCntrSince, long timestampSince) {
-        CheckpointEntry entry = searchCheckpointEntry(grpId, part, partCntrSince, timestampSince);
+    @Nullable public WALPointer searchPartitionCounter(int grpId, int part, long partCntrSince, long tsSince) {
+        CheckpointEntry entry = searchCheckpointEntry(grpId, part, partCntrSince, tsSince);
 
         if (entry == null)
             return null;
@@ -373,7 +365,7 @@ public class CheckpointHistory {
 
                 Long foundCntr = entry.partitionCounter(cctx, grpId, part);
 
-                if (foundCntr != null && foundCntr <= partCntrSince && (tsSince == Long.MIN_VALUE || tsSince >= entry.timestamp())) {
+                if (foundCntr != null && foundCntr <= partCntrSince && entry.timestamp() <= tsSince) {
                     if (log.isInfoEnabled())
                         log.info(">xxx> searchCheckpointEntry [p=" + part + ", partCntrSince=" + partCntrSince + ", found=" + foundCntr);
 

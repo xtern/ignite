@@ -66,6 +66,7 @@ import org.apache.ignite.internal.processors.cache.GridCacheContext;
 import org.apache.ignite.internal.processors.cache.GridCacheEntryEx;
 import org.apache.ignite.internal.processors.cache.GridCacheMvccEntryInfo;
 import org.apache.ignite.internal.processors.cache.GridCacheTtlManager;
+import org.apache.ignite.internal.processors.cache.IgniteCacheOffheapManager.CacheDataStore;
 import org.apache.ignite.internal.processors.cache.IgniteCacheOffheapManagerImpl;
 import org.apache.ignite.internal.processors.cache.KeyCacheObject;
 import org.apache.ignite.internal.processors.cache.PartitionUpdateCounter;
@@ -1011,21 +1012,21 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
 
         FileWALPointer minPtr = null;
 
+        // todo Use reserved counters somehow (see Map reservedForPreloading)
+        long lastExchangeIs = ctx.exchange().lastFinishedFuture().firstEvent().timestamp();
+
         for (int i = 0; i < partCntrs.size(); i++) {
             int p = partCntrs.partitionAt(i);
             long initCntr = partCntrs.initialUpdateCounterAt(i);
 
-            //
-            long pmeTs = ctx.exchange().lastFinishedFuture().firstEvent().timestamp();
+            T2<Long, WALPointer> reservedCntr = database.reservedForPreloading(grp.groupId(), p);
 
-            FileWALPointer startPtr = (FileWALPointer)database.checkpointHistory().searchPartitionCounter(
-                grp.groupId(), p, initCntr, pmeTs);
+            assert reservedCntr.get1() <= initCntr : "reserved=" + reservedCntr.get1() + ", search=" + initCntr;
 
-//            if (startPtr == null) {
-//                log.warning("CP hist not found for " + (initCntr - 1) + " search for " + initCntr + " p=" + p);
-//
-//                startPtr = (FileWALPointer)database.checkpointHistory().searchPartitionCounter(grp.groupId(), p, initCntr);
-//            }
+            FileWALPointer startPtr = (FileWALPointer)reservedCntr.get2();
+
+//                database.checkpointHistory().searchPartitionCounter(
+//                grp.groupId(), p, initCntr, lastExchangeIs);
 
             if (startPtr == null)
                 throw new IgniteCheckedException("Could not find start pointer for partition [part=" + p + ", partCntrSince=" + initCntr + "]");
@@ -1692,22 +1693,15 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
         private CacheDataStore init0(boolean checkExists) throws IgniteCheckedException {
             CacheDataStoreImpl delegate0 = delegate;
 
-//            System.out.println("init0 " + (delegate0 != null));
-
             if (delegate0 != null)
                 return delegate0;
 
             if (checkExists) {
-                if (!exists) {
-//                    System.out.println("not exists - exit");
-
+                if (!exists)
                     return null;
-                }
             }
 
             if (init.compareAndSet(false, true)) {
-                System.out.println("initialize: " + partId);
-
                 IgniteCacheDatabaseSharedManager dbMgr = ctx.database();
 
                 dbMgr.checkpointReadLock();
