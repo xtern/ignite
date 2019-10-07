@@ -246,7 +246,8 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
 
             cctx.kernalContext().io().addTransmissionHandler(rebalanceThreadTopic(), hndr);
 
-            mainFut.enableReadonlyMode();
+            // todo should be invoked in separated thread
+            mainFut.enableReadOnlyMode();
 
             mainFut0.listen(new IgniteInClosureX<IgniteInternalFuture<Boolean>>() {
                 @Override public void applyx(IgniteInternalFuture<Boolean> fut0) throws IgniteCheckedException {
@@ -929,21 +930,46 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
 
         /**
          * Switch all rebalanced partitions to read-only mode.
-         *
-         * todo Ensure that it's working properly without checkpoint lock.
          */
-        private void enableReadonlyMode() {
+        private void enableReadOnlyMode() {
+            IgniteInternalFuture<Void> switchFut = cpLsnr.schedule(() -> {
+                for (Map.Entry<Integer, Set<Integer>> e : allPartsMap.entrySet()) {
+                    CacheGroupContext grp = cctx.cache().cacheGroup(e.getKey());
+
+                    for (Integer partId : e.getValue()) {
+                        GridDhtLocalPartition part = grp.topology().localPartition(partId);
+
+                        if (part.readOnly())
+                            continue;
+
+                        part.readOnly(true);
+                    }
+                }
+            });
+
+            if (log.isDebugEnabled())
+                log.debug("Await partition switch: " + allPartsMap);
+
+            try {
+                if (!switchFut.isDone())
+                    cctx.database().wakeupForCheckpoint(String.format(REBALANCE_CP_REASON, allPartsMap.keySet()));
+
+                switchFut.get();
+            }
+            catch (IgniteCheckedException e) {
+                onDone(e);
+
+                // todo throw exception?
+                return;
+            }
+
             for (Map.Entry<Integer, Set<Integer>> e : allPartsMap.entrySet()) {
                 int grpId = e.getKey();
+
                 CacheGroupContext gctx = cctx.cache().cacheGroup(grpId);
 
                 for (Integer partId : e.getValue()) {
                     GridDhtLocalPartition part = gctx.topology().localPartition(partId);
-
-                    if (part.readOnly())
-                        continue;
-
-                    part.readOnly(true);
 
                     if (log.isDebugEnabled())
                         log.debug("Add destroy future for partition " + part.id());
