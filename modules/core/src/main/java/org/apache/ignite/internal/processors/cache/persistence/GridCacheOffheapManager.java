@@ -66,7 +66,6 @@ import org.apache.ignite.internal.processors.cache.GridCacheContext;
 import org.apache.ignite.internal.processors.cache.GridCacheEntryEx;
 import org.apache.ignite.internal.processors.cache.GridCacheMvccEntryInfo;
 import org.apache.ignite.internal.processors.cache.GridCacheTtlManager;
-import org.apache.ignite.internal.processors.cache.IgniteCacheOffheapManager.CacheDataStore;
 import org.apache.ignite.internal.processors.cache.IgniteCacheOffheapManagerImpl;
 import org.apache.ignite.internal.processors.cache.KeyCacheObject;
 import org.apache.ignite.internal.processors.cache.PartitionUpdateCounter;
@@ -1012,21 +1011,13 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
 
         FileWALPointer minPtr = null;
 
-        // todo Use reserved counters somehow (see Map reservedForPreloading)
-        long lastExchangeIs = ctx.exchange().lastFinishedFuture().firstEvent().timestamp();
-
         for (int i = 0; i < partCntrs.size(); i++) {
             int p = partCntrs.partitionAt(i);
             long initCntr = partCntrs.initialUpdateCounterAt(i);
 
-            T2<Long, WALPointer> reservedCntr = database.reservedForPreloading(grp.groupId(), p);
-
-            assert reservedCntr.get1() <= initCntr : "reserved=" + reservedCntr.get1() + ", search=" + initCntr;
-
-            FileWALPointer startPtr = (FileWALPointer)reservedCntr.get2();
-
-//                database.checkpointHistory().searchPartitionCounter(
-//                grp.groupId(), p, initCntr, lastExchangeIs);
+            // todo For file rebalancing we starting searching from reserved pointer.
+            //      For regular historical rebalancing it may be more eefective to search pointer in checkpoint hostory
+            FileWALPointer startPtr = database.reservedWALPointer(grp.groupId(), p, initCntr);
 
             if (startPtr == null)
                 throw new IgniteCheckedException("Could not find start pointer for partition [part=" + p + ", partCntrSince=" + initCntr + "]");

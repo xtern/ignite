@@ -185,7 +185,7 @@ public class CheckpointHistory {
                 break;
 
             if (cctx.wal().reserved(cpEntry.checkpointMark())) {
-                U.dumpStack(log, "Could not clear historyMap due to WAL reservation on cp: " + cpEntry +
+                U.warn(log, "Could not clear historyMap due to WAL reservation on cp: " + cpEntry +
                     ", history map size is " + histMap.size());
 
                 break;
@@ -338,11 +338,10 @@ public class CheckpointHistory {
      * @param grpId Cache group ID.
      * @param part Partition ID.
      * @param partCntrSince Partition counter or {@code null} to search for minimal counter.
-     * @param tsSince
      * @return Checkpoint entry or {@code null} if failed to search.
      */
-    @Nullable public WALPointer searchPartitionCounter(int grpId, int part, long partCntrSince, long tsSince) {
-        CheckpointEntry entry = searchCheckpointEntry(grpId, part, partCntrSince, tsSince);
+    @Nullable public WALPointer searchPartitionCounter(int grpId, int part, long partCntrSince) {
+        CheckpointEntry entry = searchCheckpointEntry(grpId, part, partCntrSince);
 
         if (entry == null)
             return null;
@@ -358,19 +357,15 @@ public class CheckpointHistory {
      * @param partCntrSince Partition counter or {@code null} to search for minimal counter.
      * @return Checkpoint entry or {@code null} if failed to search.
      */
-    @Nullable public CheckpointEntry searchCheckpointEntry(int grpId, int part, long partCntrSince, long tsSince) {
+    @Nullable public CheckpointEntry searchCheckpointEntry(int grpId, int part, long partCntrSince) {
         for (Long cpTs : checkpoints(true)) {
             try {
                 CheckpointEntry entry = entry(cpTs);
 
                 Long foundCntr = entry.partitionCounter(cctx, grpId, part);
 
-                if (foundCntr != null && foundCntr <= partCntrSince && entry.timestamp() <= tsSince) {
-                    if (log.isInfoEnabled())
-                        log.info(">xxx> searchCheckpointEntry [p=" + part + ", partCntrSince=" + partCntrSince + ", found=" + foundCntr);
-
+                if (foundCntr != null && foundCntr <= partCntrSince)
                     return entry;
-                }
             }
             catch (IgniteCheckedException ignore) {
                 break;
