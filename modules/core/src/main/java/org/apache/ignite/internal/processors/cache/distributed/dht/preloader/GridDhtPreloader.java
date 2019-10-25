@@ -248,11 +248,14 @@ public class GridDhtPreloader extends GridCachePreloaderAdapter {
                 if (grp.persistenceEnabled() && exchFut != null && countersMap.updateCounter(p) != part.initialUpdateCounter()) {
                     UUID nodeId = exchFut.partitionHistorySupplier(grp.groupId(), p, part.initialUpdateCounter());
 
-                    if (log.isDebugEnabled())
-                        log.info("Got historical supplier: " + nodeId + " p=" + p + " initial=" + part.initialUpdateCounter() + ", curr=" + part.updateCounter());
+                    if (nodeId != null) {
+                        if (log.isDebugEnabled()) {
+                            log.info("Historical supplier [node=" + nodeId + ", p=" + p + ", initial=" +
+                                part.initialUpdateCounter() + ", cntr=" + part.updateCounter() + "]");
+                        }
 
-                    if (nodeId != null)
                         histSupplier = ctx.discovery().node(nodeId);
+                    }
                 }
 
                 if (histSupplier != null && !exchFut.isClearingPartition(grp, p)) {
