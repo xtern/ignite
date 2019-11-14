@@ -70,7 +70,7 @@ import static org.apache.ignite.cache.CacheMode.REPLICATED;
  * Test cases for checking cancellation rebalancing process if some events occurs.
  */
 @RunWith(Parameterized.class)
-public class GridCachePersistenceRebalanceSelfTest extends GridCommonAbstractTest {
+public class GridCacheFileRebalanceSelfTest extends GridCommonAbstractTest {
     /** */
     private static final int TEST_SIZE = GridTestUtils.SF.applyLB(100_000, 10_000);
 
@@ -471,21 +471,76 @@ public class GridCachePersistenceRebalanceSelfTest extends GridCommonAbstractTes
                 loadData(ignite, CACHE1, TEST_SIZE);
                 loadData(ignite, CACHE2, TEST_SIZE);
             }
-            else
+            else {
                 ignite.cluster().setBaselineTopology(blt);
 
-            awaitPartitionMapExchange();
+                awaitPartitionMapExchange();
+            }
 
             IgniteCache<Object, Object> cache1 = ignite.cache(CACHE1);
             IgniteCache<Object, Object> cache2 = ignite.cache(CACHE2);
 
             // todo should check partitions
-            for (int k = 0; k < TEST_SIZE; k++) {
-                assertEquals(generateValue(k, CACHE1), cache1.get(k));
-                assertEquals(generateValue(k, CACHE2), cache2.get(k));
-            }
+            verifyCacheContent(cache1, TEST_SIZE);
+            verifyCacheContent(cache2, TEST_SIZE);
         }
     }
+
+    /** Check partitions moving with file rebalancing. */
+    @Test
+    @WithSystemProperty(key = IGNITE_FILE_REBALANCE_ENABLED, value = "true")
+    @WithSystemProperty(key = IGNITE_BASELINE_AUTO_ADJUST_ENABLED, value = "false")
+    @WithSystemProperty(key = IGNITE_PDS_WAL_REBALANCE_THRESHOLD, value="1")
+    public void testPersistenceRebalanceMultipleCachesMultipleNodesStartStopStableTopologyPartitionedNoCoordinatorChange() throws Exception {
+        cacheMode = PARTITIONED;
+        parts = 128;
+        backups = 1;
+
+        int nodesCnt = 4;
+
+        List<ClusterNode> blt = new ArrayList<>();
+
+        for (int i = 0; i < nodesCnt; i++) {
+            IgniteEx ignite = startGrid(i);
+
+            blt.add(ignite.localNode());
+
+            if (i == 0) {
+                ignite.cluster().active(true);
+
+                loadData(ignite, CACHE1, TEST_SIZE);
+                loadData(ignite, CACHE2, TEST_SIZE);
+            }
+            else {
+                ignite.cluster().setBaselineTopology(blt);
+
+                awaitPartitionMapExchange();
+            }
+        }
+
+        int maxNodeIdx = nodesCnt - 1;
+
+        verifyCacheContent(grid(maxNodeIdx).cache(CACHE1), TEST_SIZE);
+        verifyCacheContent(grid(maxNodeIdx).cache(CACHE2), TEST_SIZE);
+
+        Ignite crd = grid(0);
+
+        for (int i = maxNodeIdx; i > 0; i--) {
+            IgniteEx stopNode = grid(i);
+
+            blt.remove(stopNode.localNode());
+
+            stopGrid(i);
+
+            crd.cluster().setBaselineTopology(blt);
+
+            awaitPartitionMapExchange();
+        }
+
+        verifyCacheContent(crd.cache(CACHE1), TEST_SIZE);
+        verifyCacheContent(crd.cache(CACHE2), TEST_SIZE);
+    }
+
 
     /** Check partitions moving with file rebalancing. */
     @Test
@@ -607,6 +662,188 @@ public class GridCachePersistenceRebalanceSelfTest extends GridCommonAbstractTes
 
         verifyLocalCache(ignite0.cachex(CACHE1), ignite2.cachex(CACHE1));
         verifyLocalCache(ignite0.cachex(CACHE2), ignite2.cachex(CACHE2));
+    }
+
+    /** */
+    @Test
+    @WithSystemProperty(key = IGNITE_FILE_REBALANCE_ENABLED, value = "true")
+    @WithSystemProperty(key = IGNITE_BASELINE_AUTO_ADJUST_ENABLED, value = "false")
+    @WithSystemProperty(key = IGNITE_PDS_WAL_REBALANCE_THRESHOLD, value="1")
+    public void testPersistenceRebalanceMultipleCachesCancelRebalancePartitioned() throws Exception {
+        cacheMode = PARTITIONED;
+        backups = 0;
+
+        List<ClusterNode> blt = new ArrayList<>();
+
+        int entriesCnt = 400_000;
+
+        IgniteEx ignite0 = startGrid(0);
+
+        ignite0.cluster().active(true);
+
+        blt.add(ignite0.localNode());
+
+        ignite0.cluster().setBaselineTopology(blt);
+
+        loadData(ignite0, CACHE1, entriesCnt);
+        loadData(ignite0, CACHE2, entriesCnt);
+
+        forceCheckpoint(ignite0);
+
+        IgniteEx ignite1 = startGrid(1);
+
+        blt.add(ignite1.localNode());
+
+        ignite0.cluster().setBaselineTopology(blt);
+
+        U.sleep(80);
+
+        IgniteEx ignite2 = startGrid(2);
+
+        blt.add(ignite2.localNode());
+
+        ignite0.cluster().setBaselineTopology(blt);
+
+        awaitPartitionMapExchange();
+
+        U.sleep(500);
+
+        verifyCacheContent(ignite2.cache(CACHE1), entriesCnt);
+        verifyCacheContent(ignite2.cache(CACHE2), entriesCnt);
+    }
+
+    // todo should check partitions
+    private void verifyCacheContent(IgniteCache<Object, Object> cache, long cnt) {
+        log.info("Verifying cache contents [cache=" + cache.getName() + ", size=" + cnt + "]");
+
+        for (long k = 0; k < cnt; k++) {
+            assertEquals("cache=" + cache.getName() + ", key=" + k, generateValue(k, cache.getName()), cache.get(k));
+
+            if ((k + 1) % (cnt / 10) == 0)
+                log.info("Verified " + (k + 1) * 100 / cnt + "% entries");
+        }
+
+        assertEquals(cnt, cache.size());
+    }
+
+    /** */
+    @Test
+    @WithSystemProperty(key = IGNITE_FILE_REBALANCE_ENABLED, value = "true")
+    @WithSystemProperty(key = IGNITE_BASELINE_AUTO_ADJUST_ENABLED, value = "false")
+    @WithSystemProperty(key = IGNITE_PDS_WAL_REBALANCE_THRESHOLD, value="1")
+    public void testPersistenceRebalanceMultipleCachesCancelRebalanceConstantLoad() throws Exception {
+        List<ClusterNode> blt = new ArrayList<>();
+
+        int entriesCnt = 400_000;
+
+        IgniteEx ignite0 = startGrid(0);
+
+        ignite0.cluster().active(true);
+
+        blt.add(ignite0.localNode());
+
+        ignite0.cluster().setBaselineTopology(blt);
+
+        int threads = Runtime.getRuntime().availableProcessors();
+
+        loadData(ignite0, CACHE1, entriesCnt);
+        loadData(ignite0, CACHE2, entriesCnt);
+
+        AtomicLong cntr = new AtomicLong(entriesCnt);
+
+        ConstantLoader ldr = new ConstantLoader(ignite0.cache(CACHE1), cntr, false, threads);
+
+        IgniteInternalFuture ldrFut = GridTestUtils.runMultiThreadedAsync(ldr, threads, "thread");
+
+        forceCheckpoint(ignite0);
+
+        IgniteEx ignite1 = startGrid(1);
+
+        blt.add(ignite1.localNode());
+
+        ignite0.cluster().setBaselineTopology(blt);
+
+        U.sleep(80);
+
+        IgniteEx ignite2 = startGrid(2);
+
+        blt.add(ignite2.localNode());
+
+        ignite0.cluster().setBaselineTopology(blt);
+
+        awaitPartitionMapExchange();
+
+        ldr.stop();
+
+        ldrFut.get();
+
+        U.sleep(500);
+
+        verifyLocalCache(ignite0.cachex(CACHE1), ignite1.cachex(CACHE1));
+        verifyLocalCache(ignite0.cachex(CACHE2), ignite1.cachex(CACHE2));
+
+        verifyLocalCache(ignite0.cachex(CACHE1), ignite2.cachex(CACHE1));
+        verifyLocalCache(ignite0.cachex(CACHE2), ignite2.cachex(CACHE2));
+    }
+
+    /** */
+    @Test
+    @WithSystemProperty(key = IGNITE_FILE_REBALANCE_ENABLED, value = "true")
+    @WithSystemProperty(key = IGNITE_BASELINE_AUTO_ADJUST_ENABLED, value = "false")
+    @WithSystemProperty(key = IGNITE_PDS_WAL_REBALANCE_THRESHOLD, value="1")
+    public void testPersistenceRebalanceMultipleCachesCancelRebalanceConstantLoadPartitioned() throws Exception {
+        cacheMode = PARTITIONED;
+        backups = 0;
+
+        List<ClusterNode> blt = new ArrayList<>();
+
+        int entriesCnt = 400_000;
+
+        IgniteEx ignite0 = startGrid(0);
+
+        ignite0.cluster().active(true);
+
+        blt.add(ignite0.localNode());
+
+        ignite0.cluster().setBaselineTopology(blt);
+
+        int threads = Runtime.getRuntime().availableProcessors();
+
+        loadData(ignite0, CACHE1, entriesCnt);
+        loadData(ignite0, CACHE2, entriesCnt);
+
+        AtomicLong cntr = new AtomicLong(entriesCnt);
+
+        ConstantLoader ldr = new ConstantLoader(ignite0.cache(CACHE1), cntr, false, threads);
+
+        IgniteInternalFuture ldrFut = GridTestUtils.runMultiThreadedAsync(ldr, threads, "thread");
+
+        forceCheckpoint(ignite0);
+
+        IgniteEx ignite1 = startGrid(1);
+
+        blt.add(ignite1.localNode());
+
+        ignite0.cluster().setBaselineTopology(blt);
+
+        U.sleep(80);
+
+        IgniteEx ignite2 = startGrid(2);
+
+        blt.add(ignite2.localNode());
+
+        ignite0.cluster().setBaselineTopology(blt);
+
+        awaitPartitionMapExchange();
+
+        ldr.stop();
+
+        ldrFut.get();
+
+        U.sleep(500);
+
+        verifyCacheContent(ignite2.cache(CACHE1), cntr.get());
+        verifyCacheContent(ignite2.cache(CACHE2), entriesCnt);
     }
 
 
