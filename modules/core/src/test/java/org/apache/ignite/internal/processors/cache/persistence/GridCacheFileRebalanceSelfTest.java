@@ -307,10 +307,15 @@ public class GridCacheFileRebalanceSelfTest extends GridCommonAbstractTest {
     public void testPersistenceRebalanceUnderConstantLoad3nodes() throws Exception {
         cacheWriteSyncMode = FULL_SYNC;
         cacheMode = PARTITIONED;
-        parts = 128;
+        parts = 16;
         backups = 0;
 
+        assert TEST_SIZE == 100_000 : TEST_SIZE;
+
         List<ClusterNode> blt = new ArrayList<>();
+
+        boolean removes = false;
+        int threads = 1;
 
         IgniteEx ignite0 = startGrid(0);
 
@@ -324,9 +329,9 @@ public class GridCacheFileRebalanceSelfTest extends GridCommonAbstractTest {
 
         AtomicLong cntr = new AtomicLong(TEST_SIZE);
 
-        ConstantLoader ldr = new ConstantLoader(ignite0.cache(DEFAULT_CACHE_NAME), cntr, true, 8);
+        ConstantLoader ldr = new ConstantLoader(ignite0.cache(DEFAULT_CACHE_NAME), cntr, removes, threads);
 
-        IgniteInternalFuture ldrFut = GridTestUtils.runMultiThreadedAsync(ldr, 8, "thread");
+        IgniteInternalFuture ldrFut = GridTestUtils.runMultiThreadedAsync(ldr, threads, "thread");
 
 //        U.sleep(1_000);
 
@@ -340,7 +345,7 @@ public class GridCacheFileRebalanceSelfTest extends GridCommonAbstractTest {
 
 //        U.sleep(1_000);
 
-        awaitPartitionMapExchange();
+        awaitPartitionMapExchange(true, true, null, true);
 
         IgniteEx ignite2 = startGrid(2);
 
@@ -350,7 +355,7 @@ public class GridCacheFileRebalanceSelfTest extends GridCommonAbstractTest {
 
 //        U.sleep(1_000);
 
-        awaitPartitionMapExchange();
+        awaitPartitionMapExchange(true, true, null, true);
 
 //        U.sleep(1_000);
 
@@ -361,7 +366,7 @@ public class GridCacheFileRebalanceSelfTest extends GridCommonAbstractTest {
         U.sleep(1_000);
 
 //        verifyLocalCache(ignite0.cachex(DEFAULT_CACHE_NAME), ignite1.cachex(DEFAULT_CACHE_NAME));
-        verifyCacheContent(ignite0.cache(DEFAULT_CACHE_NAME), cntr.get(), true);
+        verifyCacheContent(ignite0.cache(DEFAULT_CACHE_NAME), cntr.get(), removes);
     }
 
 
@@ -1255,8 +1260,16 @@ public class GridCacheFileRebalanceSelfTest extends GridCommonAbstractTest {
 
                 long from = cntr.getAndAdd(100);
 
-                for (long i = from; i < from + 100; i++)
+                for (long i = from; i < from + 100; i++) {
                     cache.put(i, generateValue(i, cacheName));
+
+                    try {
+                        U.sleep(50);
+                    }
+                    catch (IgniteInterruptedCheckedException e) {
+                        e.printStackTrace();
+                    }
+                }
 
                 if (!enableRemove)
                     continue;
