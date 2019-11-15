@@ -65,6 +65,8 @@ import static org.apache.ignite.IgniteSystemProperties.IGNITE_FILE_REBALANCE_ENA
 import static org.apache.ignite.IgniteSystemProperties.IGNITE_PDS_WAL_REBALANCE_THRESHOLD;
 import static org.apache.ignite.cache.CacheMode.PARTITIONED;
 import static org.apache.ignite.cache.CacheMode.REPLICATED;
+import static org.apache.ignite.cache.CacheWriteSynchronizationMode.FULL_SYNC;
+import static org.apache.ignite.cache.CacheWriteSynchronizationMode.PRIMARY_SYNC;
 
 /**
  * Test cases for checking cancellation rebalancing process if some events occurs.
@@ -296,6 +298,72 @@ public class GridCacheFileRebalanceSelfTest extends GridCommonAbstractTest {
 
         verifyLocalCache(ignite0.cachex(DEFAULT_CACHE_NAME), ignite1.cachex(DEFAULT_CACHE_NAME));
     }
+
+    /** */
+    @Test
+    @WithSystemProperty(key = IGNITE_FILE_REBALANCE_ENABLED, value = "true")
+    @WithSystemProperty(key = IGNITE_BASELINE_AUTO_ADJUST_ENABLED, value = "false")
+    @WithSystemProperty(key = IGNITE_PDS_WAL_REBALANCE_THRESHOLD, value="1")
+    public void testPersistenceRebalanceUnderConstantLoad3nodes() throws Exception {
+        cacheWriteSyncMode = FULL_SYNC;
+        cacheMode = PARTITIONED;
+        parts = 128;
+        backups = 0;
+
+        List<ClusterNode> blt = new ArrayList<>();
+
+        IgniteEx ignite0 = startGrid(0);
+
+        ignite0.cluster().active(true);
+
+        blt.add(ignite0.cluster().localNode());
+
+//        ignite0.cluster().baselineAutoAdjustTimeout(0);
+
+        loadData(ignite0, DEFAULT_CACHE_NAME, TEST_SIZE);
+
+        AtomicLong cntr = new AtomicLong(TEST_SIZE);
+
+        ConstantLoader ldr = new ConstantLoader(ignite0.cache(DEFAULT_CACHE_NAME), cntr, true, 8);
+
+        IgniteInternalFuture ldrFut = GridTestUtils.runMultiThreadedAsync(ldr, 8, "thread");
+
+//        U.sleep(1_000);
+
+        forceCheckpoint(ignite0);
+
+        IgniteEx ignite1 = startGrid(1);
+
+        blt.add(ignite1.cluster().localNode());
+
+        ignite0.cluster().setBaselineTopology(blt);
+
+//        U.sleep(1_000);
+
+        awaitPartitionMapExchange();
+
+        IgniteEx ignite2 = startGrid(2);
+
+        blt.add(ignite2.cluster().localNode());
+
+        ignite0.cluster().setBaselineTopology(blt);
+
+//        U.sleep(1_000);
+
+        awaitPartitionMapExchange();
+
+//        U.sleep(1_000);
+
+        ldr.stop();
+
+        ldrFut.get();
+
+        U.sleep(1_000);
+
+//        verifyLocalCache(ignite0.cachex(DEFAULT_CACHE_NAME), ignite1.cachex(DEFAULT_CACHE_NAME));
+        verifyCacheContent(ignite0.cache(DEFAULT_CACHE_NAME), cntr.get(), true);
+    }
+
 
 
     /** */
@@ -541,6 +609,88 @@ public class GridCacheFileRebalanceSelfTest extends GridCommonAbstractTest {
         verifyCacheContent(crd.cache(CACHE2), TEST_SIZE);
     }
 
+    /** Check partitions moving with file rebalancing. */
+    @Test
+    @WithSystemProperty(key = IGNITE_FILE_REBALANCE_ENABLED, value = "true")
+    @WithSystemProperty(key = IGNITE_BASELINE_AUTO_ADJUST_ENABLED, value = "false")
+    @WithSystemProperty(key = IGNITE_PDS_WAL_REBALANCE_THRESHOLD, value="1")
+    public void testPersistenceRebalanceMultipleCachesMultipleNodesStartStopStableTopologyPartitionedNoCoordinatorChangeWithConstantLoad() throws Exception {
+        cacheMode = PARTITIONED;
+        cacheWriteSyncMode = FULL_SYNC;
+        parts = 16;
+        backups = 1;
+
+        int nodesCnt = 4;
+        int threads = Runtime.getRuntime().availableProcessors();
+
+        IgniteInternalFuture ldrFut = null;
+
+        ConstantLoader ldr = null;
+
+        AtomicLong cntr = new AtomicLong(TEST_SIZE);
+
+        List<ClusterNode> blt = new ArrayList<>();
+
+        for (int i = 0; i < nodesCnt; i++) {
+            IgniteEx ignite = startGrid(i);
+
+            blt.add(ignite.localNode());
+
+            if (i == 0) {
+                ignite.cluster().active(true);
+
+                loadData(ignite, CACHE1, TEST_SIZE);
+                loadData(ignite, CACHE2, TEST_SIZE);
+
+                ldr = new ConstantLoader(ignite.cache(CACHE1), cntr, false, threads);
+
+                ldrFut = GridTestUtils.runMultiThreadedAsync(ldr, threads, "thread");
+            }
+            else {
+                ignite.cluster().setBaselineTopology(blt);
+
+                awaitPartitionMapExchange();
+            }
+        }
+
+        int maxNodeIdx = nodesCnt - 1;
+
+        ldr.pause();
+
+        U.sleep(3_000);
+
+        verifyCacheContent(grid(maxNodeIdx).cache(CACHE2), TEST_SIZE);
+        verifyCacheContent(grid(maxNodeIdx).cache(CACHE1), cntr.get());
+
+        ldr.resume();
+
+        Ignite crd = grid(0);
+
+        for (int i = maxNodeIdx; i > 0; i--) {
+            IgniteEx stopNode = grid(i);
+
+            blt.remove(stopNode.localNode());
+
+            stopGrid(i);
+
+            crd.cluster().setBaselineTopology(blt);
+
+            awaitPartitionMapExchange();
+        }
+
+        ldr.stop();
+
+        ldrFut.get();
+
+        long size = cntr.get();
+
+        U.sleep(3_000);
+
+        verifyCacheContent(crd.cache(CACHE2), TEST_SIZE);
+        verifyCacheContent(crd.cache(CACHE1), size);
+
+    }
+
 
     /** Check partitions moving with file rebalancing. */
     @Test
@@ -551,7 +701,7 @@ public class GridCacheFileRebalanceSelfTest extends GridCommonAbstractTest {
         cacheMode = PARTITIONED;
         parts = 128;
         backups = 0;
-        cacheWriteSyncMode = CacheWriteSynchronizationMode.FULL_SYNC;
+        cacheWriteSyncMode = PRIMARY_SYNC;
 
         int grids = 5;
         int threads = Runtime.getRuntime().availableProcessors();
@@ -588,6 +738,10 @@ public class GridCacheFileRebalanceSelfTest extends GridCommonAbstractTest {
         ldr.stop();
 
         ldrFut.get();
+
+        U.sleep(10_000);
+
+        verifyCacheContent(grid(0).cache(CACHE1), cntr.get());
 
 //        Ignite ignite = grid(grids - 1);
 //
@@ -712,18 +866,47 @@ public class GridCacheFileRebalanceSelfTest extends GridCommonAbstractTest {
         verifyCacheContent(ignite2.cache(CACHE2), entriesCnt);
     }
 
-    // todo should check partitions
     private void verifyCacheContent(IgniteCache<Object, Object> cache, long cnt) {
+        verifyCacheContent(cache, cnt, false);
+    }
+
+    // todo should check partitions
+    private void verifyCacheContent(IgniteCache<Object, Object> cache, long cnt, boolean removes) {
         log.info("Verifying cache contents [cache=" + cache.getName() + ", size=" + cnt + "]");
 
+        StringBuilder buf = new StringBuilder();
+
+        int fails = 0;
+
+        long expSize = 0;
+
         for (long k = 0; k < cnt; k++) {
-            assertEquals("cache=" + cache.getName() + ", key=" + k, generateValue(k, cache.getName()), cache.get(k));
+            if (removes && k % 10 == 0)
+                continue;
+
+            ++expSize;
+
+            Long exp = generateValue(k, cache.getName());;
+            Long actual = (Long)cache.get(k);
+
+            if (!Objects.equals(exp, actual)) {
+//                if (fails++ < 100)
+                    buf.append("cache=").append(cache.getName()).append(", key=").append(k).append(", expect=").append(exp).append(", actual=").append(actual).append('\n');
+//                else {
+//                    buf.append("\n... and so on\n");
+
+//                    break;
+//                }
+            }
 
             if ((k + 1) % (cnt / 10) == 0)
-                log.info("Verified " + (k + 1) * 100 / cnt + "% entries");
+                log.info("Verification: " + (k + 1) * 100 / cnt + "%");
         }
 
-        assertEquals(cnt, cache.size());
+        if (!removes && cnt != cache.size())
+            buf.append("\ncache=").append(cache.getName()).append(" size mismatch [expect=").append(cnt).append(", actual=").append(cache.size()).append('\n');
+
+        assertTrue(buf.toString(), buf.length() == 0);
     }
 
     /** */
@@ -1054,6 +1237,8 @@ public class GridCacheFileRebalanceSelfTest extends GridCommonAbstractTest {
                     if (!paused) {
                         U.awaitQuiet(pauseBarrier);
 
+                        log.info("Async loader paused.");
+
                         paused = true;
                     }
 
@@ -1079,6 +1264,8 @@ public class GridCacheFileRebalanceSelfTest extends GridCommonAbstractTest {
                 for (long i = from; i < from + 100; i += 10)
                     cache.remove(i);
             }
+
+            log.info("Async loader stopped.");
         }
 
         /**

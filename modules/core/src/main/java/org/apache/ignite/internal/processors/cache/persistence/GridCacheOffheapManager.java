@@ -303,8 +303,10 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
         if (store instanceof CacheDataStoreEx && ((CacheDataStoreEx)store).readOnly())
             return;
 
-        Set<Integer> partsToCollect = ctx.collectPartStat()
-            .getOrDefault(grp.groupId(), new HashSet<>());
+        assert ctx != null || !needSnapshot : this.ctx.cache().cacheGroup(grp.groupId()).cacheOrGroupName() + " need=" + needSnapshot;
+
+        Set<Integer> partsToCollect = ctx == null ? Collections.emptySet() : ctx.collectPartStat()
+            .getOrDefault(grp.groupId(), Collections.emptySet());
 
         boolean savePagesCount = needSnapshot || partsToCollect.contains(store.partId());
 

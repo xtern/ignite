@@ -246,6 +246,9 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
             return NO_OP;
         }
 
+        if (log.isTraceEnabled())
+            log.trace(formatMappings(nodeOrderAssignsMap));
+
         // Start new rebalance session.
         FileRebalanceFuture rebFut = fileRebalanceFut;
 
@@ -319,6 +322,31 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
         finally {
             lock.writeLock().unlock();
         }
+    }
+
+    private String formatMappings(Map<Integer, Map<ClusterNode, Map<Integer, Set<Integer>>>> map) {
+        StringBuilder buf = new StringBuilder("\nFile rebalancing mappings [node=" + cctx.localNodeId() + "]\n");
+
+        for (Map.Entry<Integer, Map<ClusterNode, Map<Integer, Set<Integer>>>> entry : map.entrySet()) {
+            buf.append("\torder=").append(entry.getKey()).append('\n');
+
+            for (Map.Entry<ClusterNode, Map<Integer, Set<Integer>>> mapEntry : entry.getValue().entrySet()) {
+                buf.append("\t\tnode=").append(mapEntry.getKey().id()).append('\n');
+
+                for (Map.Entry<Integer, Set<Integer>> setEntry : mapEntry.getValue().entrySet()) {
+                    buf.append("\t\t\tgrp=").append(cctx.cache().cacheGroup(setEntry.getKey()).cacheOrGroupName()).append('\n');
+
+                    for (int p : setEntry.getValue())
+                        buf.append("\t\t\t\tp=").append(p).append('\n');
+                }
+
+                buf.append('\n');
+            }
+
+            buf.append('\n');
+        }
+
+        return buf.toString();
     }
 
     /**
@@ -441,11 +469,11 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
             assert part.state() == MOVING : "Unexpected partition state [cache=" + grp.cacheOrGroupName() +
                 ", p=" + part.id() + ", state=" + part.state() + "]";
 
-            assert part.dataStore().readOnly() : "Expected read-only partition [cache=" + grp.cacheOrGroupName() +
-                ", p=" + part.id() + "]";
-
             if (exchFut.partitionFileSupplier(grp.groupId(), part.id(), cntrsMap.updateCounter(part.id())) == null)
                 return false;
+
+            assert part.dataStore().readOnly() : "Expected read-only partition [cache=" + grp.cacheOrGroupName() +
+                ", p=" + part.id() + "]";
         }
 
         // For now mixed rebalancing modes are not supported.
