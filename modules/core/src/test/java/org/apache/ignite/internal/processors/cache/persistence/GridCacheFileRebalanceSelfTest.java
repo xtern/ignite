@@ -49,6 +49,7 @@ import org.apache.ignite.internal.IgniteInternalFuture;
 import org.apache.ignite.internal.IgniteInterruptedCheckedException;
 import org.apache.ignite.internal.processors.cache.IgniteInternalCache;
 import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtLocalPartition;
+import org.apache.ignite.internal.util.typedef.G;
 import org.apache.ignite.internal.util.typedef.internal.U;
 import org.apache.ignite.testframework.GridTestUtils;
 import org.apache.ignite.testframework.junits.WithSystemProperty;
@@ -365,7 +366,17 @@ public class GridCacheFileRebalanceSelfTest extends GridCommonAbstractTest {
 
         U.sleep(1_000);
 
-//        verifyLocalCache(ignite0.cachex(DEFAULT_CACHE_NAME), ignite1.cachex(DEFAULT_CACHE_NAME));
+        for (int i = 0; i < 3; i++) {
+            IgniteInternalCache cache = grid(i).cachex(DEFAULT_CACHE_NAME);
+
+            System.out.println("\nParts on " + grid(i).cluster().localNode().id());
+
+            for (GridDhtLocalPartition part : cache.context().topology().currentLocalPartitions())
+                System.out.println(part.id() + " state=" + part.state() + " size=" + part.fullSize());
+
+            System.out.println();
+        }
+
         verifyCacheContent(ignite0.cache(DEFAULT_CACHE_NAME), cntr.get(), removes);
     }
 

@@ -36,12 +36,15 @@ import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.IgniteSystemProperties;
 import org.apache.ignite.cache.CacheRebalanceMode;
 import org.apache.ignite.cluster.ClusterNode;
+import org.apache.ignite.events.DiscoveryEvent;
 import org.apache.ignite.internal.GridKernalContext;
 import org.apache.ignite.internal.IgniteFeatures;
 import org.apache.ignite.internal.IgniteInternalFuture;
+import org.apache.ignite.internal.events.DiscoveryCustomEvent;
 import org.apache.ignite.internal.processors.affinity.AffinityAssignment;
 import org.apache.ignite.internal.processors.affinity.AffinityTopologyVersion;
 import org.apache.ignite.internal.processors.cache.CacheGroupContext;
+import org.apache.ignite.internal.processors.cache.DynamicCacheChangeBatch;
 import org.apache.ignite.internal.processors.cache.GridCacheSharedManagerAdapter;
 import org.apache.ignite.internal.processors.cache.PartitionUpdateCounter;
 import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtLocalPartition;
@@ -49,6 +52,7 @@ import org.apache.ignite.internal.processors.cache.persistence.DbCheckpointListe
 import org.apache.ignite.internal.processors.cache.persistence.GridCacheDatabaseSharedManager;
 import org.apache.ignite.internal.processors.cache.persistence.file.FilePageStore;
 import org.apache.ignite.internal.processors.cache.persistence.file.FilePageStoreManager;
+import org.apache.ignite.internal.processors.cache.persistence.snapshot.SnapshotDiscoveryMessage;
 import org.apache.ignite.internal.processors.cache.persistence.snapshot.SnapshotListener;
 import org.apache.ignite.internal.util.future.GridFutureAdapter;
 import org.apache.ignite.internal.util.lang.IgniteInClosureX;
@@ -57,6 +61,7 @@ import org.apache.ignite.internal.util.typedef.internal.CU;
 
 import static org.apache.ignite.IgniteSystemProperties.IGNITE_PDS_WAL_REBALANCE_THRESHOLD;
 import static org.apache.ignite.configuration.IgniteConfiguration.DFLT_IGNITE_PDS_WAL_REBALANCE_THRESHOLD;
+import static org.apache.ignite.internal.events.DiscoveryCustomEvent.EVT_DISCOVERY_CUSTOM_EVT;
 import static org.apache.ignite.internal.processors.cache.GridCacheUtils.UTILITY_CACHE_NAME;
 import static org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtPartitionState.MOVING;
 import static org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtPartitionState.OWNING;
@@ -209,12 +214,44 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
     public void onTopologyChanged(GridDhtPartitionsExchangeFuture lastFut) {
         FileRebalanceFuture fut0 = fileRebalanceFut;
 
-        if (!fut0.isDone()) {
+        boolean interruptRebalance = inrerruptRebalanceRequired(lastFut);
+
+        if (!fut0.isDone() && interruptRebalance) {
             if (log.isDebugEnabled())
-                log.debug("Topology changed - canceling file rebalance.");
+                log.debug("Topology changed - canceling file rebalance [fut="+lastFut+"]");
 
             fileRebalanceFut.cancel();
         }
+    }
+
+    private boolean inrerruptRebalanceRequired(GridDhtPartitionsExchangeFuture fut) {
+        DiscoveryEvent evt = fut.firstEvent();
+
+//        if (evt.type() != EVT_DISCOVERY_CUSTOM_EVT)
+//            return true;
+
+        if (evt.type() == EVT_DISCOVERY_CUSTOM_EVT) {
+            DiscoveryCustomEvent customEvent = ((DiscoveryCustomEvent)evt);
+
+            if (customEvent.customMessage() instanceof DynamicCacheChangeBatch && fut.exchangeActions() != null)
+                return true;
+
+            if (customEvent.customMessage() instanceof SnapshotDiscoveryMessage &&
+                ((SnapshotDiscoveryMessage)customEvent.customMessage()).needAssignPartitions())
+                return true;
+
+            return false;
+        }
+
+        if (fut.exchangeActions() != null) {
+            if (fut.exchangeActions().activate())
+                return true;
+
+            if (fut.exchangeActions().changedBaseline())
+                return true;
+        }
+
+        return true;
     }
 
     /**
