@@ -3386,7 +3386,7 @@ public class GridCachePartitionExchangeManager<K, V> extends GridCacheSharedMana
                                 "[top=" + resVer + ", evt=" + exchId.discoveryEventName() +
                                 ", node=" + exchId.nodeId() + ']');
                         }
-                        else if (r != null) {
+                        else if (r != null || loadPartsRun != null) {
                             Collections.reverse(rebList);
 
                             U.log(log, "Rebalancing scheduled [order=" + rebList +
@@ -3399,8 +3399,11 @@ public class GridCachePartitionExchangeManager<K, V> extends GridCacheSharedMana
                             // Start rebalancing cache groups chain. Each group will be rebalanced
                             // sequentially one by one e.g.:
                             // ignite-sys-cache -> cacheGroupR1 -> cacheGroupP2 -> cacheGroupR3
-                            loadPartsRun.run();
-                            r.run();
+                            if (loadPartsRun != null)
+                                loadPartsRun.run();
+
+                            if (r!= null)
+                                r.run();
                         }
                         else
                             U.log(log, "Skipping rebalancing (nothing scheduled) " +

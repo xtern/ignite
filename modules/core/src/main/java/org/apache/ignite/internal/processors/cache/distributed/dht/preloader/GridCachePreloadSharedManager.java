@@ -147,12 +147,15 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
             log.debug("Preparing to start rebalancing: " + exchId);
 
         for (CacheGroupContext grp : cctx.cache().cacheGroups()) {
+            if (!fileRebalanceSupported(grp))
+                continue;
+
             Set<Integer> moving = detectMovingPartitions(grp, exchFut);
 
             if (moving == null)
                 continue;
 
-            if (log.isDebugEnabled())
+            if (log.isDebugEnabled() && !moving.isEmpty())
                 log.debug("Set READ-ONLY mode for cache=" + grp.cacheOrGroupName() + " parts=" + moving);
 
             for (int p : moving)
@@ -215,14 +218,20 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
     public void onTopologyChanged(GridDhtPartitionsExchangeFuture lastFut) {
         FileRebalanceFuture fut0 = fileRebalanceFut;
 
-        // todo think, investigate, eliminate duplication
-        boolean interruptRebalance = inrerruptRebalanceRequired(lastFut);
+        if (!fut0.isDone()) {
+            if (!inrerruptRebalanceRequired(lastFut)) {
+                log.info("Topology changed, but rebalance not interrupted [exch=" + lastFut + "]");
 
-        if (!fut0.isDone() && interruptRebalance) {
+                return;
+            }
+
+            if (fut0.isDone())
+                return;
+
             if (log.isDebugEnabled())
                 log.debug("Topology changed - canceling file rebalance [fut="+lastFut+"]");
 
-            fileRebalanceFut.cancel();
+            fut0.cancel();
         }
     }
 
@@ -238,11 +247,9 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
             if (customEvent.customMessage() instanceof DynamicCacheChangeBatch && fut.exchangeActions() != null)
                 return true;
 
-            if (customEvent.customMessage() instanceof SnapshotDiscoveryMessage &&
-                ((SnapshotDiscoveryMessage)customEvent.customMessage()).needAssignPartitions())
-                return true;
+            return customEvent.customMessage() instanceof SnapshotDiscoveryMessage &&
+                ((SnapshotDiscoveryMessage)customEvent.customMessage()).needAssignPartitions();
 
-            return false;
         }
 
         if (fut.exchangeActions() != null) {
@@ -363,6 +370,17 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
         }
     }
 
+
+    public void printDiagnostic() {
+        StringBuilder buf = new StringBuilder("\n\nDiagnostic for file rebalancing [node=" + cctx.localNodeId() + ", finished=" + fileRebalanceFut.isDone() + "]");
+
+        if (!fileRebalanceFut.isDone())
+            buf.append(fileRebalanceFut.toString());
+
+        if (log.isInfoEnabled())
+            log.info("\n" + buf);
+    }
+
     private String formatMappings(Map<Integer, Map<ClusterNode, Map<Integer, Set<Integer>>>> map) {
         StringBuilder buf = new StringBuilder("\nFile rebalancing mappings [node=" + cctx.localNodeId() + "]\n");
 
@@ -454,6 +472,14 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
     public boolean fileRebalanceSupported(CacheGroupContext grp, Collection<ClusterNode> nodes) {
         assert nodes != null && !nodes.isEmpty();
 
+        return fileRebalanceSupported(grp) &&
+            IgniteFeatures.allNodesSupports(nodes, IgniteFeatures.CACHE_PARTITION_FILE_REBALANCE);
+    }
+
+    private boolean fileRebalanceSupported(CacheGroupContext grp) {
+        if (!FILE_REBALANCE_ENABLED || !grp.persistenceEnabled())
+            return false;
+
         if (grp.config().getRebalanceDelay() == -1 || grp.config().getRebalanceMode() == CacheRebalanceMode.NONE)
             return false;
 
@@ -465,12 +491,7 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
             return false;
 
         // todo critical
-        if (grp.hasAtomicCaches())
-            return false;
-
-        return FILE_REBALANCE_ENABLED &&
-            grp.persistenceEnabled() &&
-            IgniteFeatures.allNodesSupports(nodes, IgniteFeatures.CACHE_PARTITION_FILE_REBALANCE);
+        return !grp.hasAtomicCaches();
     }
 
     /**
@@ -581,6 +602,8 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
 
         GridDhtLocalPartition part = cctx.cache().cacheGroup(grpId).topology().localPartition(partId);
 
+        CacheGroupContext grp = cctx.cache().cacheGroup(grpId);
+
         // Save current counter.
         PartitionUpdateCounter oldCntr = part.dataStore().store(false).partUpdateCounter();
 
@@ -588,6 +611,9 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
         long minCntr = part.dataStore().store(false).reinit();
 
         GridFutureAdapter<T2<Long, Long>> endFut = new GridFutureAdapter<>();
+
+        if (log.isTraceEnabled())
+            log.info("Schedule partition switch to FULL mode [grp=" + grp.cacheOrGroupName() + ", p=" + part.id() + ", queued=" + cpLsnr.queue.size() + "]");
 
         cpLsnr.schedule(() -> {
             if (staleFuture(fut))
@@ -607,9 +633,10 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
 
             assert oldCntr != newCntr;
 
-            assert newCntr != null : "grp="+cctx.cache().cacheGroup(grpId) + ", p=" + partId + ", fullSize=" + part.dataStore().fullSize();
+            assert newCntr != null : "grp=" + grp.cacheOrGroupName() + ", p=" + partId + ", fullSize=" + part.dataStore().fullSize();
+
             // todo check empty partition
-            assert newCntr.get() != 0 : "grpId=" + cctx.cache().cacheGroup(grpId) + ", p=" + partId + ", fullSize=" + part.dataStore().fullSize();
+            assert newCntr.get() != 0 : "grpId=" + grp.cacheOrGroupName() + ", p=" + partId + ", fullSize=" + part.dataStore().fullSize();
 
             AffinityTopologyVersion infinTopVer = new AffinityTopologyVersion(Long.MAX_VALUE, 0);
 
@@ -663,17 +690,15 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
         }
 
         public IgniteInternalFuture<Void> schedule(final Runnable task) {
-            return schedule(new CheckpointTask<>(() -> {
+            CheckpointTask<Void> cpTask = new CheckpointTask<>(() -> {
                 task.run();
 
                 return null;
-            }));
-        }
+            });
 
-        private <R> IgniteInternalFuture<R> schedule(CheckpointTask<R> task) {
-            queue.offer(task);
+            queue.offer(cpTask);
 
-            return task.fut;
+            return cpTask.fut;
         }
 
         /** */

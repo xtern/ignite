@@ -32,10 +32,9 @@ import org.apache.ignite.internal.processors.affinity.AffinityTopologyVersion;
 import org.apache.ignite.internal.processors.cache.CacheGroupContext;
 import org.apache.ignite.internal.processors.cache.GridCacheSharedContext;
 import org.apache.ignite.internal.util.GridConcurrentHashSet;
-import org.apache.ignite.internal.util.future.GridCompoundFuture;
 import org.apache.ignite.internal.util.future.GridFutureAdapter;
 import org.apache.ignite.internal.util.tostring.GridToStringInclude;
-import org.apache.ignite.internal.util.typedef.internal.CU;
+import org.apache.ignite.internal.util.typedef.F;
 import org.apache.ignite.internal.util.typedef.internal.S;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -314,7 +313,7 @@ public class FileRebalanceNodeFuture extends GridFutureAdapter<Boolean> {
 
     /** {@inheritDoc} */
     @Override public String toString() {
-        return S.toString(FileRebalanceNodeFuture.class, this);
+        return "finished=" + isDone() + ", node=" + node.id() + ", grps=" + F.transform(assigns.keySet(), v -> cctx.cache().cacheGroup(v).cacheOrGroupName());
     }
 
     private static class PartCounters implements Comparable {

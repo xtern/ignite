@@ -47,8 +47,12 @@ import org.apache.ignite.configuration.WALMode;
 import org.apache.ignite.internal.IgniteEx;
 import org.apache.ignite.internal.IgniteInternalFuture;
 import org.apache.ignite.internal.IgniteInterruptedCheckedException;
+import org.apache.ignite.internal.pagemem.PageIdUtils;
+import org.apache.ignite.internal.processors.cache.CacheGroupContext;
 import org.apache.ignite.internal.processors.cache.IgniteInternalCache;
 import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtLocalPartition;
+import org.apache.ignite.internal.processors.cache.persistence.file.FilePageStoreManager;
+import org.apache.ignite.internal.processors.cache.persistence.pagemem.PageMemoryEx;
 import org.apache.ignite.internal.util.typedef.G;
 import org.apache.ignite.internal.util.typedef.internal.U;
 import org.apache.ignite.testframework.GridTestUtils;
@@ -167,6 +171,11 @@ public class GridCacheFileRebalanceSelfTest extends GridCommonAbstractTest {
 //            .setCommunicationSpi(new TestRecordingCommunicationSpi()
     }
 
+//    @Test
+//    public void testEvictReadOnlyPartition() {
+//
+//    }
+
     /** */
     @Test
     @WithSystemProperty(key = IGNITE_FILE_REBALANCE_ENABLED, value = "true")
@@ -181,18 +190,27 @@ public class GridCacheFileRebalanceSelfTest extends GridCommonAbstractTest {
 
         IgniteInternalCache<Object, Object> cache = ignite0.cachex(DEFAULT_CACHE_NAME);
 
+        assert cache.size() == TEST_SIZE;
+
         CachePeekMode[] peekAll = new CachePeekMode[] {CachePeekMode.ALL};
 
-        int hash = DEFAULT_CACHE_NAME.hashCode();
+//        int hash = DEFAULT_CACHE_NAME.hashCode();
 
-        for (int i = 0; i < TEST_SIZE; i++)
-            assertEquals(i + hash, cache.localPeek(i, peekAll));
+        for (long i = 0; i < TEST_SIZE; i++) {
+            assertTrue("key=" + i, cache.containsKey(i));
+
+            assertEquals("key=" + i, generateValue(i, DEFAULT_CACHE_NAME), cache.localPeek(i, peekAll));
+        }
 
         List<GridDhtLocalPartition> locParts = cache.context().topology().localPartitions();
 
         CountDownLatch allPartsCleared = new CountDownLatch(locParts.size());
 
         ignite0.context().cache().context().database().checkpointReadLock();
+
+        CacheGroupContext grp = cache.context().group();
+
+        System.out.println("Clearing partitions");
 
         try {
             for (GridDhtLocalPartition part : locParts) {
@@ -203,7 +221,22 @@ public class GridCacheFileRebalanceSelfTest extends GridCommonAbstractTest {
                 part.clearAsync();
 
                 part.onClearFinished(f -> {
+
+                    try {
+                        PageMemoryEx memEx = (PageMemoryEx)grp.dataRegion().pageMemory();
+
+                        int tag = memEx.invalidate(grp.groupId(), part.id());
+
+                        ((FilePageStoreManager)ignite0.context().cache().context().pageStore()).getStore(grp.groupId(), part.id()).truncate(tag);
+                        //PageMemoryEx memEx = (PageMemoryEx)region.pageMemory();
+
+//                        memEx.clearAsync(
+//                            (grp0, pageId) -> grp0 == grp.groupId() && part.id() == PageIdUtils.partId(pageId), true).get();
+
                         allPartsCleared.countDown();
+                    } catch (IgniteCheckedException e) {
+                        e.printStackTrace();
+                    }
                     }
                 );
             }
@@ -211,32 +244,42 @@ public class GridCacheFileRebalanceSelfTest extends GridCommonAbstractTest {
             ignite0.context().cache().context().database().checkpointReadUnlock();
         }
 
-        System.out.println("Clearing partitions");
+        System.out.println("Running standart partition eviction");
 
-        allPartsCleared.await(20_000, TimeUnit.MILLISECONDS);
+        for (GridDhtLocalPartition part : locParts) {
+            part.dataStore().readOnly(false);
 
-        // Ensure twice that all entries evicted.
-        for (int i = 0; i < TEST_SIZE; i++)
-            assertNull(cache.localPeek(i, peekAll));
-
-        ignite0.context().cache().context().database().checkpointReadLock();
-
-        try {
-            for (GridDhtLocalPartition part : locParts) {
-                part.dataStore().readOnly(false);
-
-                part.own();
-            }
-        } finally {
-            ignite0.context().cache().context().database().checkpointReadUnlock();
+            part.clearAsync();
         }
 
-        for (int i = 0; i < TEST_SIZE; i++)
-            assertNull(cache.localPeek(i, peekAll));
+        U.sleep(15_000);
 
-        cache.put(TEST_SIZE, TEST_SIZE);
 
-        assertEquals(TEST_SIZE, cache.get(TEST_SIZE));
+
+//        allPartsCleared.await(20_000, TimeUnit.MILLISECONDS);
+//
+//        // Ensure twice that all entries evicted.
+//        for (int i = 0; i < TEST_SIZE; i++)
+//            assertNull(cache.localPeek(i, peekAll));
+//
+//        ignite0.context().cache().context().database().checkpointReadLock();
+//
+//        try {
+//            for (GridDhtLocalPartition part : locParts) {
+//                part.dataStore().readOnly(false);
+//
+//                part.own();
+//            }
+//        } finally {
+//            ignite0.context().cache().context().database().checkpointReadUnlock();
+//        }
+//
+//        for (int i = 0; i < TEST_SIZE; i++)
+//            assertNull(cache.localPeek(i, peekAll));
+//
+//        cache.put(TEST_SIZE, TEST_SIZE);
+//
+//        assertEquals(TEST_SIZE, cache.get(TEST_SIZE));
     }
 
     /** */

@@ -29,11 +29,13 @@ import java.util.concurrent.locks.ReentrantLock;
 import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.IgniteLogger;
 import org.apache.ignite.cluster.ClusterNode;
+import org.apache.ignite.internal.IgniteFutureCancelledCheckedException;
 import org.apache.ignite.internal.IgniteInternalFuture;
 import org.apache.ignite.internal.pagemem.PageIdUtils;
 import org.apache.ignite.internal.processors.affinity.AffinityTopologyVersion;
 import org.apache.ignite.internal.processors.cache.CacheGroupContext;
 import org.apache.ignite.internal.processors.cache.GridCacheSharedContext;
+import org.apache.ignite.internal.processors.cache.IgniteInternalCache;
 import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtLocalPartition;
 import org.apache.ignite.internal.processors.cache.persistence.DataRegion;
 import org.apache.ignite.internal.processors.cache.persistence.file.FilePageStoreManager;
@@ -208,7 +210,7 @@ public class FileRebalanceFuture extends GridFutureAdapter<Boolean> {
                         return true;
 
                     if (log.isInfoEnabled())
-                        log.info("Canceling file rebalancing.");
+                        log.info("Cancelling file rebalancing.");
 
                     cpLsnr.cancelAll();
 
@@ -217,7 +219,8 @@ public class FileRebalanceFuture extends GridFutureAdapter<Boolean> {
                             fut.cancel();
                     }
 
-                    for (FileRebalanceNodeFuture fut : futs.values()) {
+                    // todo eliminate ConcurrentModification
+                    for (FileRebalanceNodeFuture fut : new HashMap<>(futs).values()) {
                         if (!cctx.filePreloader().staleFuture(fut))
                             fut.cancel();
                     }
@@ -367,13 +370,20 @@ public class FileRebalanceFuture extends GridFutureAdapter<Boolean> {
 
         IgniteInternalFuture fut = regions.get(grp.dataRegion().config().getName());
 
-        if (fut.isCancelled())
-            throw new IgniteCheckedException("The cleaning task has been canceled.");
+        if (fut.isCancelled()) {
+            log.info("The cleaning task has been canceled.");
+
+            return;
+        }
 
         if (!fut.isDone() && log.isDebugEnabled())
             log.debug("Wait cleanup [grp=" + grp + "]");
 
-        fut.get();
+        try {
+            fut.get();
+        } catch (IgniteFutureCancelledCheckedException ignore) {
+            // No-op.
+        }
     }
 
     private class PageMemCleanupTask extends GridFutureAdapter {
@@ -408,58 +418,88 @@ public class FileRebalanceFuture extends GridFutureAdapter<Boolean> {
             if (evictedCnt == parts.size()) {
                 DataRegion region = cctx.database().dataRegion(name);
 
-                cctx.database().checkpointReadLock();
-                cancelLock.lock();
+                if (isCancelled())
+                    return;
 
-                try {
-                    if (isCancelled())
-                        return;
+                PageMemoryEx memEx = (PageMemoryEx)region.pageMemory();
 
-                    for (long partGrp : parts) {
-                        int grpId = (int)(partGrp >> 32);
-                        int partId = (int)partGrp;
+                if (log.isDebugEnabled())
+                    log.debug("Cleaning up region " + name);
 
-                        CacheGroupContext grp = cctx.cache().cacheGroup(grpId);
-
-                        int tag = ((PageMemoryEx)grp.dataRegion().pageMemory()).invalidate(grpId, partId);
-
-                        ((FilePageStoreManager)cctx.pageStore()).getStore(grpId, partId).truncate(tag);
-
-                        if (log.isDebugEnabled())
-                            log.debug("Parition truncated [grp=" + cctx.cache().cacheGroup(grpId).cacheOrGroupName() + ", p=" + partId + "]");
-                    }
-
-                    PageMemoryEx memEx = (PageMemoryEx)region.pageMemory();
-
-                    if (log.isDebugEnabled())
-                        log.debug("Cleaning up region " + name);
-
-                    memEx.clearAsync(
-                        (grp, pageId) -> {
+                memEx.clearAsync(
+                    (grp, pageId) -> {
 //                                if (isCancelled())
 //                                    return false;
 
-                            return parts.contains(((long)grp << 32) + PageIdUtils.partId(pageId));
-                        }, true)
-                        .listen(c1 -> {
-                            // todo misleading should be reformulate
+                        return parts.contains(((long)grp << 32) + PageIdUtils.partId(pageId));
+                    }, true)
+                    .listen(c1 -> {
+                        // todo misleading should be reformulate
+//                            cctx.database().checkpointReadLock();
+//                        cancelLock.lock();
+
+                        try {
+//                            try {
                             if (log.isDebugEnabled())
                                 log.debug("Off heap region cleared [node=" + cctx.localNodeId() + ", region=" + name + "]");
 
+                            for (long partGrp : parts) {
+                                int grpId = (int)(partGrp >> 32);
+                                int partId = (int)partGrp;
+
+                                CacheGroupContext grp = cctx.cache().cacheGroup(grpId);
+
+                                int tag = ((PageMemoryEx)grp.dataRegion().pageMemory()).invalidate(grpId, partId);
+
+                                ((FilePageStoreManager)cctx.pageStore()).getStore(grpId, partId).truncate(tag);
+
+                                if (log.isDebugEnabled())
+                                    log.debug("Parition truncated [grp=" + cctx.cache().cacheGroup(grpId).cacheOrGroupName() + ", p=" + partId + "]");
+                            }
+
                             onDone();
-                        });
+                        } catch (IgniteCheckedException e) {
+                            onDone(e);
 
-                    if (!isDone()) {
-                        log.info("Wait for cleanup region " + region);
+                            FileRebalanceFuture.this.onDone(e);
+                        }
+                        finally {
+//                            cancelLock.unlock();
 
-                        get();
-                    }
-                } finally {
-                    cancelLock.unlock();
+//                                cctx.database().checkpointReadUnlock();
+                        }
+                    });
 
-                    cctx.database().checkpointReadUnlock();
+                if (!isDone()) {
+                    log.info("Wait for cleanup region " + region);
+
+                    get();
                 }
+//                }
             }
         }
+
+        /** {@inheritDoc} */
+        @Override public String toString() {
+            return "finished=" + isDone() + ", region=" + name + ", total=" + parts.size() + ", remain=" + (parts.size() - evictedCntr.get());
+        }
+    }
+
+    // todo
+    /** {@inheritDoc} */
+    @Override public String toString() {
+        StringBuilder buf = new StringBuilder();
+
+        buf.append("\n\tNode routines:\n");
+
+        for (FileRebalanceNodeFuture fut : futs.values())
+            buf.append("\t\t" + fut.toString() + "\n");
+
+        buf.append("\n\tMemory regions:\n");
+
+        for (PageMemCleanupTask entry : regions.values())
+            buf.append("\t\t" + entry.toString() + "\n");
+
+        return buf.toString();
     }
 }
