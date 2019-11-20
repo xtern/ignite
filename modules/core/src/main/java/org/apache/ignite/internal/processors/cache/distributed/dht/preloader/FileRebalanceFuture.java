@@ -35,7 +35,6 @@ import org.apache.ignite.internal.pagemem.PageIdUtils;
 import org.apache.ignite.internal.processors.affinity.AffinityTopologyVersion;
 import org.apache.ignite.internal.processors.cache.CacheGroupContext;
 import org.apache.ignite.internal.processors.cache.GridCacheSharedContext;
-import org.apache.ignite.internal.processors.cache.IgniteInternalCache;
 import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtLocalPartition;
 import org.apache.ignite.internal.processors.cache.persistence.DataRegion;
 import org.apache.ignite.internal.processors.cache.persistence.file.FilePageStoreManager;
@@ -77,6 +76,9 @@ public class FileRebalanceFuture extends GridFutureAdapter<Boolean> {
 
     /** */
     private final IgniteLogger log;
+
+    /** */
+    private final Map<Integer, GridDhtPreloaderAssignments> historicalAssignments = new ConcurrentHashMap<>();
 
     /** */
     public FileRebalanceFuture() {
@@ -238,8 +240,6 @@ public class FileRebalanceFuture extends GridFutureAdapter<Boolean> {
 
         return super.onDone(res, err, cancel);
     }
-
-    private final Map<Integer, GridDhtPreloaderAssignments> historicalAssignments = new ConcurrentHashMap<>();
 
     public void onCacheGroupDone(int grpId, UUID nodeId, GridDhtPartitionDemandMessage msg) {
         Set<UUID> remainingNodes = allGroupsMap.get(grpId);

@@ -370,7 +370,6 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
         }
     }
 
-
     public void printDiagnostic() {
         StringBuilder buf = new StringBuilder("\n\nDiagnostic for file rebalancing [node=" + cctx.localNodeId() + ", finished=" + fileRebalanceFut.isDone() + "]");
 
@@ -378,7 +377,7 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
             buf.append(fileRebalanceFut.toString());
 
         if (log.isInfoEnabled())
-            log.info("\n" + buf);
+            log.info(buf.toString());
     }
 
     private String formatMappings(Map<Integer, Map<ClusterNode, Map<Integer, Set<Integer>>>> map) {
@@ -604,16 +603,13 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
 
         CacheGroupContext grp = cctx.cache().cacheGroup(grpId);
 
-        // Save current counter.
-        PartitionUpdateCounter oldCntr = part.dataStore().store(false).partUpdateCounter();
-
         // Save start counter of restored partition.
         long minCntr = part.dataStore().store(false).reinit();
 
         GridFutureAdapter<T2<Long, Long>> endFut = new GridFutureAdapter<>();
 
         if (log.isTraceEnabled())
-            log.info("Schedule partition switch to FULL mode [grp=" + grp.cacheOrGroupName() + ", p=" + part.id() + ", queued=" + cpLsnr.queue.size() + "]");
+            log.info("Schedule partition switch to FULL mode [grp=" + grp.cacheOrGroupName() + ", p=" + part.id() + ", cntr=" + minCntr + ", queued=" + cpLsnr.queue.size() + "]");
 
         cpLsnr.schedule(() -> {
             if (staleFuture(fut))
@@ -621,8 +617,11 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
 
             assert part.dataStore().readOnly() : "cache=" + grpId + " p=" + partId;
 
+            // Save current counter.
+            PartitionUpdateCounter readCntr = part.dataStore().store(true).partUpdateCounter();
+
             // Save current update counter.
-            PartitionUpdateCounter newCntr = part.dataStore().store(false).partUpdateCounter();
+            PartitionUpdateCounter snapshotCntr = part.dataStore().store(false).partUpdateCounter();
 
             part.readOnly(false);
 
@@ -631,12 +630,14 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
             // todo check on large partition
             part.entriesMap(null).map.clear();
 
-            assert oldCntr != newCntr;
+            assert readCntr != snapshotCntr;
 
-            assert newCntr != null : "grp=" + grp.cacheOrGroupName() + ", p=" + partId + ", fullSize=" + part.dataStore().fullSize();
+            assert snapshotCntr != null : "grp=" + grp.cacheOrGroupName() + ", p=" + partId + ", fullSize=" + part.dataStore().fullSize();
+
+            assert readCntr != null;
 
             // todo check empty partition
-            assert newCntr.get() != 0 : "grpId=" + grp.cacheOrGroupName() + ", p=" + partId + ", fullSize=" + part.dataStore().fullSize();
+            assert snapshotCntr.get() != 0 : "grpId=" + grp.cacheOrGroupName() + ", p=" + partId + ", fullSize=" + part.dataStore().fullSize();
 
             AffinityTopologyVersion infinTopVer = new AffinityTopologyVersion(Long.MAX_VALUE, 0);
 
@@ -648,7 +649,7 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
             // todo Consistency check fails sometimes for ATOMIC cache.
             partReleaseFut.listen(c ->
                 endFut.onDone(
-                    new T2<>(minCntr, Math.max(oldCntr == null ? 0 : oldCntr.highestAppliedCounter(), newCntr.highestAppliedCounter()))
+                    new T2<>(minCntr, Math.max(readCntr.highestAppliedCounter(), snapshotCntr.highestAppliedCounter()))
                 )
             );
         });
