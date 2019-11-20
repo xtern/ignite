@@ -720,6 +720,9 @@ public class GridDhtLocalPartition extends GridCacheConcurrentMapImpl implements
         // Make sure current rebalance future is finished before start clearing
         // to avoid clearing currently rebalancing partition (except "initial" dummy rebalance).
         if (clearingRequested) {
+//            if ("cache".equals(grp.cacheOrGroupName()))
+//                U.dumpStack("Requesting part clearing p=" + id());
+
             GridDhtPartitionDemander.RebalanceFuture rebFut =
                 (GridDhtPartitionDemander.RebalanceFuture)grp.preloader().rebalanceFuture();
 

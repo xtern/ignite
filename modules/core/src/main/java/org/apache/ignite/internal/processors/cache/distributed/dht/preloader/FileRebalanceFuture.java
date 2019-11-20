@@ -223,7 +223,7 @@ public class FileRebalanceFuture extends GridFutureAdapter<Boolean> {
 
                     // todo eliminate ConcurrentModification
                     for (FileRebalanceNodeFuture fut : new HashMap<>(futs).values()) {
-                        if (!cctx.filePreloader().staleFuture(fut))
+                        if (!fut.isDone())
                             fut.cancel();
                     }
 
@@ -325,36 +325,55 @@ public class FileRebalanceFuture extends GridFutureAdapter<Boolean> {
 
                 log.info("clearAsync p=" + partId + " cache=" + grp.cacheOrGroupName() + ", topVer=" + topVer);
 
-                part.clearAsync();
+                PageMemCleanupTask task = regions.get(grp.dataRegion().config().getName());
 
-                part.onClearFinished(c -> {
-                    log.info("onClearAsync finished p=" + partId + " cache=" + grp.cacheOrGroupName() + ", topVer=" + topVer);
-                    cancelLock.lock();
+                cancelLock.lock();
 
-                    try {
-                        if (isDone()) {
-                            if (log.isDebugEnabled()) {
-                                log.debug("Page memory cleanup canceled [grp=" + grp.cacheOrGroupName() +
-                                    ", p=" + partId + ", topVer=" + topVer + "]");
-                            }
+                try {
+                    assert !part.isClearing() : "Partition is cleared currently: " + part.id();
 
-                            return;
-                        }
+                    task.onPartitionCleared();
+                }
+                catch (AssertionError | IgniteCheckedException ex) {
+                    log.error("Unable to finish partition cleanup.", ex);
 
-                        PageMemCleanupTask task = regions.get(grp.dataRegion().config().getName());
+                    task.onDone(ex);
 
-                        if (log.isDebugEnabled())
-                            log.debug("OnPartitionCleared [topVer=" + topVer + "]");
+                    onDone(ex);
+                } finally {
+                    cancelLock.unlock();
+                }
 
-                        task.onPartitionCleared();
-                    }
-                    catch (IgniteCheckedException ex) {
-                        onDone(ex);
-                    }
-                    finally {
-                        cancelLock.unlock();
-                    }
-                });
+//                part.clearAsync();
+//
+//                part.onClearFinished(c -> {
+//                    log.info("onClearAsync finished p=" + partId + " cache=" + grp.cacheOrGroupName() + ", topVer=" + topVer);
+//                    cancelLock.lock();
+//
+//                    try {
+//                        if (isDone()) {
+//                            if (log.isDebugEnabled()) {
+//                                log.debug("Page memory cleanup canceled [grp=" + grp.cacheOrGroupName() +
+//                                    ", p=" + partId + ", topVer=" + topVer + "]");
+//                            }
+//
+//                            return;
+//                        }
+//
+//                        PageMemCleanupTask task = regions.get(grp.dataRegion().config().getName());
+//
+//                        if (log.isDebugEnabled())
+//                            log.debug("OnPartitionCleared [topVer=" + topVer + "]");
+//
+//                        task.onPartitionCleared();
+//                    }
+//                    catch (IgniteCheckedException ex) {
+//                        onDone(ex);
+//                    }
+//                    finally {
+//                        cancelLock.unlock();
+//                    }
+//                });
             }
         }
     }

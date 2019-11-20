@@ -59,7 +59,7 @@ import org.apache.ignite.internal.util.lang.IgniteInClosureX;
 import org.apache.ignite.internal.util.typedef.T2;
 import org.apache.ignite.internal.util.typedef.internal.CU;
 
-import static org.apache.ignite.IgniteSystemProperties.IGNITE_PDS_WAL_REBALANCE_THRESHOLD;
+import static org.apache.ignite.IgniteSystemProperties.IGNITE_PDS_FILE_REBALANCE_THRESHOLD;
 import static org.apache.ignite.configuration.IgniteConfiguration.DFLT_IGNITE_PDS_WAL_REBALANCE_THRESHOLD;
 import static org.apache.ignite.internal.events.DiscoveryCustomEvent.EVT_DISCOVERY_CUSTOM_EVT;
 import static org.apache.ignite.internal.processors.cache.GridCacheUtils.UTILITY_CACHE_NAME;
@@ -88,7 +88,7 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
 
     /** todo add default threshold  */
     private static final long FILE_REBALANCE_THRESHOLD = IgniteSystemProperties.getLong(
-        IGNITE_PDS_WAL_REBALANCE_THRESHOLD, DFLT_IGNITE_PDS_WAL_REBALANCE_THRESHOLD);
+        IGNITE_PDS_FILE_REBALANCE_THRESHOLD, DFLT_IGNITE_PDS_WAL_REBALANCE_THRESHOLD);
 
     /** */
     private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock();
@@ -152,10 +152,10 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
 
             Set<Integer> moving = detectMovingPartitions(grp, exchFut);
 
-            if (moving == null)
+            if (moving == null || moving.isEmpty())
                 continue;
 
-            if (log.isDebugEnabled() && !moving.isEmpty())
+            if (log.isDebugEnabled())
                 log.debug("Set READ-ONLY mode for cache=" + grp.cacheOrGroupName() + " parts=" + moving);
 
             for (int p : moving)
@@ -183,7 +183,7 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
             GridDhtLocalPartition part = grp.topology().localPartition(p);
 
             if (part.state() == OWNING)
-                continue;
+                return null;
 
             // Should have partition file supplier to start file rebalance.
             long cntr = cntrsMap.updateCounter(p);
@@ -523,13 +523,21 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
             GridDhtLocalPartition part = grp.topology().localPartition(p);
 
             if (part.state() == OWNING)
-                continue;
+                return false;
 
             assert part.state() == MOVING : "Unexpected partition state [cache=" + grp.cacheOrGroupName() +
                 ", p=" + part.id() + ", state=" + part.state() + "]";
 
             if (exchFut.partitionFileSupplier(grp.groupId(), part.id(), cntrsMap.updateCounter(part.id())) == null)
                 return false;
+        }
+
+        // todo rework this check
+        for (int p = 0; p < parts; p++) {
+            if (!aff.get(p).contains(cctx.localNode()))
+                continue;
+
+            GridDhtLocalPartition part = grp.topology().localPartition(p);
 
             assert part.dataStore().readOnly() : "Expected read-only partition [cache=" + grp.cacheOrGroupName() +
                 ", p=" + part.id() + "]";

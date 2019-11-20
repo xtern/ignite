@@ -47,13 +47,11 @@ import org.apache.ignite.configuration.WALMode;
 import org.apache.ignite.internal.IgniteEx;
 import org.apache.ignite.internal.IgniteInternalFuture;
 import org.apache.ignite.internal.IgniteInterruptedCheckedException;
-import org.apache.ignite.internal.pagemem.PageIdUtils;
 import org.apache.ignite.internal.processors.cache.CacheGroupContext;
 import org.apache.ignite.internal.processors.cache.IgniteInternalCache;
 import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtLocalPartition;
 import org.apache.ignite.internal.processors.cache.persistence.file.FilePageStoreManager;
 import org.apache.ignite.internal.processors.cache.persistence.pagemem.PageMemoryEx;
-import org.apache.ignite.internal.util.typedef.G;
 import org.apache.ignite.internal.util.typedef.internal.U;
 import org.apache.ignite.testframework.GridTestUtils;
 import org.apache.ignite.testframework.junits.WithSystemProperty;
@@ -67,7 +65,7 @@ import org.junit.runners.Parameterized;
 
 import static org.apache.ignite.IgniteSystemProperties.IGNITE_BASELINE_AUTO_ADJUST_ENABLED;
 import static org.apache.ignite.IgniteSystemProperties.IGNITE_FILE_REBALANCE_ENABLED;
-import static org.apache.ignite.IgniteSystemProperties.IGNITE_PDS_WAL_REBALANCE_THRESHOLD;
+import static org.apache.ignite.IgniteSystemProperties.IGNITE_PDS_FILE_REBALANCE_THRESHOLD;
 import static org.apache.ignite.cache.CacheMode.PARTITIONED;
 import static org.apache.ignite.cache.CacheMode.REPLICATED;
 import static org.apache.ignite.cache.CacheWriteSynchronizationMode.FULL_SYNC;
@@ -307,7 +305,7 @@ public class GridCacheFileRebalanceSelfTest extends GridCommonAbstractTest {
     @Test
     @WithSystemProperty(key = IGNITE_FILE_REBALANCE_ENABLED, value = "true")
     @WithSystemProperty(key = IGNITE_BASELINE_AUTO_ADJUST_ENABLED, value = "true")
-    @WithSystemProperty(key = IGNITE_PDS_WAL_REBALANCE_THRESHOLD, value="1")
+    @WithSystemProperty(key = IGNITE_PDS_FILE_REBALANCE_THRESHOLD, value="1")
     public void testUnderConstantLoad() throws Exception {
         cacheWriteSyncMode = FULL_SYNC;
         cacheMode = REPLICATED;
@@ -347,7 +345,7 @@ public class GridCacheFileRebalanceSelfTest extends GridCommonAbstractTest {
     @Test
     @WithSystemProperty(key = IGNITE_FILE_REBALANCE_ENABLED, value = "true")
     @WithSystemProperty(key = IGNITE_BASELINE_AUTO_ADJUST_ENABLED, value = "false")
-    @WithSystemProperty(key = IGNITE_PDS_WAL_REBALANCE_THRESHOLD, value="1")
+    @WithSystemProperty(key = IGNITE_PDS_FILE_REBALANCE_THRESHOLD, value="1")
     public void testUnderConstantLoadPartitioned3nodes() throws Exception {
         cacheMode = PARTITIONED;
         backups = 0;
@@ -432,7 +430,7 @@ public class GridCacheFileRebalanceSelfTest extends GridCommonAbstractTest {
     @Test
     @WithSystemProperty(key = IGNITE_FILE_REBALANCE_ENABLED, value = "true")
     @WithSystemProperty(key = IGNITE_BASELINE_AUTO_ADJUST_ENABLED, value = "true")
-    @WithSystemProperty(key = IGNITE_PDS_WAL_REBALANCE_THRESHOLD, value="1")
+    @WithSystemProperty(key = IGNITE_PDS_FILE_REBALANCE_THRESHOLD, value="1")
     public void checkEvictionOfReadonlyPartition() throws Exception {
         IgniteEx ignite0 = startGrid(0);
 
@@ -534,7 +532,7 @@ public class GridCacheFileRebalanceSelfTest extends GridCommonAbstractTest {
     @Test
     @WithSystemProperty(key = IGNITE_FILE_REBALANCE_ENABLED, value = "true")
     @WithSystemProperty(key = IGNITE_BASELINE_AUTO_ADJUST_ENABLED, value = "false")
-    @WithSystemProperty(key = IGNITE_PDS_WAL_REBALANCE_THRESHOLD, value="1")
+    @WithSystemProperty(key = IGNITE_PDS_FILE_REBALANCE_THRESHOLD, value="1")
     public void testMultipleCachesThreeNodesSequence() throws Exception {
         List<ClusterNode> blt = new ArrayList<>();
 
@@ -580,7 +578,7 @@ public class GridCacheFileRebalanceSelfTest extends GridCommonAbstractTest {
     @Test
     @WithSystemProperty(key = IGNITE_FILE_REBALANCE_ENABLED, value = "true")
     @WithSystemProperty(key = IGNITE_BASELINE_AUTO_ADJUST_ENABLED, value = "false")
-    @WithSystemProperty(key = IGNITE_PDS_WAL_REBALANCE_THRESHOLD, value="1")
+    @WithSystemProperty(key = IGNITE_PDS_FILE_REBALANCE_THRESHOLD, value="1")
     public void testMultipleCachesMultipleNodesSequencePartitioned() throws Exception {
         cacheMode = PARTITIONED;
         parts = 128;
@@ -621,7 +619,7 @@ public class GridCacheFileRebalanceSelfTest extends GridCommonAbstractTest {
     @Test
     @WithSystemProperty(key = IGNITE_FILE_REBALANCE_ENABLED, value = "true")
     @WithSystemProperty(key = IGNITE_BASELINE_AUTO_ADJUST_ENABLED, value = "false")
-    @WithSystemProperty(key = IGNITE_PDS_WAL_REBALANCE_THRESHOLD, value="1")
+    @WithSystemProperty(key = IGNITE_PDS_FILE_REBALANCE_THRESHOLD, value="1")
     public void testMultipleCachesMultipleNodesStartStopStableTopologyPartitionedNoCoordinatorChange() throws Exception {
         cacheMode = PARTITIONED;
         parts = 128;
@@ -676,7 +674,7 @@ public class GridCacheFileRebalanceSelfTest extends GridCommonAbstractTest {
     @Test
     @WithSystemProperty(key = IGNITE_FILE_REBALANCE_ENABLED, value = "true")
     @WithSystemProperty(key = IGNITE_BASELINE_AUTO_ADJUST_ENABLED, value = "false")
-    @WithSystemProperty(key = IGNITE_PDS_WAL_REBALANCE_THRESHOLD, value="1")
+    @WithSystemProperty(key = IGNITE_PDS_FILE_REBALANCE_THRESHOLD, value="1")
     public void testMultipleCachesMultipleNodesStartStopStableTopologyPartitionedNoCoordinatorChangeWithConstantLoad() throws Exception {
         cacheMode = PARTITIONED;
         cacheWriteSyncMode = FULL_SYNC;
@@ -759,7 +757,7 @@ public class GridCacheFileRebalanceSelfTest extends GridCommonAbstractTest {
     @Test
     @WithSystemProperty(key = IGNITE_FILE_REBALANCE_ENABLED, value = "true")
     @WithSystemProperty(key = IGNITE_BASELINE_AUTO_ADJUST_ENABLED, value = "false")
-    @WithSystemProperty(key = IGNITE_PDS_WAL_REBALANCE_THRESHOLD, value="1")
+    @WithSystemProperty(key = IGNITE_PDS_FILE_REBALANCE_THRESHOLD, value="1")
     public void testMultipleCachesMultipleNodesSequencePartitionedWithConstantLoad() throws Exception {
         cacheMode = PARTITIONED;
         parts = 128;
@@ -837,7 +835,7 @@ public class GridCacheFileRebalanceSelfTest extends GridCommonAbstractTest {
     @Test
     @WithSystemProperty(key = IGNITE_FILE_REBALANCE_ENABLED, value = "true")
     @WithSystemProperty(key = IGNITE_BASELINE_AUTO_ADJUST_ENABLED, value = "false")
-    @WithSystemProperty(key = IGNITE_PDS_WAL_REBALANCE_THRESHOLD, value="1")
+    @WithSystemProperty(key = IGNITE_PDS_FILE_REBALANCE_THRESHOLD, value="1")
     public void testMultipleCachesCancelRebalance() throws Exception {
         List<ClusterNode> blt = new ArrayList<>();
 
@@ -885,14 +883,14 @@ public class GridCacheFileRebalanceSelfTest extends GridCommonAbstractTest {
     @Test
     @WithSystemProperty(key = IGNITE_FILE_REBALANCE_ENABLED, value = "true")
     @WithSystemProperty(key = IGNITE_BASELINE_AUTO_ADJUST_ENABLED, value = "false")
-    @WithSystemProperty(key = IGNITE_PDS_WAL_REBALANCE_THRESHOLD, value="1")
+    @WithSystemProperty(key = IGNITE_PDS_FILE_REBALANCE_THRESHOLD, value="1")
     public void testMultipleCachesCancelRebalancePartitioned() throws Exception {
         cacheMode = PARTITIONED;
         backups = 0;
 
         List<ClusterNode> blt = new ArrayList<>();
 
-        int entriesCnt = 400_000;
+        int entriesCnt = 100_000;
 
         IgniteEx ignite0 = startGrid(0);
 
@@ -924,6 +922,11 @@ public class GridCacheFileRebalanceSelfTest extends GridCommonAbstractTest {
         awaitPartitionMapExchange();
 
         U.sleep(500);
+
+        verifyCacheContent(ignite2.cache(CACHE1), entriesCnt);
+        verifyCacheContent(ignite2.cache(CACHE2), entriesCnt);
+
+        log.info("REDO VERIFICATION");
 
         verifyCacheContent(ignite2.cache(CACHE1), entriesCnt);
         verifyCacheContent(ignite2.cache(CACHE2), entriesCnt);
@@ -976,7 +979,7 @@ public class GridCacheFileRebalanceSelfTest extends GridCommonAbstractTest {
     @Test
     @WithSystemProperty(key = IGNITE_FILE_REBALANCE_ENABLED, value = "true")
     @WithSystemProperty(key = IGNITE_BASELINE_AUTO_ADJUST_ENABLED, value = "false")
-    @WithSystemProperty(key = IGNITE_PDS_WAL_REBALANCE_THRESHOLD, value="1")
+    @WithSystemProperty(key = IGNITE_PDS_FILE_REBALANCE_THRESHOLD, value="1")
     public void testMultipleCachesCancelRebalanceConstantLoad() throws Exception {
         List<ClusterNode> blt = new ArrayList<>();
 
@@ -1036,7 +1039,7 @@ public class GridCacheFileRebalanceSelfTest extends GridCommonAbstractTest {
     @Test
     @WithSystemProperty(key = IGNITE_FILE_REBALANCE_ENABLED, value = "true")
     @WithSystemProperty(key = IGNITE_BASELINE_AUTO_ADJUST_ENABLED, value = "false")
-    @WithSystemProperty(key = IGNITE_PDS_WAL_REBALANCE_THRESHOLD, value="1")
+    @WithSystemProperty(key = IGNITE_PDS_FILE_REBALANCE_THRESHOLD, value="1")
     public void testMultipleCachesCancelRebalanceConstantLoadPartitioned() throws Exception {
         cacheMode = PARTITIONED;
         backups = 0;

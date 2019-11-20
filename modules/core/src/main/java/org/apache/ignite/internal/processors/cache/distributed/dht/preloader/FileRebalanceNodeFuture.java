@@ -35,7 +35,6 @@ import org.apache.ignite.internal.util.GridConcurrentHashSet;
 import org.apache.ignite.internal.util.future.GridFutureAdapter;
 import org.apache.ignite.internal.util.tostring.GridToStringInclude;
 import org.apache.ignite.internal.util.typedef.F;
-import org.apache.ignite.internal.util.typedef.internal.S;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -282,8 +281,17 @@ public class FileRebalanceNodeFuture extends GridFutureAdapter<Boolean> {
         boolean r = super.onDone(res, err, cancel);
 
         try {
-            if (snapFut != null && !snapFut.isDone())
+            if (log.isDebugEnabled())
+                log.debug("Stopping fiel rebalance future: " + cctx.localNodeId() + " -> " + nodeId());
+
+            if (snapFut != null && !snapFut.isDone()) {
+                if (log.isInfoEnabled())
+                    log.info("Cancelling snapshot creation: " + nodeId());
+
                 snapFut.cancel();
+            }
+            else if (snapFut != null && log.isDebugEnabled())
+                log.debug("snapFut already done: " + nodeId());
         }
         catch (IgniteCheckedException e) {
             log.error("Unable to finish file rebalancing node routine", e);
