@@ -2670,6 +2670,8 @@ public class GridDhtPartitionTopologyImpl implements GridDhtPartitionTopology {
         try {
             for (GridDhtLocalPartition locPart : grp.topology().currentLocalPartitions()) {
                 if (locPart.state() == MOVING) {
+                    assert !locPart.dataStore().readOnly() : "grp=" + grp.cacheOrGroupName() + " p=" + locPart.id();
+
                     boolean reserved = locPart.reserve();
 
                     try {

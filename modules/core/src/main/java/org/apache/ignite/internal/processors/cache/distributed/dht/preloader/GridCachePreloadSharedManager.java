@@ -80,7 +80,7 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
     public static final String REBALANCE_CP_REASON = "Rebalance has been scheduled [grps=%s]";
 
     /** */
-    private static final Runnable NO_OP = () -> {};
+//    private static final Runnable NO_OP = () -> {};
 
     /** todo */
     private static final boolean FILE_REBALANCE_ENABLED = IgniteSystemProperties.getBoolean(
@@ -176,6 +176,9 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
 
         Set<Integer> movingParts = new HashSet<>();
 
+        // todo
+        boolean noMoving = false;
+
         for (int p = 0; p < partitions; p++) {
             if (!aff.get(p).contains(cctx.localNode()))
                 continue;
@@ -183,13 +186,20 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
             GridDhtLocalPartition part = grp.topology().localPartition(p);
 
             if (part.state() == OWNING)
-                return null;
+                noMoving = true;
 
             // Should have partition file supplier to start file rebalance.
             long cntr = cntrsMap.updateCounter(p);
 
             if (exchFut.partitionFileSupplier(grp.groupId(), p, cntr) == null)
-                return null;
+                noMoving = true;
+
+            if (noMoving) {
+                // todo
+                part.dataStore().readOnly(false);
+
+                continue;
+            }
 
             // If partition is currently rented prevent destroy and start clearing process.
             // todo think about reserve/clear
@@ -209,7 +219,7 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
             movingParts.add(p);
         }
 
-        return movingParts;
+        return noMoving ? null : movingParts;
     }
 
     /**
@@ -236,6 +246,9 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
     }
 
     private boolean inrerruptRebalanceRequired(GridDhtPartitionsExchangeFuture fut) {
+//        if (true)
+//            return false;
+
         DiscoveryEvent evt = fut.firstEvent();
 
 //        if (evt.type() != EVT_DISCOVERY_CUSTOM_EVT)
@@ -283,13 +296,13 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
             remapAssignments(assignsMap, exchFut);
 
         if (nodeOrderAssignsMap.isEmpty())
-            return NO_OP;
+            return null;
 
         if (!cctx.kernalContext().grid().isRebalanceEnabled()) {
             if (log.isDebugEnabled())
                 log.debug("Cancel partition file demand because rebalance disabled on current node.");
 
-            return NO_OP;
+            return null;
         }
 
         if (log.isTraceEnabled())

@@ -312,6 +312,8 @@ public class FileRebalanceFuture extends GridFutureAdapter<Boolean> {
             return;
         }
 
+//        cancelLock.lock();
+
         for (Map.Entry<Integer, Set<Integer>> e : allPartsMap.entrySet()) {
             int grpId = e.getKey();
 

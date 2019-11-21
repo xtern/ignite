@@ -781,7 +781,7 @@ public abstract class IgnitePdsCacheRebalancingAbstractTest extends GridCommonAb
 
                     for (GridDhtLocalPartition part : ig0.cachex(CACHE).context().topology().currentLocalPartitions()) {
                         if (cntrs.containsKey(part.id()))
-                            assertEquals(String.valueOf(part.id()), (long)cntrs.get(part.id()), part.updateCounter());
+                            assertEquals("node=" + ig0.cluster().localNode().id() + " p=" + part.id() + " state=" + part.state() + " readonly=" + part.dataStore().readOnly(), (long)cntrs.get(part.id()), part.updateCounter());
                         else
                             cntrs.put(part.id(), part.updateCounter());
                     }
