@@ -475,6 +475,8 @@ public class WalStateManager extends GridCacheSharedManagerAdapter {
      * @param topVer Topology version.
      */
     public void onGroupRebalanceFinished(int grpId, AffinityTopologyVersion topVer) {
+        assertNoReadOnlyPartitions(grpId);
+
         TemporaryDisabledWal session0 = tmpDisabledWal;
 
         if (session0 == null || session0.topVer.compareTo(topVer) > 0)
@@ -541,6 +543,14 @@ public class WalStateManager extends GridCacheSharedManagerAdapter {
                 }
             });
         }
+    }
+
+    // todo for debug only
+    private void assertNoReadOnlyPartitions(int grpId) {
+        CacheGroupContext grp = cctx.cache().cacheGroup(grpId);
+
+        for (GridDhtLocalPartition part : grp.topology().currentLocalPartitions())
+            assert !part.dataStore().readOnly() : "node=" + cctx.localNodeId() + ", grp=" + grp.cacheOrGroupName() + ", p=" + part.id();
     }
 
     /**

@@ -119,13 +119,13 @@ public abstract class IgnitePdsCacheRebalancingAbstractTest extends GridCommonAb
             .setRebalanceBatchesPrefetchCount(2)
             .setWriteSynchronizationMode(CacheWriteSynchronizationMode.FULL_SYNC);
 
-//        CacheConfiguration ccfg2 = cacheConfiguration(INDEXED_CACHE)
-//            .setBackups(2)
-//            .setAffinity(new RendezvousAffinityFunction(false, 32))
-//            .setWriteSynchronizationMode(CacheWriteSynchronizationMode.FULL_SYNC);
-//
-//        CacheConfiguration ccfg3 = cacheConfiguration(INDEXED_CACHE_IN_MEMORY)
-//            .setDataRegionName(IN_MEMORY_REGION);
+        CacheConfiguration ccfg2 = cacheConfiguration(INDEXED_CACHE)
+            .setBackups(2)
+            .setAffinity(new RendezvousAffinityFunction(false, 32))
+            .setWriteSynchronizationMode(CacheWriteSynchronizationMode.FULL_SYNC);
+
+        CacheConfiguration ccfg3 = cacheConfiguration(INDEXED_CACHE_IN_MEMORY)
+            .setDataRegionName(IN_MEMORY_REGION);
 
         QueryEntity qryEntity = new QueryEntity(Integer.class.getName(), TestValue.class.getName());
 
@@ -140,13 +140,13 @@ public abstract class IgnitePdsCacheRebalancingAbstractTest extends GridCommonAb
 
         qryEntity.setIndexes(Collections.singleton(qryIdx));
 
-//        ccfg2.setQueryEntities(Collections.singleton(qryEntity));
-//        ccfg3.setQueryEntities(Collections.singleton(qryEntity));
+        ccfg2.setQueryEntities(Collections.singleton(qryEntity));
+        ccfg3.setQueryEntities(Collections.singleton(qryEntity));
 
         List<CacheConfiguration> cacheCfgs = new ArrayList<>();
         cacheCfgs.add(ccfg1);
-//        cacheCfgs.add(ccfg2);
-//        cacheCfgs.add(ccfg3);
+        cacheCfgs.add(ccfg2);
+        cacheCfgs.add(ccfg3);
 
         if (filteredCacheEnabled && !gridName.endsWith("0")) {
             CacheConfiguration ccfg4 = cacheConfiguration(FILTERED_CACHE)
@@ -348,6 +348,9 @@ public abstract class IgnitePdsCacheRebalancingAbstractTest extends GridCommonAb
      * @throws Exception If failed.
      */
     @Test
+    @WithSystemProperty(key = IGNITE_FILE_REBALANCE_ENABLED, value = "true")
+    @WithSystemProperty(key = IGNITE_BASELINE_AUTO_ADJUST_ENABLED, value = "false")
+    @WithSystemProperty(key = IGNITE_PDS_FILE_REBALANCE_THRESHOLD, value="1")
     public void testTopologyChangesWithConstantLoad() throws Exception {
         final long timeOut = U.currentTimeMillis() + 5 * 60 * 1000;
 

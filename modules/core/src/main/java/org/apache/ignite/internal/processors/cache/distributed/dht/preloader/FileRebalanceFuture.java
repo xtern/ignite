@@ -110,6 +110,10 @@ public class FileRebalanceFuture extends GridFutureAdapter<Boolean> {
             initialize(assignsMap);
     }
 
+    public boolean isPreloading(int grpId) {
+        return allGroupsMap.containsKey(grpId) && !isDone();
+    }
+
     /**
      * Initialize rebalancing mappings.
      *

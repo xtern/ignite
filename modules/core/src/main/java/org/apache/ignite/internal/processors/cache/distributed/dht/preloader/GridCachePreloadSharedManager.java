@@ -150,6 +150,8 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
             if (!fileRebalanceSupported(grp))
                 continue;
 
+            assert !isPreloading(grp.groupId()) : "Cache currently preloading [grp=" + grp.cacheOrGroupName() + "]";
+
             Set<Integer> moving = detectMovingPartitions(grp, exchFut);
 
             if (moving == null || moving.isEmpty())
@@ -179,9 +181,16 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
         // todo
         boolean noMoving = false;
 
+        boolean bigEnough = false;
+
+        Map<Integer, Long> globalSizes = grp.topology().globalPartSizes();
+
         for (int p = 0; p < partitions; p++) {
             if (!aff.get(p).contains(cctx.localNode()))
                 continue;
+
+            if (!bigEnough && globalSizes.get(p) >= FILE_REBALANCE_THRESHOLD)
+                bigEnough = true;
 
             GridDhtLocalPartition part = grp.topology().localPartition(p);
 
@@ -219,7 +228,12 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
             movingParts.add(p);
         }
 
-        return noMoving ? null : movingParts;
+        return noMoving || !bigEnough ? null : movingParts;
+    }
+
+    // todo currently used only for debugging
+    public boolean isPreloading(int grpId) {
+        return fileRebalanceFut.isPreloading(grpId);
     }
 
     /**
@@ -384,13 +398,17 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
     }
 
     public void printDiagnostic() {
+        if (log.isInfoEnabled())
+            log.info(debugInfo());
+    }
+
+    private String debugInfo() {
         StringBuilder buf = new StringBuilder("\n\nDiagnostic for file rebalancing [node=" + cctx.localNodeId() + ", finished=" + fileRebalanceFut.isDone() + "]");
 
         if (!fileRebalanceFut.isDone())
             buf.append(fileRebalanceFut.toString());
 
-        if (log.isInfoEnabled())
-            log.info(buf.toString());
+        return buf.toString();
     }
 
     private String formatMappings(Map<Integer, Map<ClusterNode, Map<Integer, Set<Integer>>>> map) {
@@ -520,7 +538,7 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
 
         if (!fileRebalanceSupported(grp, assignments.keySet()))
             return false;
-//
+
         // onExchangeDone should create all partitions
         AffinityAssignment aff = grp.affinity().readyAffinity(exchFut.topologyVersion());
 
@@ -545,6 +563,29 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
                 return false;
         }
 
+        Map<Integer, Long> globalSizes = grp.topology().globalPartSizes();
+
+        boolean enoughData = false;
+
+        // Enabling file rebalancing only when we have at least one big enough partition.
+        for (Long partSize : globalSizes.values()) {
+            if (partSize >= FILE_REBALANCE_THRESHOLD) {
+                enoughData = true;
+
+                break;
+            }
+        }
+
+        if (!enoughData)
+            return false;
+
+        // For now mixed rebalancing modes are not supported.
+        for (GridDhtPartitionDemandMessage msg : assignments.values()) {
+            if (msg.partitions().hasHistorical())
+                return false;
+        }
+
+        // todo for debug purposes only
         // todo rework this check
         for (int p = 0; p < parts; p++) {
             if (!aff.get(p).contains(cctx.localNode()))
@@ -556,21 +597,7 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
                 ", p=" + part.id() + "]";
         }
 
-        // For now mixed rebalancing modes are not supported.
-        for (GridDhtPartitionDemandMessage msg : assignments.values()) {
-            if (msg.partitions().hasHistorical())
-                return false;
-        }
-
-        Map<Integer, Long> globalSizes = grp.topology().globalPartSizes();
-
-        // Enabling file rebalancing only when we have at least one big enough partition.
-        for (Long partSize : globalSizes.values()) {
-            if (partSize >= FILE_REBALANCE_THRESHOLD)
-                return true;
-        }
-
-        return false;
+        return true;
     }
 
     /**
