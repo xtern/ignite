@@ -1430,16 +1430,16 @@ public class GridDhtPartitionsExchangeFuture extends GridDhtTopologyFutureAdapte
 
         assert !cctx.kernalContext().clientNode();
 
-        if (cctx.filePreloader() != null) {
-            cctx.exchange().exchangerBlockingSectionBegin();
-
-            try {
-                cctx.filePreloader().onTopologyChanged(this);
-            }
-            finally {
-                cctx.exchange().exchangerBlockingSectionEnd();
-            }
-        }
+//        if (cctx.filePreloader() != null) {
+//            cctx.exchange().exchangerBlockingSectionBegin();
+//
+//            try {
+//                cctx.filePreloader().onTopologyChanged(this);
+//            }
+//            finally {
+//                cctx.exchange().exchangerBlockingSectionEnd();
+//            }
+//        }
 
         for (CacheGroupContext grp : cctx.cache().cacheGroups()) {
             if (grp.isLocal())
@@ -2309,11 +2309,11 @@ public class GridDhtPartitionsExchangeFuture extends GridDhtTopologyFutureAdapte
 
             cctx.database().releaseHistoryForExchange();
 
-            if (cctx.filePreloader() != null)
-                cctx.filePreloader().onExchangeDone(this);
-
             if (err == null) {
                 cctx.database().rebuildIndexesIfNeeded(this);
+
+                if (cctx.filePreloader() != null)
+                    cctx.filePreloader().onExchangeDone(this, res);
 
                 for (CacheGroupContext grp : cctx.cache().cacheGroups()) {
                     if (!grp.isLocal())

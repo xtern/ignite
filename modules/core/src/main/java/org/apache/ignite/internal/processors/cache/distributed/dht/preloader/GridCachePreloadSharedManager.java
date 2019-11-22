@@ -36,15 +36,12 @@ import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.IgniteSystemProperties;
 import org.apache.ignite.cache.CacheRebalanceMode;
 import org.apache.ignite.cluster.ClusterNode;
-import org.apache.ignite.events.DiscoveryEvent;
 import org.apache.ignite.internal.GridKernalContext;
 import org.apache.ignite.internal.IgniteFeatures;
 import org.apache.ignite.internal.IgniteInternalFuture;
-import org.apache.ignite.internal.events.DiscoveryCustomEvent;
 import org.apache.ignite.internal.processors.affinity.AffinityAssignment;
 import org.apache.ignite.internal.processors.affinity.AffinityTopologyVersion;
 import org.apache.ignite.internal.processors.cache.CacheGroupContext;
-import org.apache.ignite.internal.processors.cache.DynamicCacheChangeBatch;
 import org.apache.ignite.internal.processors.cache.GridCacheSharedManagerAdapter;
 import org.apache.ignite.internal.processors.cache.PartitionUpdateCounter;
 import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtLocalPartition;
@@ -52,16 +49,15 @@ import org.apache.ignite.internal.processors.cache.persistence.DbCheckpointListe
 import org.apache.ignite.internal.processors.cache.persistence.GridCacheDatabaseSharedManager;
 import org.apache.ignite.internal.processors.cache.persistence.file.FilePageStore;
 import org.apache.ignite.internal.processors.cache.persistence.file.FilePageStoreManager;
-import org.apache.ignite.internal.processors.cache.persistence.snapshot.SnapshotDiscoveryMessage;
 import org.apache.ignite.internal.processors.cache.persistence.snapshot.SnapshotListener;
 import org.apache.ignite.internal.util.future.GridFutureAdapter;
 import org.apache.ignite.internal.util.lang.IgniteInClosureX;
 import org.apache.ignite.internal.util.typedef.T2;
 import org.apache.ignite.internal.util.typedef.internal.CU;
+import org.jetbrains.annotations.Nullable;
 
 import static org.apache.ignite.IgniteSystemProperties.IGNITE_PDS_FILE_REBALANCE_THRESHOLD;
 import static org.apache.ignite.configuration.IgniteConfiguration.DFLT_IGNITE_PDS_WAL_REBALANCE_THRESHOLD;
-import static org.apache.ignite.internal.events.DiscoveryCustomEvent.EVT_DISCOVERY_CUSTOM_EVT;
 import static org.apache.ignite.internal.processors.cache.GridCacheUtils.UTILITY_CACHE_NAME;
 import static org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtPartitionState.MOVING;
 import static org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtPartitionState.OWNING;
@@ -128,10 +124,21 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
     }
 
     // todo logic duplication with preload.addAssignment should be eliminated
-    public void onExchangeDone(GridDhtPartitionsExchangeFuture exchFut) {
+    public void onExchangeDone(GridDhtPartitionsExchangeFuture exchFut, @Nullable AffinityTopologyVersion res) {
         assert exchFut != null;
 
+        if (res == null)
+            return;
+
         if (!FILE_REBALANCE_ENABLED)
+            return;
+
+        AffinityTopologyVersion lastAffChangeTopVer =
+            cctx.exchange().lastAffinityChangedTopologyVersion(res);
+
+        AffinityTopologyVersion rebTopVer = cctx.exchange().rebalanceTopologyVersion();
+
+        if (lastAffChangeTopVer.compareTo(rebTopVer) <= 0)
             return;
 
         GridDhtPartitionExchangeId exchId = exchFut.exchangeId();
@@ -143,8 +150,9 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
             return;
         }
 
-        if (log.isDebugEnabled())
-            log.debug("Preparing to start rebalancing: " + exchId);
+        // should interrupt current rebalance
+        if (!fileRebalanceFut.isDone())
+            fileRebalanceFut.cancel();
 
         for (CacheGroupContext grp : cctx.cache().cacheGroups()) {
             if (!fileRebalanceSupported(grp))
@@ -236,59 +244,59 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
         return fileRebalanceFut.isPreloading(grpId);
     }
 
-    /**
-     * @param lastFut Last future.
-     */
-    public void onTopologyChanged(GridDhtPartitionsExchangeFuture lastFut) {
-        FileRebalanceFuture fut0 = fileRebalanceFut;
+//    /**
+//     * @param lastFut Last future.
+//     */
+//    public void onTopologyChanged(GridDhtPartitionsExchangeFuture lastFut) {
+//        FileRebalanceFuture fut0 = fileRebalanceFut;
+//
+//        if (!fut0.isDone()) {
+//            if (!inrerruptRebalanceRequired(lastFut)) {
+//                log.info("Topology changed, but rebalance not interrupted [exch=" + lastFut + "]");
+//
+//                return;
+//            }
+//
+//            if (fut0.isDone())
+//                return;
+//
+//            if (log.isDebugEnabled())
+//                log.debug("Topology changed - canceling file rebalance [fut="+lastFut+"]");
+//
+//            fut0.cancel();
+//        }
+//    }
 
-        if (!fut0.isDone()) {
-            if (!inrerruptRebalanceRequired(lastFut)) {
-                log.info("Topology changed, but rebalance not interrupted [exch=" + lastFut + "]");
-
-                return;
-            }
-
-            if (fut0.isDone())
-                return;
-
-            if (log.isDebugEnabled())
-                log.debug("Topology changed - canceling file rebalance [fut="+lastFut+"]");
-
-            fut0.cancel();
-        }
-    }
-
-    private boolean inrerruptRebalanceRequired(GridDhtPartitionsExchangeFuture fut) {
-//        if (true)
-//            return false;
-
-        DiscoveryEvent evt = fut.firstEvent();
-
-//        if (evt.type() != EVT_DISCOVERY_CUSTOM_EVT)
-//            return true;
-
-        if (evt.type() == EVT_DISCOVERY_CUSTOM_EVT) {
-            DiscoveryCustomEvent customEvent = ((DiscoveryCustomEvent)evt);
-
-            if (customEvent.customMessage() instanceof DynamicCacheChangeBatch && fut.exchangeActions() != null)
-                return true;
-
-            return customEvent.customMessage() instanceof SnapshotDiscoveryMessage &&
-                ((SnapshotDiscoveryMessage)customEvent.customMessage()).needAssignPartitions();
-
-        }
-
-        if (fut.exchangeActions() != null) {
-            if (fut.exchangeActions().activate())
-                return true;
-
-            if (fut.exchangeActions().changedBaseline())
-                return true;
-        }
-
-        return true;
-    }
+//    private boolean inrerruptRebalanceRequired(GridDhtPartitionsExchangeFuture fut) {
+////        if (true)
+////            return false;
+//
+//        DiscoveryEvent evt = fut.firstEvent();
+//
+////        if (evt.type() != EVT_DISCOVERY_CUSTOM_EVT)
+////            return true;
+//
+//        if (evt.type() == EVT_DISCOVERY_CUSTOM_EVT) {
+//            DiscoveryCustomEvent customEvent = ((DiscoveryCustomEvent)evt);
+//
+//            if (customEvent.customMessage() instanceof DynamicCacheChangeBatch && fut.exchangeActions() != null)
+//                return true;
+//
+//            return customEvent.customMessage() instanceof SnapshotDiscoveryMessage &&
+//                ((SnapshotDiscoveryMessage)customEvent.customMessage()).needAssignPartitions();
+//
+//        }
+//
+//        if (fut.exchangeActions() != null) {
+//            if (fut.exchangeActions().activate())
+//                return true;
+//
+//            if (fut.exchangeActions().changedBaseline())
+//                return true;
+//        }
+//
+//        return true;
+//    }
 
     /**
      * This method initiates new file rebalance process from given {@code assignments} by creating new file

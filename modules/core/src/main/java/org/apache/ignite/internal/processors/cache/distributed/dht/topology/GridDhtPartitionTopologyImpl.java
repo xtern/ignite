@@ -2632,6 +2632,8 @@ public class GridDhtPartitionTopologyImpl implements GridDhtPartitionTopology {
 
     /** {@inheritDoc} */
     @Override public boolean own(GridDhtLocalPartition part) {
+        assert !part.dataStore().readOnly() : "grp=" + grp.cacheOrGroupName() + " p=" + part.id();
+
         lock.writeLock().lock();
 
         try {
@@ -2669,8 +2671,6 @@ public class GridDhtPartitionTopologyImpl implements GridDhtPartitionTopology {
 
         try {
             for (GridDhtLocalPartition locPart : grp.topology().currentLocalPartitions()) {
-                assert !locPart.dataStore().readOnly() : "grp=" + grp.cacheOrGroupName() + " p=" + locPart.id();
-
                 if (locPart.state() == MOVING) {
                     boolean reserved = locPart.reserve();
 
@@ -2678,7 +2678,7 @@ public class GridDhtPartitionTopologyImpl implements GridDhtPartitionTopology {
                         if (reserved && locPart.state() == MOVING &&
                             lastAffChangeVer.compareTo(rebFinishedTopVer) <= 0 &&
                             rebFinishedTopVer.compareTo(lastTopChangeVer) <= 0)
-                                grp.topology().own(locPart);
+                            grp.topology().own(locPart);
                     }
                     finally {
                         if (reserved)

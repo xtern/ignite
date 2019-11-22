@@ -831,7 +831,9 @@ public class GridDhtLocalPartition extends GridCacheConcurrentMapImpl implements
      * @return {@code True} if partition has no reservations and empty.
      */
     private boolean freeAndEmpty(long state) {
-        return isEmpty() && getSize(state) == 0 && getReservations(state) == 0;
+        // todo this is a workaround - parts should be switched to full and evicted as usual
+        // todo what to do with initialized partitions - if datastore was already initied
+        return (readOnly() || (isEmpty() && getSize(state) == 0)) && getReservations(state) == 0;
     }
 
     /**

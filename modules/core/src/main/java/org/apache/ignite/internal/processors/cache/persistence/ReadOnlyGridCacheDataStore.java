@@ -222,7 +222,7 @@ public class ReadOnlyGridCacheDataStore implements CacheDataStore {
 
     /** {@inheritDoc} */
     @Override public long fullSize() {
-        return delegate.fullSize();
+        return 0;
     }
 
     /** {@inheritDoc} */
