@@ -37,6 +37,7 @@ import org.apache.ignite.internal.processors.cache.CacheGroupContext;
 import org.apache.ignite.internal.processors.cache.GridCacheSharedContext;
 import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtLocalPartition;
 import org.apache.ignite.internal.processors.cache.persistence.DataRegion;
+import org.apache.ignite.internal.processors.cache.persistence.GridCacheOffheapManager;
 import org.apache.ignite.internal.processors.cache.persistence.file.FilePageStoreManager;
 import org.apache.ignite.internal.processors.cache.persistence.pagemem.PageMemoryEx;
 import org.apache.ignite.internal.util.GridConcurrentHashSet;
@@ -338,7 +339,7 @@ public class FileRebalanceFuture extends GridFutureAdapter<Boolean> {
                 try {
                     assert !part.isClearing() : "Partition is cleared currently: " + part.id();
 
-                    task.onPartitionCleared();
+                    task.onPartitionCleared(grp.topology().localPartition(partId));
                 }
                 catch (AssertionError | IgniteCheckedException ex) {
                     log.error("Unable to finish partition cleanup.", ex);
@@ -426,10 +427,20 @@ public class FileRebalanceFuture extends GridFutureAdapter<Boolean> {
 
         /** {@inheritDoc} */
         @Override public boolean cancel() {
-            return onDone(null, null, true);
+            //return onDone(null, null, true);
+            System.out.println("fake cancel - will wait cleanup " + name);
+
+            try {
+                get();
+            }
+            catch (IgniteCheckedException e) {
+                e.printStackTrace();
+            }
+
+            return false;
         }
 
-        public void onPartitionCleared() throws IgniteCheckedException {
+        public void onPartitionCleared(GridDhtLocalPartition partition) throws IgniteCheckedException {
             if (isCancelled())
                 return;
 
@@ -439,6 +450,8 @@ public class FileRebalanceFuture extends GridFutureAdapter<Boolean> {
 
             if (log.isDebugEnabled())
                 log.debug("Partition cleared [remain=" + (parts.size() - evictedCnt) + "]");
+
+            partition.reserve();
 
             if (evictedCnt == parts.size()) {
                 DataRegion region = cctx.database().dataRegion(name);
@@ -461,6 +474,7 @@ public class FileRebalanceFuture extends GridFutureAdapter<Boolean> {
                     .listen(c1 -> {
                         // todo misleading should be reformulate
 //                            cctx.database().checkpointReadLock();
+                        cctx.database().checkpointReadLock();
 //                        cancelLock.lock();
 
                         try {
@@ -480,6 +494,12 @@ public class FileRebalanceFuture extends GridFutureAdapter<Boolean> {
 
                                 if (log.isDebugEnabled())
                                     log.debug("Parition truncated [grp=" + cctx.cache().cacheGroup(grpId).cacheOrGroupName() + ", p=" + partId + "]");
+
+                                GridDhtLocalPartition part = grp.topology().localPartition(partId);
+
+                                ((GridCacheOffheapManager.GridCacheDataStore)part.dataStore().store(false)).close();
+
+                                part.release();
                             }
 
                             onDone();
@@ -491,14 +511,16 @@ public class FileRebalanceFuture extends GridFutureAdapter<Boolean> {
                         finally {
 //                            cancelLock.unlock();
 
-//                                cctx.database().checkpointReadUnlock();
+                                cctx.database().checkpointReadUnlock();
                         }
                     });
 
                 if (!isDone()) {
-                    log.info("Wait for cleanup region " + region);
+                    log.info("Wait for cleanup region " + region.config().getName());
 
                     get();
+
+                    log.info("Done wait for cleanup region " + region.config().getName());
                 }
 //                }
             }

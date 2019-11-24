@@ -47,15 +47,20 @@ import org.apache.ignite.configuration.WALMode;
 import org.apache.ignite.internal.IgniteEx;
 import org.apache.ignite.internal.IgniteInternalFuture;
 import org.apache.ignite.internal.IgniteInterruptedCheckedException;
+import org.apache.ignite.internal.pagemem.PageIdUtils;
 import org.apache.ignite.internal.processors.cache.CacheGroupContext;
+import org.apache.ignite.internal.processors.cache.GridCacheContext;
 import org.apache.ignite.internal.processors.cache.IgniteInternalCache;
+import org.apache.ignite.internal.processors.cache.distributed.dht.preloader.FileRebalanceFuture;
 import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtLocalPartition;
 import org.apache.ignite.internal.processors.cache.persistence.file.FilePageStoreManager;
 import org.apache.ignite.internal.processors.cache.persistence.pagemem.PageMemoryEx;
+import org.apache.ignite.internal.util.typedef.internal.CU;
 import org.apache.ignite.internal.util.typedef.internal.U;
 import org.apache.ignite.testframework.GridTestUtils;
 import org.apache.ignite.testframework.junits.WithSystemProperty;
 import org.apache.ignite.testframework.junits.common.GridCommonAbstractTest;
+import org.jetbrains.annotations.Nullable;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Ignore;
@@ -1142,7 +1147,7 @@ public class GridCacheFileRebalanceSelfTest extends GridCommonAbstractTest {
 
         ldrFut.get();
 
-        U.sleep(500);
+//        U.sleep(2_000);
 
         verifyCacheContent(ignite2.cache(CACHE1), cntr.get());
         verifyCacheContent(ignite2.cache(CACHE2), entriesCnt);
@@ -1182,6 +1187,95 @@ public class GridCacheFileRebalanceSelfTest extends GridCommonAbstractTest {
         cache.put(TEST_SIZE, new byte[1000]);
 
         awaitPartitionMapExchange(true, true, Collections.singleton(ignite1.localNode()), true);
+    }
+
+    @Test
+    public void testEvictions() throws Exception {
+        IgniteEx ignite0 = startGrid(0);
+
+        ignite0.cluster().active(true);
+
+        GridCacheContext ctx = ignite0.cachex(DEFAULT_CACHE_NAME).context();
+
+        for (GridDhtLocalPartition part : ctx.topology().currentLocalPartitions())
+            part.dataStore().readOnly(true);
+
+        PageMemoryEx memEx = (PageMemoryEx)ctx.dataRegion().pageMemory();
+
+        final int groupId = ctx.groupId();
+
+//        if (log.isDebugEnabled())
+//            log.debug("Cleaning up region " + name);
+
+        memEx.clearAsync(
+            (grp, pageId) -> {
+//                                if (isCancelled())
+//                                    return false;
+                return groupId == grp && PageIdUtils.partId(pageId) != 0;
+            }, true)
+            .listen(c1 -> {
+                // todo misleading should be reformulate
+//                            cctx.database().checkpointReadLock();
+//                        cancelLock.lock();
+
+                try {
+//                            try {
+//                    if (log.isDebugEnabled())
+//                        log.debug("Off heap region cleared [node=" + cctx.localNodeId() + ", region=" + name + "]");
+
+                    for (GridDhtLocalPartition part : ctx.topology().currentLocalPartitions()) {
+                        //int grpId = gr;
+                        //int partId = (int)partGrp;
+
+                        CacheGroupContext grp = ctx.group();
+
+                        int tag = ((PageMemoryEx)grp.dataRegion().pageMemory()).invalidate(groupId, part.id());
+
+                        ((FilePageStoreManager)ctx.shared().pageStore()).getStore(groupId, part.id()).truncate(tag);
+
+//                        if (log.isDebugEnabled())
+//                            log.debug("Parition truncated [grp=" + cctx.cache().cacheGroup(grpId).cacheOrGroupName() + ", p=" + partId + "]");
+                    }
+
+//                    onDone();
+                } catch (IgniteCheckedException e) {
+                    e.printStackTrace();
+//                    onDone(e);
+//
+//                    FileRebalanceFuture.this.onDone(e);
+                }
+//                finally {
+////                            cancelLock.unlock();
+//
+////                                cctx.database().checkpointReadUnlock();
+//                }
+            });
+
+        for (int i = 0; i < 1_000; i++)
+            ctx.cache().put(i, i);
+
+        forceCheckpoint();
+
+        for (int i = 1_000; i < 2_000; i++)
+            ctx.cache().put(i, i);
+
+        for (GridDhtLocalPartition part : ctx.topology().currentLocalPartitions()) {
+            part.updateSize(2);
+
+            part.moving();
+
+            part.readOnly(false);
+
+            //log.info("p=" + part.id() + " size=" + part.publicSize(CU.cacheId(DEFAULT_CACHE_NAME)));
+
+            part.rent(false);
+        }
+
+
+
+        U.sleep(5_000);
+
+        log.info("cache size=" + ctx.cache().size());
     }
 
 //    /** */

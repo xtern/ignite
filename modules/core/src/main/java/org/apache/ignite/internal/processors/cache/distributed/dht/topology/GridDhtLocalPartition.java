@@ -497,6 +497,7 @@ public class GridDhtLocalPartition extends GridCacheConcurrentMapImpl implements
      * @param sizeChange Size change delta.
      */
     private void release0(int sizeChange) {
+//        U.dumpStack("release " + sizeChange);
         while (true) {
             long state = this.state.get();
 
@@ -833,7 +834,7 @@ public class GridDhtLocalPartition extends GridCacheConcurrentMapImpl implements
     private boolean freeAndEmpty(long state) {
         // todo this is a workaround - parts should be switched to full and evicted as usual
         // todo what to do with initialized partitions - if datastore was already initied
-        return (readOnly() || (isEmpty() && getSize(state) == 0)) && getReservations(state) == 0;
+        return isEmpty() && getSize(state) == 0 && getReservations(state) == 0;
     }
 
     /**
@@ -1475,6 +1476,8 @@ public class GridDhtLocalPartition extends GridCacheConcurrentMapImpl implements
 
     /** {@inheritDoc} */
     @Override public void incrementPublicSize(@Nullable CacheMapHolder hld, GridCacheEntryEx e) {
+//        U.dumpStack("increment ");
+
         if (grp.sharedGroup()) {
             if (hld == null)
                 hld = cacheMapHolder(e.context());
@@ -1507,6 +1510,13 @@ public class GridDhtLocalPartition extends GridCacheConcurrentMapImpl implements
             if (this.state.compareAndSet(state, setSize(state, getSize(state) - 1)))
                 return;
         }
+    }
+
+    public void updateSize(int size) {
+        long state = this.state.get();
+
+        this.state.set(setSize(state, size));
+
     }
 
     /**
@@ -1582,6 +1592,7 @@ public class GridDhtLocalPartition extends GridCacheConcurrentMapImpl implements
      * @return Updated composite state.
      */
     private static long setSize(long state, int size) {
+//        U.dumpStack("setSize " + size);
         return (state & (~0xFFFFFFFF00000000L)) | ((long)size << 32);
     }
 
