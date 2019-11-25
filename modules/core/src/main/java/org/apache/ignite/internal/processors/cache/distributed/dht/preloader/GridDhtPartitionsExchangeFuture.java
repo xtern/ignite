@@ -1460,7 +1460,8 @@ public class GridDhtPartitionsExchangeFuture extends GridDhtTopologyFutureAdapte
         cctx.exchange().exchangerBlockingSectionBegin();
 
         try {
-            cctx.database().releaseHistoryForPreloading();
+            // todo think - for now release for preloading invokes on full partition update - is this correct
+//            cctx.database().releaseHistoryForPreloading();
 
             // To correctly rebalance when persistence is enabled, it is necessary to reserve history within exchange.
             partHistReserved = cctx.database().reserveHistoryForExchange();

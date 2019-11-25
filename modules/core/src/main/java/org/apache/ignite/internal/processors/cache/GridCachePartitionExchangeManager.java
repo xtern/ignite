@@ -3367,8 +3367,6 @@ public class GridCachePartitionExchangeManager<K, V> extends GridCacheSharedMana
                                     continue;
                                 }
 
-                                assert cctx.filePreloader() == null || !cctx.filePreloader().isPreloading(grpId) : "File preloading in progress [grp=" + cctx.cache().cacheGroup(grpId).cacheOrGroupName() + "]";
-
                                 Runnable cur = grp.preloader().addAssignments(assigns,
                                     forcePreload,
                                     cnt,
@@ -3376,6 +3374,8 @@ public class GridCachePartitionExchangeManager<K, V> extends GridCacheSharedMana
                                     forcedRebFut);
 
                                 if (cur != null) {
+                                    assert cctx.filePreloader() == null || !cctx.filePreloader().isPreloading(grpId) : "File preloading in progress [grp=" + cctx.cache().cacheGroup(grpId).cacheOrGroupName() + "]";
+
                                     rebList.add(grp.cacheOrGroupName());
 
                                     r = cur;

@@ -1392,7 +1392,7 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
                 GridDhtLocalPartition part = grp.topology().localPartition(p);
 
                 assert part != null && part.state() == OWNING && part.reservations() > 0
-                    : "Partition should in OWNING state and has at least 1 reservation";
+                    : "Partition should in OWNING state and has at least 1 reservation, state=" + part.state();
 
                 part.release();
             }

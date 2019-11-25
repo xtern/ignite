@@ -282,7 +282,7 @@ public class FileRebalanceNodeFuture extends GridFutureAdapter<Boolean> {
 
         try {
             if (log.isDebugEnabled())
-                log.debug("Stopping fiel rebalance future: " + cctx.localNodeId() + " -> " + nodeId());
+                log.debug("Stopping file rebalance future: " + cctx.localNodeId() + " -> " + nodeId());
 
             if (snapFut != null && !snapFut.isDone()) {
                 if (log.isInfoEnabled())

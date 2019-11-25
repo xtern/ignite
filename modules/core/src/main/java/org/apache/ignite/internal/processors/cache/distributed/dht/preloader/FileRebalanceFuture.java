@@ -427,9 +427,6 @@ public class FileRebalanceFuture extends GridFutureAdapter<Boolean> {
 
         /** {@inheritDoc} */
         @Override public boolean cancel() {
-            //return onDone(null, null, true);
-            System.out.println("fake cancel - will wait cleanup " + name);
-
             try {
                 get();
             }
@@ -496,8 +493,6 @@ public class FileRebalanceFuture extends GridFutureAdapter<Boolean> {
                                     log.debug("Parition truncated [grp=" + cctx.cache().cacheGroup(grpId).cacheOrGroupName() + ", p=" + partId + "]");
 
                                 GridDhtLocalPartition part = grp.topology().localPartition(partId);
-
-                                ((GridCacheOffheapManager.GridCacheDataStore)part.dataStore().store(false)).close();
 
                                 part.release();
                             }

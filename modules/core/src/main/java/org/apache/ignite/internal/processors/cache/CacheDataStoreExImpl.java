@@ -32,6 +32,7 @@ import org.apache.ignite.internal.processors.cache.persistence.CacheDataRow;
 import org.apache.ignite.internal.processors.cache.persistence.CacheDataRowAdapter;
 import org.apache.ignite.internal.processors.cache.persistence.CacheSearchRow;
 import org.apache.ignite.internal.processors.cache.persistence.DataRowCacheAware;
+import org.apache.ignite.internal.processors.cache.persistence.GridCacheOffheapManager;
 import org.apache.ignite.internal.processors.cache.persistence.RowStore;
 import org.apache.ignite.internal.processors.cache.persistence.freelist.SimpleDataRow;
 import org.apache.ignite.internal.processors.cache.persistence.partstorage.PartitionMetaStorage;
@@ -102,6 +103,9 @@ public class CacheDataStoreExImpl implements CacheDataStoreEx {
 
             if (readOnly)
                 readOnlyStore.reinit();
+
+            // Should close cache data store - no updates expected..
+            ((GridCacheOffheapManager.GridCacheDataStore)store).close();
         }
     }
 

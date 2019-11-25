@@ -154,7 +154,11 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
         if (!fileRebalanceFut.isDone())
             fileRebalanceFut.cancel();
 
+        assert fileRebalanceFut.isDone();
+
         for (CacheGroupContext grp : cctx.cache().cacheGroups()) {
+            // todo Make sure this restrictions cannot be changed on the fly.
+            // todo OR rollback readonly mode on ALL caches.
             if (!fileRebalanceSupported(grp))
                 continue;
 
@@ -162,14 +166,16 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
 
             Set<Integer> moving = detectMovingPartitions(grp, exchFut);
 
-            if (moving == null || moving.isEmpty())
-                continue;
-
-            if (log.isDebugEnabled())
+            if (moving != null && !moving.isEmpty() && log.isDebugEnabled())
                 log.debug("Set READ-ONLY mode for cache=" + grp.cacheOrGroupName() + " parts=" + moving);
 
-            for (int p : moving)
-                grp.topology().localPartition(p).dataStore().readOnly(true);
+            // should switch read-only partitions into full mode for eviction
+            for (GridDhtLocalPartition part : grp.topology().currentLocalPartitions()) {
+                if (moving != null && moving.contains(part.id()))
+                    part.dataStore().readOnly(true);
+                else
+                    part.dataStore().readOnly(false);
+            }
         }
     }
 
@@ -187,9 +193,9 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
         Set<Integer> movingParts = new HashSet<>();
 
         // todo
-        boolean noMoving = false;
+        boolean unsupported = false;
 
-        boolean bigEnough = false;
+        boolean fatEnough = false;
 
         Map<Integer, Long> globalSizes = grp.topology().globalPartSizes();
 
@@ -197,26 +203,19 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
             if (!aff.get(p).contains(cctx.localNode()))
                 continue;
 
-            if (!bigEnough && globalSizes.get(p) >= FILE_REBALANCE_THRESHOLD)
-                bigEnough = true;
+            if (!fatEnough && globalSizes.get(p) >= FILE_REBALANCE_THRESHOLD)
+                fatEnough = true;
 
             GridDhtLocalPartition part = grp.topology().localPartition(p);
 
             if (part.state() == OWNING)
-                noMoving = true;
+                return null;
 
             // Should have partition file supplier to start file rebalance.
             long cntr = cntrsMap.updateCounter(p);
 
             if (exchFut.partitionFileSupplier(grp.groupId(), p, cntr) == null)
-                noMoving = true;
-
-            if (noMoving) {
-                // todo
-                part.dataStore().readOnly(false);
-
-                continue;
-            }
+                return null;
 
             // If partition is currently rented prevent destroy and start clearing process.
             // todo think about reserve/clear
@@ -236,7 +235,7 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
             movingParts.add(p);
         }
 
-        return noMoving || !bigEnough ? null : movingParts;
+        return fatEnough ? movingParts : null;
     }
 
     // todo currently used only for debugging
@@ -538,14 +537,22 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
      * @return {@code True} if cache must be rebalanced by sending files.
      */
     public boolean fileRebalanceRequired(CacheGroupContext grp, GridDhtPreloaderAssignments assignments, GridDhtPartitionsExchangeFuture exchFut) {
-        if (assignments == null || assignments.isEmpty())
+        if (assignments == null || assignments.isEmpty()) {
+            if (log.isDebugEnabled())
+                log.debug("File rebalancing not required for group " + grp.cacheOrGroupName() + " due to empty assignments.");
+
             return false;
+        }
 
 //        if (movingPartitions(grp, exchFut) == null)
 //            return false;
 
-        if (!fileRebalanceSupported(grp, assignments.keySet()))
+        if (!fileRebalanceSupported(grp, assignments.keySet())) {
+            if (log.isDebugEnabled())
+                log.debug("File rebalancing not required for group " + grp.cacheOrGroupName() + " - not supported.");
+
             return false;
+        }
 
         // onExchangeDone should create all partitions
         AffinityAssignment aff = grp.affinity().readyAffinity(exchFut.topologyVersion());
@@ -561,14 +568,22 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
 
             GridDhtLocalPartition part = grp.topology().localPartition(p);
 
-            if (part.state() == OWNING)
+            if (part.state() == OWNING) {
+                if (log.isDebugEnabled())
+                    log.debug("File rebalancing not required for group " + grp.cacheOrGroupName() + " - we have owned partition in this group [p=" + part.id() + "]");
+
                 return false;
+            }
 
             assert part.state() == MOVING : "Unexpected partition state [cache=" + grp.cacheOrGroupName() +
                 ", p=" + part.id() + ", state=" + part.state() + "]";
 
-            if (exchFut.partitionFileSupplier(grp.groupId(), part.id(), cntrsMap.updateCounter(part.id())) == null)
+            if (exchFut.partitionFileSupplier(grp.groupId(), part.id(), cntrsMap.updateCounter(part.id())) == null) {
+                if (log.isDebugEnabled())
+                    log.debug("File rebalancing not required for group " + grp.cacheOrGroupName() + " - no supplier for part "+part.id());
+
                 return false;
+            }
         }
 
         Map<Integer, Long> globalSizes = grp.topology().globalPartSizes();
@@ -584,8 +599,12 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
             }
         }
 
-        if (!enoughData)
+        if (!enoughData) {
+            if (log.isDebugEnabled())
+                log.debug("File rebalancing not required for group " + grp.cacheOrGroupName() + " - partitions too small");
+
             return false;
+        }
 
         // For now mixed rebalancing modes are not supported.
         for (GridDhtPartitionDemandMessage msg : assignments.values()) {

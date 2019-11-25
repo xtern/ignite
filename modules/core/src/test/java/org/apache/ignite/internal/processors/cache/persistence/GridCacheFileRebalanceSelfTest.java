@@ -24,6 +24,7 @@ import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
@@ -51,16 +52,14 @@ import org.apache.ignite.internal.pagemem.PageIdUtils;
 import org.apache.ignite.internal.processors.cache.CacheGroupContext;
 import org.apache.ignite.internal.processors.cache.GridCacheContext;
 import org.apache.ignite.internal.processors.cache.IgniteInternalCache;
-import org.apache.ignite.internal.processors.cache.distributed.dht.preloader.FileRebalanceFuture;
 import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtLocalPartition;
 import org.apache.ignite.internal.processors.cache.persistence.file.FilePageStoreManager;
 import org.apache.ignite.internal.processors.cache.persistence.pagemem.PageMemoryEx;
-import org.apache.ignite.internal.util.typedef.internal.CU;
+import org.apache.ignite.internal.util.typedef.G;
 import org.apache.ignite.internal.util.typedef.internal.U;
 import org.apache.ignite.testframework.GridTestUtils;
 import org.apache.ignite.testframework.junits.WithSystemProperty;
 import org.apache.ignite.testframework.junits.common.GridCommonAbstractTest;
-import org.jetbrains.annotations.Nullable;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Ignore;
@@ -980,8 +979,6 @@ public class GridCacheFileRebalanceSelfTest extends GridCommonAbstractTest {
 
         awaitPartitionMapExchange();
 
-        U.sleep(500);
-
         ldr.stop();
 
         ldrFut.get();
@@ -989,6 +986,101 @@ public class GridCacheFileRebalanceSelfTest extends GridCommonAbstractTest {
         verifyCacheContent(ignite2.cache(CACHE1), ldr.cntr.get());
         verifyCacheContent(ignite2.cache(CACHE2), entriesCnt);
     }
+
+    /** todo */
+    @Test
+    @WithSystemProperty(key = IGNITE_FILE_REBALANCE_ENABLED, value = "true")
+    @WithSystemProperty(key = IGNITE_BASELINE_AUTO_ADJUST_ENABLED, value = "false")
+    @WithSystemProperty(key = IGNITE_PDS_FILE_REBALANCE_THRESHOLD, value="1")
+    public void testMultipleCachesCancelRebalancePartitionedUnderConstantLoadUnstableTopology() throws Exception {
+        cacheMode = PARTITIONED;
+        backups = 3;
+
+        int threads = Runtime.getRuntime().availableProcessors() / 2;
+
+        List<ClusterNode> blt = new ArrayList<>();
+
+        int entriesCnt = 100_000;
+
+        int timeout = 180_000;
+
+        IgniteEx ignite0 = startGrid(0);
+
+        ignite0.cluster().active(true);
+
+        blt.add(ignite0.localNode());
+
+        ignite0.cluster().setBaselineTopology(blt);
+
+        loadData(ignite0, CACHE1, entriesCnt);
+        loadData(ignite0, CACHE2, entriesCnt);
+
+        forceCheckpoint(ignite0);
+
+        AtomicLong cntr = new AtomicLong(entriesCnt);
+
+        ConstantLoader ldr = new ConstantLoader(ignite0.cache(CACHE1), cntr, false, threads);
+
+        IgniteInternalFuture ldrFut = GridTestUtils.runMultiThreadedAsync(ldr, threads, "loader");
+
+        long endTime = System.currentTimeMillis() + timeout;
+
+        int nodes = 3;
+
+        int started = 1;
+
+        for (int i = 0; i < nodes; i++) {
+            int time0 = ThreadLocalRandom.current().nextInt(1000);
+
+            IgniteEx igniteX = startGrid(i + started);
+
+            blt.add(igniteX.localNode());;
+
+            if (time0 % 2 == 0)
+                U.sleep(time0);
+
+            ignite0.cluster().setBaselineTopology(blt);
+        }
+
+        do {
+            for (int i = 0; i < nodes; i++) {
+                int time0 = ThreadLocalRandom.current().nextInt(2000);
+
+                U.sleep(time0);
+
+                stopGrid(i + started);
+            }
+
+            awaitPartitionMapExchange();
+
+            for (int i = 0; i < nodes; i++) {
+                int time0 = ThreadLocalRandom.current().nextInt(1000);
+
+                IgniteEx igniteX = startGrid(i + started);
+
+//                blt.add(igniteX.localNode());;
+
+//                if (time0 % 2 == 0)
+//                    U.sleep(time0);
+
+//                ignite0.cluster().setBaselineTopology(blt);
+            }
+
+            awaitPartitionMapExchange();
+        } while (U.currentTimeMillis() < endTime);
+
+        awaitPartitionMapExchange();
+
+        ldr.stop();
+
+        ldrFut.get();
+
+        for (Ignite g : G.allGrids()) {
+            verifyCacheContent(g.cache(CACHE1), ldr.cntr.get());
+            verifyCacheContent(g.cache(CACHE2), entriesCnt);
+        }
+    }
+
 
     private void verifyCacheContent(IgniteCache<Object, Object> cache, long cnt) {
         verifyCacheContent(cache, cnt, false);
