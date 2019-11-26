@@ -54,7 +54,6 @@ import org.apache.ignite.internal.util.future.GridFutureAdapter;
 import org.apache.ignite.internal.util.lang.IgniteInClosureX;
 import org.apache.ignite.internal.util.typedef.T2;
 import org.apache.ignite.internal.util.typedef.internal.CU;
-import org.jetbrains.annotations.Nullable;
 
 import static org.apache.ignite.IgniteSystemProperties.IGNITE_PDS_FILE_REBALANCE_THRESHOLD;
 import static org.apache.ignite.configuration.IgniteConfiguration.DFLT_IGNITE_PDS_WAL_REBALANCE_THRESHOLD;
@@ -64,25 +63,22 @@ import static org.apache.ignite.internal.processors.cache.distributed.dht.topolo
 import static org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtPartitionState.RENTING;
 
 /**
+ * DHT cache files preloader, manages partition files preloading routine.
+ *
  * todo naming
+ * GridCachePreloadSharedManager
  * GridPartitionFilePreloader
  * GridCachePartitionFilePreloader
  * GridFilePreloader
  * GridPartitionPreloader
  * GridSnapshotFilePreloader
  */
-public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter {
+public class GridPartitionFilePreloader extends GridCacheSharedManagerAdapter {
     /** */
-    public static final String REBALANCE_CP_REASON = "Rebalance has been scheduled [grps=%s]";
-
-    /** */
-//    private static final Runnable NO_OP = () -> {};
-
-    /** todo */
     private static final boolean FILE_REBALANCE_ENABLED = IgniteSystemProperties.getBoolean(
         IgniteSystemProperties.IGNITE_FILE_REBALANCE_ENABLED, false);
 
-    /** todo add default threshold  */
+    /** */
     private static final long FILE_REBALANCE_THRESHOLD = IgniteSystemProperties.getLong(
         IGNITE_PDS_FILE_REBALANCE_THRESHOLD, DFLT_IGNITE_PDS_WAL_REBALANCE_THRESHOLD);
 
@@ -98,7 +94,7 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
     /**
      * @param ktx Kernal context.
      */
-    public GridCachePreloadSharedManager(GridKernalContext ktx) {
+    public GridPartitionFilePreloader(GridKernalContext ktx) {
         assert CU.isPersistenceEnabled(ktx.config()) : "Persistence must be enabled to use file preloading";
     }
 
@@ -123,18 +119,21 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
         }
     }
 
-    // todo logic duplication with preload.addAssignment should be eliminated
-    public void onExchangeDone(GridDhtPartitionsExchangeFuture exchFut, @Nullable AffinityTopologyVersion res) {
+    /**
+     * Callback on exchange done.
+     *
+     * @param exchFut Exchange future.
+     */
+    public void onExchangeDone(GridDhtPartitionsExchangeFuture exchFut) {
+        // At this point cache updates are queued and we can safely switch partitions to read-only mode and vice-versa.
+        // TODO method logic clashes with GridDhtPreloader#generateAssignments logic
         assert exchFut != null;
-
-        if (res == null)
-            return;
 
         if (!FILE_REBALANCE_ENABLED)
             return;
 
         AffinityTopologyVersion lastAffChangeTopVer =
-            cctx.exchange().lastAffinityChangedTopologyVersion(res);
+            cctx.exchange().lastAffinityChangedTopologyVersion(exchFut.topologyVersion());
 
         AffinityTopologyVersion rebTopVer = cctx.exchange().rebalanceTopologyVersion();
 
@@ -150,26 +149,24 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
             return;
         }
 
-        // should interrupt current rebalance
+        // Should interrupt current rebalance.
         if (!fileRebalanceFut.isDone())
             fileRebalanceFut.cancel();
 
         assert fileRebalanceFut.isDone();
 
         for (CacheGroupContext grp : cctx.cache().cacheGroups()) {
-            // todo Make sure this restrictions cannot be changed on the fly.
-            // todo OR rollback readonly mode on ALL caches.
             if (!fileRebalanceSupported(grp))
                 continue;
-
-            assert !isPreloading(grp.groupId()) : "Cache currently preloading [grp=" + grp.cacheOrGroupName() + "]";
 
             Set<Integer> moving = detectMovingPartitions(grp, exchFut);
 
             if (moving != null && !moving.isEmpty() && log.isDebugEnabled())
                 log.debug("Set READ-ONLY mode for cache=" + grp.cacheOrGroupName() + " parts=" + moving);
 
-            // should switch read-only partitions into full mode for eviction
+            // Should switch read-only partitions into full mode for eviction.
+            // Also, "global" partition size can change and file rebalance will not be applicable to it.
+            // todo add test case for specified scenario with global size change.
             for (GridDhtLocalPartition part : grp.topology().currentLocalPartitions()) {
                 if (moving != null && moving.contains(part.id()))
                     part.dataStore().readOnly(true);
@@ -180,20 +177,15 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
     }
 
     private Set<Integer> detectMovingPartitions(CacheGroupContext grp, GridDhtPartitionsExchangeFuture exchFut) {
-        AffinityTopologyVersion topVer = exchFut.topologyVersion();
-
         int partitions = grp.affinity().partitions();
 
-        AffinityAssignment aff = grp.affinity().readyAffinity(topVer);
+        AffinityAssignment aff = grp.affinity().readyAffinity(exchFut.topologyVersion());
 
         assert aff != null;
 
         CachePartitionFullCountersMap cntrsMap = grp.topology().fullUpdateCounters();
 
         Set<Integer> movingParts = new HashSet<>();
-
-        // todo
-        boolean unsupported = false;
 
         boolean fatEnough = false;
 
@@ -238,64 +230,10 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
         return fatEnough ? movingParts : null;
     }
 
-    // todo currently used only for debugging
+    // todo currently used only for debugging, should be removed
     public boolean isPreloading(int grpId) {
         return fileRebalanceFut.isPreloading(grpId);
     }
-
-//    /**
-//     * @param lastFut Last future.
-//     */
-//    public void onTopologyChanged(GridDhtPartitionsExchangeFuture lastFut) {
-//        FileRebalanceFuture fut0 = fileRebalanceFut;
-//
-//        if (!fut0.isDone()) {
-//            if (!inrerruptRebalanceRequired(lastFut)) {
-//                log.info("Topology changed, but rebalance not interrupted [exch=" + lastFut + "]");
-//
-//                return;
-//            }
-//
-//            if (fut0.isDone())
-//                return;
-//
-//            if (log.isDebugEnabled())
-//                log.debug("Topology changed - canceling file rebalance [fut="+lastFut+"]");
-//
-//            fut0.cancel();
-//        }
-//    }
-
-//    private boolean inrerruptRebalanceRequired(GridDhtPartitionsExchangeFuture fut) {
-////        if (true)
-////            return false;
-//
-//        DiscoveryEvent evt = fut.firstEvent();
-//
-////        if (evt.type() != EVT_DISCOVERY_CUSTOM_EVT)
-////            return true;
-//
-//        if (evt.type() == EVT_DISCOVERY_CUSTOM_EVT) {
-//            DiscoveryCustomEvent customEvent = ((DiscoveryCustomEvent)evt);
-//
-//            if (customEvent.customMessage() instanceof DynamicCacheChangeBatch && fut.exchangeActions() != null)
-//                return true;
-//
-//            return customEvent.customMessage() instanceof SnapshotDiscoveryMessage &&
-//                ((SnapshotDiscoveryMessage)customEvent.customMessage()).needAssignPartitions();
-//
-//        }
-//
-//        if (fut.exchangeActions() != null) {
-//            if (fut.exchangeActions().activate())
-//                return true;
-//
-//            if (fut.exchangeActions().changedBaseline())
-//                return true;
-//        }
-//
-//        return true;
-//    }
 
     /**
      * This method initiates new file rebalance process from given {@code assignments} by creating new file
@@ -502,9 +440,11 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
     }
 
     /**
-     * @param grp The corresponding to assignments cache group context.
-     * @param nodes Preloading assignments.
-     * @return {@code True} if cache must be rebalanced by sending files.
+     * Check whether file rebalancing is supported by the cache group.
+     *
+     * @param grp Cache group.
+     * @param nodes List of Nodes.
+     * @return {@code True} if file rebalancing is applicable for specified cache group and all nodes supports it.
      */
     public boolean fileRebalanceSupported(CacheGroupContext grp, Collection<ClusterNode> nodes) {
         assert nodes != null && !nodes.isEmpty();
@@ -513,6 +453,13 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
             IgniteFeatures.allNodesSupports(nodes, IgniteFeatures.CACHE_PARTITION_FILE_REBALANCE);
     }
 
+    /**
+     * Check whether file rebalancing is supported by the cache group.
+     * todo Make sure that no one of these properties could be changed on the fly.
+     *
+     * @param grp Cache group.
+     * @return {@code True} if file rebalancing is applicable for specified cache group.
+     */
     private boolean fileRebalanceSupported(CacheGroupContext grp) {
         if (!FILE_REBALANCE_ENABLED || !grp.persistenceEnabled())
             return false;
@@ -527,11 +474,12 @@ public class GridCachePreloadSharedManager extends GridCacheSharedManagerAdapter
         if (grp.mvccEnabled())
             return false;
 
-        // todo critical
         return !grp.hasAtomicCaches();
     }
 
     /**
+     * Check whether file rebalancing is required for the cache group.
+     *
      * @param grp The corresponding to assignments cache group context.
      * @param assignments Preloading assignments.
      * @return {@code True} if cache must be rebalanced by sending files.

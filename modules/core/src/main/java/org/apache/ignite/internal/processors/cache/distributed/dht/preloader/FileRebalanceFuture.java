@@ -49,7 +49,7 @@ public class FileRebalanceFuture extends GridFutureAdapter<Boolean> {
     private final Map<T2<Integer, UUID>, FileRebalanceNodeFuture> futs = new HashMap<>();
 
     /** */
-    private final GridCachePreloadSharedManager.CheckpointListener cpLsnr;
+    private final GridPartitionFilePreloader.CheckpointListener cpLsnr;
 
     /** */
     private final Map<Integer, Set<Integer>> allPartsMap = new HashMap<>();
@@ -92,7 +92,7 @@ public class FileRebalanceFuture extends GridFutureAdapter<Boolean> {
      * @param lsnr Checkpoint listener.
      */
     public FileRebalanceFuture(
-        GridCachePreloadSharedManager.CheckpointListener lsnr,
+        GridPartitionFilePreloader.CheckpointListener lsnr,
         NavigableMap</** order */Integer, Map<ClusterNode, Map</** group */Integer, Set</** part */Integer>>>> assignsMap,
         AffinityTopologyVersion startVer,
         GridCacheSharedContext cctx,
@@ -111,7 +111,7 @@ public class FileRebalanceFuture extends GridFutureAdapter<Boolean> {
             initialize(assignsMap);
     }
 
-    public boolean isPreloading(int grpId) {
+    boolean isPreloading(int grpId) {
         return allGroupsMap.containsKey(grpId) && !isDone();
     }
 

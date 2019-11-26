@@ -1081,7 +1081,6 @@ public class GridCacheFileRebalanceSelfTest extends GridCommonAbstractTest {
         }
     }
 
-
     private void verifyCacheContent(IgniteCache<Object, Object> cache, long cnt) {
         verifyCacheContent(cache, cnt, false);
     }
@@ -1363,53 +1362,10 @@ public class GridCacheFileRebalanceSelfTest extends GridCommonAbstractTest {
             part.rent(false);
         }
 
-
-
         U.sleep(5_000);
 
         log.info("cache size=" + ctx.cache().size());
     }
-
-//    /** */
-//    @Test
-//    @Ignore
-//    @WithSystemProperty(key = IGNITE_PERSISTENCE_REBALANCE_ENABLED, value = "true")
-//    @WithSystemProperty(key = IGNITE_BASELINE_AUTO_ADJUST_ENABLED, value = "false")
-//    public void testAsyncUpdates() throws Exception {
-//        IgniteEx ignite0 = startGrid(0);
-//
-//        ignite0.cluster().active(true);
-//
-//        IgniteCache<Integer, byte[]> cache = ignite0.getOrCreateCache(
-//            new CacheConfiguration<Integer, byte[]>(DEFAULT_CACHE_NAME)
-//                .setCacheMode(CacheMode.PARTITIONED)
-//                .setRebalanceMode(CacheRebalanceMode.ASYNC)
-//                .setAtomicityMode(CacheAtomicityMode.ATOMIC)
-//                .setBackups(1)
-//                .setAffinity(new RendezvousAffinityFunction(false)
-//                    .setPartitions(8)));
-//
-//        loadData(ignite0, DEFAULT_CACHE_NAME, TEST_SIZE);
-//
-//        assertTrue(!ignite0.cluster().isBaselineAutoAdjustEnabled());
-//
-//        IgniteEx ignite1 = startGrid(1);
-//
-//        TestRecordingCommunicationSpi.spi(ignite1)
-//            .blockMessages(new IgniteBiPredicate<ClusterNode, Message>() {
-//                @Override public boolean apply(ClusterNode node, Message msg) {
-//                    return msg instanceof GridPartitionBatchDemandMessage;
-//                }
-//            });
-//
-//        ignite1.cluster().setBaselineTopology(ignite1.cluster().nodes());
-//
-//        TestRecordingCommunicationSpi.spi(ignite1).waitForBlocked();
-//
-//        cache.put(TEST_SIZE, new byte[1000]);
-//
-//        awaitPartitionMapExchange(true, true, Collections.singleton(ignite1.localNode()), true);
-//    }
 
     /**
      * @param ignite Ignite instance to load.
@@ -1429,10 +1385,6 @@ public class GridCacheFileRebalanceSelfTest extends GridCommonAbstractTest {
         }
     }
 
-    private static long generateValue(long num, String str) {
-        return num + str.hashCode();
-    }
-
     /**
      * @param expCache Expected data cache.
      * @param actCache Actual data cache.
@@ -1450,7 +1402,7 @@ public class GridCacheFileRebalanceSelfTest extends GridCommonAbstractTest {
             GridDhtLocalPartition expPart = actCache.context().topology().localPartition(actPart.id());
 
             if (actPart.state() != expPart.state())
-                buf.append("\n").append(expCache.context().localNodeId()).append(" vs ").append(actCache.context().localNodeId()).append(" state mismatch p=").append(actPart.id()).append(" exp=").append(expPart).append(" act=").append(actPart);
+                buf.append("\n").append(expCache.context().localNodeId()).append(" vs ").append(actCache.context().localNodeId()).append(" state mismatch p=").append(actPart.id()).append(" exp=").append(expPart.state()).append(" act=").append(actPart.state());
 
             long expCntr = expPart.updateCounter();
             long actCntr = actPart.updateCounter();
@@ -1500,6 +1452,10 @@ public class GridCacheFileRebalanceSelfTest extends GridCommonAbstractTest {
         }
 
         return buf;
+    }
+
+    private static long generateValue(long num, String str) {
+        return num + str.hashCode();
     }
 
     /** */

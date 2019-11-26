@@ -82,7 +82,7 @@ import org.apache.ignite.internal.processors.cache.distributed.dht.GridDhtTopolo
 import org.apache.ignite.internal.processors.cache.distributed.dht.preloader.CachePartitionFullCountersMap;
 import org.apache.ignite.internal.processors.cache.distributed.dht.preloader.CachePartitionPartialCountersMap;
 import org.apache.ignite.internal.processors.cache.distributed.dht.preloader.ForceRebalanceExchangeTask;
-import org.apache.ignite.internal.processors.cache.distributed.dht.preloader.GridCachePreloadSharedManager;
+import org.apache.ignite.internal.processors.cache.distributed.dht.preloader.GridPartitionFilePreloader;
 import org.apache.ignite.internal.processors.cache.distributed.dht.preloader.GridDhtPartitionDemandLegacyMessage;
 import org.apache.ignite.internal.processors.cache.distributed.dht.preloader.GridDhtPartitionDemandMessage;
 import org.apache.ignite.internal.processors.cache.distributed.dht.preloader.GridDhtPartitionExchangeId;
@@ -3346,7 +3346,7 @@ public class GridCachePartitionExchangeManager<K, V> extends GridCacheSharedMana
                         if (task instanceof ForceRebalanceExchangeTask)
                             forcedRebFut = ((ForceRebalanceExchangeTask)task).forcedRebalanceFuture();
 
-                        GridCachePreloadSharedManager preloader = cctx.filePreloader();
+                        GridPartitionFilePreloader preloader = cctx.filePreloader();
 
                         if (preloader != null)
                             loadPartsRun = preloader.addNodeAssignments(assignsMap, resVer, forcePreload, cnt, exchFut);
@@ -3374,7 +3374,8 @@ public class GridCachePartitionExchangeManager<K, V> extends GridCacheSharedMana
                                     forcedRebFut);
 
                                 if (cur != null) {
-                                    assert cctx.filePreloader() == null || !cctx.filePreloader().isPreloading(grpId) : "File preloading in progress [grp=" + cctx.cache().cacheGroup(grpId).cacheOrGroupName() + "]";
+                                    assert cctx.filePreloader() == null || !cctx.filePreloader().isPreloading(grpId) :
+                                        "File preloading in progress [grp=" + grp.cacheOrGroupName() + "]";
 
                                     rebList.add(grp.cacheOrGroupName());
 

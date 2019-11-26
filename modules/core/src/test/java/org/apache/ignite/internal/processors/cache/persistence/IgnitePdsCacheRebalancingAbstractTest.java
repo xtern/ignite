@@ -58,7 +58,7 @@ import org.apache.ignite.internal.IgniteEx;
 import org.apache.ignite.internal.IgniteInternalFuture;
 import org.apache.ignite.internal.IgniteNodeAttributes;
 import org.apache.ignite.internal.processors.cache.IgniteInternalCache;
-import org.apache.ignite.internal.processors.cache.distributed.dht.preloader.GridCachePreloadSharedManager;
+import org.apache.ignite.internal.processors.cache.distributed.dht.preloader.GridPartitionFilePreloader;
 import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtLocalPartition;
 import org.apache.ignite.internal.util.typedef.G;
 import org.apache.ignite.internal.util.typedef.internal.U;
@@ -73,7 +73,6 @@ import org.junit.Test;
 import static org.apache.ignite.IgniteSystemProperties.IGNITE_BASELINE_AUTO_ADJUST_ENABLED;
 import static org.apache.ignite.IgniteSystemProperties.IGNITE_FILE_REBALANCE_ENABLED;
 import static org.apache.ignite.IgniteSystemProperties.IGNITE_PDS_FILE_REBALANCE_THRESHOLD;
-import static org.apache.ignite.IgniteSystemProperties.IGNITE_PDS_WAL_REBALANCE_THRESHOLD;
 import static org.apache.ignite.testframework.GridTestUtils.runMultiThreadedAsync;
 
 /**
@@ -700,7 +699,7 @@ public abstract class IgnitePdsCacheRebalancingAbstractTest extends GridCommonAb
             }
         } catch (Error | RuntimeException | IgniteCheckedException e) {
             for (Ignite g : G.allGrids()) {
-                GridCachePreloadSharedManager filePreloader = ((IgniteEx)g).context().cache().context().filePreloader();
+                GridPartitionFilePreloader filePreloader = ((IgniteEx)g).context().cache().context().filePreloader();
 
                 if (filePreloader != null)
                     filePreloader.printDiagnostic();
@@ -799,7 +798,7 @@ public abstract class IgnitePdsCacheRebalancingAbstractTest extends GridCommonAb
             }
         } catch (Error | RuntimeException | IgniteCheckedException e) {
             for (Ignite g : G.allGrids()) {
-                GridCachePreloadSharedManager filePreloader = ((IgniteEx)g).context().cache().context().filePreloader();
+                GridPartitionFilePreloader filePreloader = ((IgniteEx)g).context().cache().context().filePreloader();
 
                 if (filePreloader != null)
                     filePreloader.printDiagnostic();

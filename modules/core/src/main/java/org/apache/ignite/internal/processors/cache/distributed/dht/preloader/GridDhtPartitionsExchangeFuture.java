@@ -2314,7 +2314,7 @@ public class GridDhtPartitionsExchangeFuture extends GridDhtTopologyFutureAdapte
                 cctx.database().rebuildIndexesIfNeeded(this);
 
                 if (cctx.filePreloader() != null)
-                    cctx.filePreloader().onExchangeDone(this, res);
+                    cctx.filePreloader().onExchangeDone(this);
 
                 for (CacheGroupContext grp : cctx.cache().cacheGroups()) {
                     if (!grp.isLocal())
