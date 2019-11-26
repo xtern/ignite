@@ -46,7 +46,7 @@ import org.jetbrains.annotations.Nullable;
 
 public class FileRebalanceFuture extends GridFutureAdapter<Boolean> {
     /** */
-    private final Map<T2<Integer, UUID>, FileRebalanceNodeFuture> futs = new HashMap<>();
+    private final Map<T2<Integer, UUID>, FileRebalanceNodeRoutine> futs = new HashMap<>();
 
     /** */
     private final GridPartitionFilePreloader.CheckpointListener cpLsnr;
@@ -184,14 +184,14 @@ public class FileRebalanceFuture extends GridFutureAdapter<Boolean> {
         return topVer;
     }
 
-    public synchronized void add(int order, FileRebalanceNodeFuture fut) {
+    public synchronized void add(int order, FileRebalanceNodeRoutine fut) {
         T2<Integer, UUID> k = new T2<>(order, fut.nodeId());
 
         futs.put(k, fut);
     }
 
     // todo add/get should be consistent (ORDER or GROUP_ID arg)
-    public synchronized FileRebalanceNodeFuture nodeRoutine(int grpId, UUID nodeId) {
+    public synchronized FileRebalanceNodeRoutine nodeRoutine(int grpId, UUID nodeId) {
         int order = cctx.cache().cacheGroup(grpId).config().getRebalanceOrder();
 
         T2<Integer, UUID> k = new T2<>(order, nodeId);
@@ -221,11 +221,11 @@ public class FileRebalanceFuture extends GridFutureAdapter<Boolean> {
 
                     for (IgniteInternalFuture fut : regions.values()) {
                         if (!fut.isDone())
-                            fut.cancel();
+                            fut.get();
                     }
 
                     // todo eliminate ConcurrentModification
-                    for (FileRebalanceNodeFuture fut : new HashMap<>(futs).values()) {
+                    for (FileRebalanceNodeRoutine fut : new HashMap<>(futs).values()) {
                         if (!fut.isDone())
                             fut.cancel();
                     }
@@ -234,7 +234,7 @@ public class FileRebalanceFuture extends GridFutureAdapter<Boolean> {
                 }
             }
             catch (IgniteCheckedException e) {
-                e.printStackTrace();
+                log.error("Failed to cancel file rebalancing.", e);
             }
             finally {
                 cancelLock.unlock();
@@ -282,7 +282,7 @@ public class FileRebalanceFuture extends GridFutureAdapter<Boolean> {
         }
     }
 
-    public synchronized void onNodeDone(FileRebalanceNodeFuture fut, Boolean res, Throwable err, boolean cancel) {
+    public synchronized void onNodeDone(FileRebalanceNodeRoutine fut, Boolean res, Throwable err, boolean cancel) {
         if (err != null || cancel) {
             onDone(res, err, cancel);
 
@@ -331,31 +331,30 @@ public class FileRebalanceFuture extends GridFutureAdapter<Boolean> {
 
                 reservePartitions(parts);
 
-                try {
-                    memEx.clearAsync(
-                        (grp, pageId) -> parts.contains(((long)grp << 32) + PageIdUtils.partId(pageId)), true)
-                        .listen(c1 -> {
-                            cctx.database().checkpointReadLock();
-                            try {
-                                if (log.isDebugEnabled())
-                                    log.debug("Off heap region cleared [node=" + cctx.localNodeId() + ", region=" + region + "]");
+                memEx.clearAsync(
+                    (grp, pageId) -> parts.contains(((long)grp << 32) + PageIdUtils.partId(pageId)), true)
+                    .listen(c1 -> {
+                        cctx.database().checkpointReadLock();
 
-                                invalidatePartitions(parts);
+                        try {
+                            if (log.isDebugEnabled())
+                                log.debug("Off heap region cleared [node=" + cctx.localNodeId() + ", region=" + region + "]");
 
-                                fut.onDone();
-                            }
-                            catch (IgniteCheckedException e) {
-                                fut.onDone(e);
+                            invalidatePartitions(parts);
 
-                                onDone(e);
-                            }
-                            finally {
-                                cctx.database().checkpointReadUnlock();
-                            }
-                        });
-                } finally {
-                    releasePartitions(parts);
-                }
+                            fut.onDone();
+                        }
+                        catch (IgniteCheckedException e) {
+                            fut.onDone(e);
+
+                            onDone(e);
+                        }
+                        finally {
+                            cctx.database().checkpointReadUnlock();
+
+                            releasePartitions(parts);
+                        }
+                    });
             }
         }
         catch (IgniteCheckedException e) {
@@ -442,7 +441,7 @@ public class FileRebalanceFuture extends GridFutureAdapter<Boolean> {
 
         buf.append("\n\tNode routines:\n");
 
-        for (FileRebalanceNodeFuture fut : futs.values())
+        for (FileRebalanceNodeRoutine fut : futs.values())
             buf.append("\t\t" + fut.toString() + "\n");
 
         buf.append("\n\tMemory regions:\n");

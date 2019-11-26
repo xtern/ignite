@@ -42,6 +42,7 @@ import org.apache.ignite.internal.IgniteInternalFuture;
 import org.apache.ignite.internal.processors.affinity.AffinityAssignment;
 import org.apache.ignite.internal.processors.affinity.AffinityTopologyVersion;
 import org.apache.ignite.internal.processors.cache.CacheGroupContext;
+import org.apache.ignite.internal.processors.cache.GridCacheContext;
 import org.apache.ignite.internal.processors.cache.GridCacheSharedManagerAdapter;
 import org.apache.ignite.internal.processors.cache.PartitionUpdateCounter;
 import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtLocalPartition;
@@ -278,7 +279,7 @@ public class GridPartitionFilePreloader extends GridCacheSharedManagerAdapter {
 
             fileRebalanceFut = rebFut = new FileRebalanceFuture(cpLsnr, nodeOrderAssignsMap, topVer, cctx, rebalanceId, log);
 
-            FileRebalanceNodeFuture lastFut = null;
+            FileRebalanceNodeRoutine lastFut = null;
 
             if (log.isInfoEnabled())
                 log.info("Prepare the chain to demand assignments: " + nodeOrderAssignsMap);
@@ -289,14 +290,14 @@ public class GridPartitionFilePreloader extends GridCacheSharedManagerAdapter {
                 int order = entry.getKey();
 
                 for (Map.Entry<ClusterNode, Map<Integer, Set<Integer>>> assignEntry : descNodeMap.entrySet()) {
-                    FileRebalanceNodeFuture fut = new FileRebalanceNodeFuture(cctx, fileRebalanceFut, log,
+                    FileRebalanceNodeRoutine fut = new FileRebalanceNodeRoutine(cctx, fileRebalanceFut, log,
                         assignEntry.getKey(), order, rebalanceId, assignEntry.getValue(), topVer);
 
                     // todo seeems we don't need to track all futures through map, we should track only last
                     rebFut.add(order, fut);
 
                     if (lastFut != null) {
-                        final FileRebalanceNodeFuture lastFut0 = lastFut;
+                        final FileRebalanceNodeRoutine lastFut0 = lastFut;
 
                         fut.listen(f -> {
                             try {
@@ -425,7 +426,7 @@ public class GridPartitionFilePreloader extends GridCacheSharedManagerAdapter {
      * @param fut The future to check.
      * @return <tt>true</tt> if future can be processed.
      */
-    boolean staleFuture(FileRebalanceNodeFuture fut) {
+    boolean staleFuture(FileRebalanceNodeRoutine fut) {
         return fut == null || fut.isCancelled() || fut.isFailed() || fut.isDone() || topologyChanged(fut);
     }
 
@@ -434,7 +435,7 @@ public class GridPartitionFilePreloader extends GridCacheSharedManagerAdapter {
      * @return {@code True} if rebalance topology version changed by exchange thread or force
      * reassing exchange occurs, see {@link RebalanceReassignExchangeTask} for details.
      */
-    private boolean topologyChanged(FileRebalanceNodeFuture fut) {
+    private boolean topologyChanged(FileRebalanceNodeRoutine fut) {
         return !cctx.exchange().rebalanceTopologyVersion().equals(fut.topologyVersion());
         // todo || fut != rebalanceFut; // Same topology, but dummy exchange forced because of missing partitions.
     }
@@ -491,9 +492,6 @@ public class GridPartitionFilePreloader extends GridCacheSharedManagerAdapter {
 
             return false;
         }
-
-//        if (movingPartitions(grp, exchFut) == null)
-//            return false;
 
         if (!fileRebalanceSupported(grp, assignments.keySet())) {
             if (log.isDebugEnabled())
@@ -568,8 +566,8 @@ public class GridPartitionFilePreloader extends GridCacheSharedManagerAdapter {
 
             GridDhtLocalPartition part = grp.topology().localPartition(p);
 
-            assert part.dataStore().readOnly() : "Expected read-only partition [cache=" + grp.cacheOrGroupName() +
-                ", p=" + part.id() + "]";
+            assert part.dataStore().readOnly() :
+                "Expected read-only partition [cache=" + grp.cacheOrGroupName() + ", p=" + part.id() + "]";
         }
 
         return true;
@@ -597,10 +595,7 @@ public class GridPartitionFilePreloader extends GridCacheSharedManagerAdapter {
      * moved.
      */
     public IgniteInternalFuture<T2<Long, Long>> restorePartition(int grpId, int partId, File src,
-        FileRebalanceNodeFuture fut) throws IgniteCheckedException {
-        if (staleFuture(fut))
-            return null;
-
+        FileRebalanceNodeRoutine fut) throws IgniteCheckedException {
         FilePageStore pageStore = ((FilePageStore)((FilePageStoreManager)cctx.pageStore()).getStore(grpId, partId));
 
         try {
@@ -614,7 +609,7 @@ public class GridPartitionFilePreloader extends GridCacheSharedManagerAdapter {
             assert !cctx.pageStore().exists(grpId, partId) : "Partition file exists [cache=" +
                 cctx.cache().cacheGroup(grpId).cacheOrGroupName() + ", p=" + partId + "]";
 
-            // todo change to "move" when issue with zero snapshot page will be catched and investiageted.
+            // todo change to "move" when all issues with page memory will be resolved.
             Files.copy(src.toPath(), dest.toPath());
         }
         catch (IOException e) {
@@ -631,11 +626,13 @@ public class GridPartitionFilePreloader extends GridCacheSharedManagerAdapter {
 
         GridFutureAdapter<T2<Long, Long>> endFut = new GridFutureAdapter<>();
 
-        if (log.isTraceEnabled())
-            log.info("Schedule partition switch to FULL mode [grp=" + grp.cacheOrGroupName() + ", p=" + part.id() + ", cntr=" + minCntr + ", queued=" + cpLsnr.queue.size() + "]");
+        if (log.isTraceEnabled()) {
+            log.info("Schedule partition switch to FULL mode [grp=" + grp.cacheOrGroupName() +
+                ", p=" + part.id() + ", cntr=" + minCntr + ", queued=" + cpLsnr.queue.size() + "]");
+        }
 
         cpLsnr.schedule(() -> {
-            if (staleFuture(fut))
+            if (fut.isDone())
                 return;
 
             assert part.dataStore().readOnly() : "cache=" + grpId + " p=" + partId;
@@ -648,19 +645,17 @@ public class GridPartitionFilePreloader extends GridCacheSharedManagerAdapter {
 
             part.readOnly(false);
 
-            // Clear all on heap entries.
-            // todo something smarter
-            // todo check on large partition
-            part.entriesMap(null).map.clear();
+            // Clear all on-heap entries.
+            // todo something smarter and check large partition
+            if (grp.sharedGroup()) {
+                for (GridCacheContext ctx : grp.caches())
+                    part.entriesMap(ctx).map.clear();
+            }
+            else
+                part.entriesMap(null).map.clear();
 
-            assert readCntr != snapshotCntr;
-
-            assert snapshotCntr != null : "grp=" + grp.cacheOrGroupName() + ", p=" + partId + ", fullSize=" + part.dataStore().fullSize();
-
-            assert readCntr != null;
-
-            // todo check empty partition
-            assert snapshotCntr.get() != 0 : "grpId=" + grp.cacheOrGroupName() + ", p=" + partId + ", fullSize=" + part.dataStore().fullSize();
+            assert readCntr != snapshotCntr && snapshotCntr != null && readCntr != null : "grp=" +
+                grp.cacheOrGroupName() + ", p=" + partId + ", readCntr=" + readCntr + ", snapCntr=" + snapshotCntr;
 
             AffinityTopologyVersion infinTopVer = new AffinityTopologyVersion(Long.MAX_VALUE, 0);
 
@@ -669,7 +664,6 @@ public class GridPartitionFilePreloader extends GridCacheSharedManagerAdapter {
             // Operations that are in progress now will be lost and should be included in historical rebalancing.
             // These operations can update the old update counter or the new update counter, so the maximum applied
             // counter is used after all updates are completed.
-            // todo Consistency check fails sometimes for ATOMIC cache.
             partReleaseFut.listen(c ->
                 endFut.onDone(
                     new T2<>(minCntr, Math.max(readCntr.highestAppliedCounter(), snapshotCntr.highestAppliedCounter()))
@@ -756,12 +750,9 @@ public class GridPartitionFilePreloader extends GridCacheSharedManagerAdapter {
     private class PartitionSnapshotListener implements SnapshotListener {
         /** {@inheritDoc} */
         @Override public void onPartition(UUID nodeId, File file, int grpId, int partId) {
-            FileRebalanceNodeFuture fut = fileRebalanceFut.nodeRoutine(grpId, nodeId);
+            FileRebalanceNodeRoutine fut = fileRebalanceFut.nodeRoutine(grpId, nodeId);
 
-            if (staleFuture(fut)) { // || !snpName.equals(fut.snapshotName())) {
-//                if (log.isDebugEnabled())
-//                    log.debug("Cancel partitions download due to stale rebalancing future [current snapshot=" + snpName + ", fut=" + fut);
-
+            if (staleFuture(fut)) {
                 file.delete();
 
                 return;
@@ -770,9 +761,10 @@ public class GridPartitionFilePreloader extends GridCacheSharedManagerAdapter {
             try {
                 fileRebalanceFut.awaitCleanupIfNeeded(grpId);
 
-                IgniteInternalFuture<T2<Long, Long>> restoreFut = restorePartition(grpId, partId, file, fut);
+                if (fut.isDone())
+                    return;
 
-                restoreFut.listen(f -> {
+                restorePartition(grpId, partId, file, fut).listen(f -> {
                     try {
                         T2<Long, Long> cntrs = f.get();
 

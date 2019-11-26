@@ -118,7 +118,7 @@
         <level value="TRACE"/>
     </category>
 
-    <category name="org.apache.ignite.internal.processors.cache.distributed.dht.preloader.FileRebalanceNodeFuture">
+    <category name="org.apache.ignite.internal.processors.cache.distributed.dht.preloader.FileRebalanceNodeRoutine">
         <level value="TRACE"/>
     </category>
 

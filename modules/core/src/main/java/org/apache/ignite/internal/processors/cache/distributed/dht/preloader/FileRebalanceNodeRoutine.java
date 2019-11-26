@@ -18,6 +18,7 @@
 package org.apache.ignite.internal.processors.cache.distributed.dht.preloader;
 
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
@@ -39,7 +40,7 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 /** */
-public class FileRebalanceNodeFuture extends GridFutureAdapter<Boolean> {
+public class FileRebalanceNodeRoutine extends GridFutureAdapter<Boolean> {
     /** Context. */
     protected GridCacheSharedContext cctx;
 
@@ -85,7 +86,7 @@ public class FileRebalanceNodeFuture extends GridFutureAdapter<Boolean> {
     /**
      * Default constructor for the dummy future.
      */
-    public FileRebalanceNodeFuture() {
+    public FileRebalanceNodeRoutine() {
         this(null, null, null, null, 0, 0, Collections.emptyMap(), null);
 
         onDone();
@@ -97,7 +98,7 @@ public class FileRebalanceNodeFuture extends GridFutureAdapter<Boolean> {
      * @param assigns Map of assignments to request from remote.
      * @param topVer Topology version.
      */
-    public FileRebalanceNodeFuture(
+    public FileRebalanceNodeRoutine(
         GridCacheSharedContext cctx,
         FileRebalanceFuture mainFut,
         IgniteLogger log,
@@ -221,56 +222,6 @@ public class FileRebalanceNodeFuture extends GridFutureAdapter<Boolean> {
 
         if (remaining.isEmpty() && !isDone())
             onDone(true);
-
-//        if (!msg.partitions().hasHistorical()) {
-//            mainFut.onCacheGroupDone(grpId, nodeId(), false);
-//
-
-//
-//            return;
-//        }
-//
-//        GridDhtPartitionExchangeId exchId = cctx.exchange().lastFinishedFuture().exchangeId();
-//
-//        GridDhtPreloaderAssignments assigns = new GridDhtPreloaderAssignments(exchId, topVer);
-//
-//        assigns.put(node, msg);
-//
-//        GridCompoundFuture<Boolean, Boolean> histFut = new GridCompoundFuture<>(CU.boolReducer());
-//
-//        Runnable task = grp.preloader().addAssignments(assigns, true, rebalanceId, null, histFut);
-//
-//        if (log.isDebugEnabled())
-//            log.debug("Starting historical rebalancing [node=" + node.id() + ", cache=" + grp.cacheOrGroupName() + "]");
-//
-//        task.run();
-//
-//        histFut.markInitialized();
-//
-//        histFut.listen(c -> {
-//            try {
-//                if (isDone())
-//                    return;
-//
-//                mainFut.onCacheGroupDone(grpId, nodeId(), true);
-//
-//                // todo Test cancel of historical rebalancing + redundant forceFut.get() it's called onDone(cancelled)
-//                if (histFut.isCancelled() && !histFut.get()) {
-//                    log.warning("Cancelling file rebalancing due to unsuccessful historical rebalance [cancelled=" +
-//                        histFut.isCancelled() + ", failed=" + histFut.isFailed() + "]");
-//
-//                    cancel();
-//
-//                    return;
-//                }
-//
-//                if (remaining.isEmpty())
-//                    onDone(true);
-//            }
-//            catch (IgniteCheckedException e) {
-//                onDone(e);
-//            }
-//        });
     }
 
     /** {@inheritDoc} */
@@ -282,7 +233,7 @@ public class FileRebalanceNodeFuture extends GridFutureAdapter<Boolean> {
 
         try {
             if (log.isDebugEnabled())
-                log.debug("Stopping file rebalance future: " + cctx.localNodeId() + " -> " + nodeId());
+                log.debug("Stopping file rebalance routine: " + cctx.localNodeId() + " -> " + nodeId());
 
             if (snapFut != null && !snapFut.isDone()) {
                 if (log.isInfoEnabled())
@@ -321,7 +272,14 @@ public class FileRebalanceNodeFuture extends GridFutureAdapter<Boolean> {
 
     /** {@inheritDoc} */
     @Override public String toString() {
-        return "finished=" + isDone() + ", node=" + node.id() + ", grps=" + F.transform(assigns.keySet(), v -> cctx.cache().cacheGroup(v).cacheOrGroupName());
+        StringBuilder buf = new StringBuilder();
+
+        for (Map.Entry<Integer, Set<Integer>> entry : new HashMap<>(remaining).entrySet()) {
+            buf.append("grp=").append(cctx.cache().cacheGroup(entry.getKey()).cacheOrGroupName()).
+                append(" parts=").append(entry.getValue()).append("; ");
+        }
+
+        return "finished=" + isDone() + ", node=" + node.id() + ", remain=[" + buf + "]";
     }
 
     private static class PartCounters implements Comparable {

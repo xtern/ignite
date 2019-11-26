@@ -52,6 +52,7 @@ import org.apache.ignite.internal.pagemem.PageIdUtils;
 import org.apache.ignite.internal.processors.cache.CacheGroupContext;
 import org.apache.ignite.internal.processors.cache.GridCacheContext;
 import org.apache.ignite.internal.processors.cache.IgniteInternalCache;
+import org.apache.ignite.internal.processors.cache.distributed.dht.preloader.GridPartitionFilePreloader;
 import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtLocalPartition;
 import org.apache.ignite.internal.processors.cache.persistence.file.FilePageStoreManager;
 import org.apache.ignite.internal.processors.cache.persistence.pagemem.PageMemoryEx;
@@ -1004,80 +1005,96 @@ public class GridCacheFileRebalanceSelfTest extends GridCommonAbstractTest {
 
         int timeout = 180_000;
 
-        IgniteEx ignite0 = startGrid(0);
+        try {
+            IgniteEx ignite0 = startGrid(0);
 
-        ignite0.cluster().active(true);
+            ignite0.cluster().active(true);
 
-        blt.add(ignite0.localNode());
-
-        ignite0.cluster().setBaselineTopology(blt);
-
-        loadData(ignite0, CACHE1, entriesCnt);
-        loadData(ignite0, CACHE2, entriesCnt);
-
-        forceCheckpoint(ignite0);
-
-        AtomicLong cntr = new AtomicLong(entriesCnt);
-
-        ConstantLoader ldr = new ConstantLoader(ignite0.cache(CACHE1), cntr, false, threads);
-
-        IgniteInternalFuture ldrFut = GridTestUtils.runMultiThreadedAsync(ldr, threads, "loader");
-
-        long endTime = System.currentTimeMillis() + timeout;
-
-        int nodes = 3;
-
-        int started = 1;
-
-        for (int i = 0; i < nodes; i++) {
-            int time0 = ThreadLocalRandom.current().nextInt(1000);
-
-            IgniteEx igniteX = startGrid(i + started);
-
-            blt.add(igniteX.localNode());;
-
-            if (time0 % 2 == 0)
-                U.sleep(time0);
+            blt.add(ignite0.localNode());
 
             ignite0.cluster().setBaselineTopology(blt);
-        }
 
-        do {
-            for (int i = 0; i < nodes; i++) {
-                int time0 = ThreadLocalRandom.current().nextInt(2000);
+            loadData(ignite0, CACHE1, entriesCnt);
+            loadData(ignite0, CACHE2, entriesCnt);
 
-                U.sleep(time0);
+            forceCheckpoint(ignite0);
 
-                stopGrid(i + started);
-            }
+            AtomicLong cntr = new AtomicLong(entriesCnt);
 
-            awaitPartitionMapExchange();
+            ConstantLoader ldr = new ConstantLoader(ignite0.cache(CACHE1), cntr, false, threads);
+
+            IgniteInternalFuture ldrFut = GridTestUtils.runMultiThreadedAsync(ldr, threads, "loader");
+
+            long endTime = System.currentTimeMillis() + timeout;
+
+            int nodes = 3;
+
+            int started = 1;
 
             for (int i = 0; i < nodes; i++) {
                 int time0 = ThreadLocalRandom.current().nextInt(1000);
 
                 IgniteEx igniteX = startGrid(i + started);
 
-//                blt.add(igniteX.localNode());;
+                blt.add(igniteX.localNode());
 
-//                if (time0 % 2 == 0)
-//                    U.sleep(time0);
+                if (time0 % 2 == 0)
+                    U.sleep(time0);
 
-//                ignite0.cluster().setBaselineTopology(blt);
+                ignite0.cluster().setBaselineTopology(blt);
             }
 
+            do {
+                for (int i = 0; i < nodes; i++) {
+                    int time0 = ThreadLocalRandom.current().nextInt(2000);
+
+                    U.sleep(time0);
+
+                    stopGrid(i + started);
+                }
+
+                awaitPartitionMapExchange();
+
+                for (int i = 0; i < nodes; i++) {
+                    int time0 = ThreadLocalRandom.current().nextInt(1000);
+
+                    if (time0 % 2 == 0)
+                        U.sleep(time0);
+
+                    startGrid(i + started);
+
+                    //                blt.add(igniteX.localNode());;
+
+
+
+                    //                ignite0.cluster().setBaselineTopology(blt);
+                }
+
+                awaitPartitionMapExchange();
+            }
+            while (U.currentTimeMillis() < endTime);
+
             awaitPartitionMapExchange();
-        } while (U.currentTimeMillis() < endTime);
 
-        awaitPartitionMapExchange();
+            ldr.stop();
 
-        ldr.stop();
+            ldrFut.get();
 
-        ldrFut.get();
+            for (Ignite g : G.allGrids()) {
+                verifyCacheContent(g.cache(CACHE1), ldr.cntr.get());
+                verifyCacheContent(g.cache(CACHE2), entriesCnt);
+            }
+        } catch (Error | RuntimeException | IgniteCheckedException e) {
+            for (Ignite g : G.allGrids()) {
+                GridPartitionFilePreloader filePreloader = ((IgniteEx)g).context().cache().context().filePreloader();
 
-        for (Ignite g : G.allGrids()) {
-            verifyCacheContent(g.cache(CACHE1), ldr.cntr.get());
-            verifyCacheContent(g.cache(CACHE2), entriesCnt);
+                synchronized (System.err) {
+                    if (filePreloader != null)
+                        filePreloader.printDiagnostic();
+                }
+            }
+
+            throw e;
         }
     }
 
