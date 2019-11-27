@@ -3729,6 +3729,24 @@ public class GridDhtPartitionsExchangeFuture extends GridDhtTopologyFutureAdapte
                 }
             }
 
+            boolean hasMoving = !partsToReload.isEmpty();
+
+            Set<Integer> waitGrps = cctx.affinity().waitGroups();
+
+            if (!hasMoving) {
+                for (CacheGroupContext grpCtx : cctx.cache().cacheGroups()) {
+                    if (waitGrps.contains(grpCtx.groupId()) && grpCtx.topology().hasMovingPartitions()) {
+                        hasMoving = true;
+
+                        break;
+                    }
+
+                }
+            }
+
+            if (!hasMoving)
+                cctx.database().releaseHistoryForPreloading();
+
             if (stateChangeExchange()) {
                 StateChangeRequest req = exchActions.stateChangeRequest();
 
@@ -3741,24 +3759,8 @@ public class GridDhtPartitionsExchangeFuture extends GridDhtTopologyFutureAdapte
 
                     cctx.kernalContext().state().onStateChangeError(exchangeGlobalExceptions, req);
                 }
-                else {
-                    boolean hasMoving = !partsToReload.isEmpty();
-
-                    Set<Integer> waitGrps = cctx.affinity().waitGroups();
-
-                    if (!hasMoving) {
-                        for (CacheGroupContext grpCtx : cctx.cache().cacheGroups()) {
-                            if (waitGrps.contains(grpCtx.groupId()) && grpCtx.topology().hasMovingPartitions()) {
-                                hasMoving = true;
-
-                                break;
-                            }
-
-                        }
-                    }
-
+                else
                     cctx.kernalContext().state().onExchangeFinishedOnCoordinator(this, hasMoving);
-                }
 
                 if (!cctx.kernalContext().state().clusterState().localBaselineAutoAdjustment()) {
                     boolean active = !stateChangeErr && req.activate();

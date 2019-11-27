@@ -308,12 +308,8 @@ public class CacheAffinitySharedManager<K, V> extends GridCacheSharedManagerAdap
             }
 
             try {
-                if (msg != null) {
+                if (msg != null)
                     cctx.discovery().sendCustomEvent(msg);
-
-                    // todo think about this solution
-                    cctx.database().releaseHistoryForPreloading();
-                }
             }
             catch (IgniteCheckedException e) {
                 U.error(log, "Failed to send affinity change message.", e);

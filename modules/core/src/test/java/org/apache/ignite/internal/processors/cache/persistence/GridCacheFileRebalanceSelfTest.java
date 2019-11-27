@@ -1098,6 +1098,136 @@ public class GridCacheFileRebalanceSelfTest extends GridCommonAbstractTest {
         }
     }
 
+    /** todo */
+    @Test
+    @WithSystemProperty(key = IGNITE_FILE_REBALANCE_ENABLED, value = "true")
+    @WithSystemProperty(key = IGNITE_BASELINE_AUTO_ADJUST_ENABLED, value = "false")
+    @WithSystemProperty(key = IGNITE_PDS_FILE_REBALANCE_THRESHOLD, value="1")
+    public void testMultipleCachesCancelRebalancePartitionedUnderConstantLoad2() throws Exception {
+        cacheMode = PARTITIONED;
+        backups = 3;
+
+        int threads = Runtime.getRuntime().availableProcessors() / 2;
+
+        List<ClusterNode> blt = new ArrayList<>();
+
+        int entriesCnt = 100_000;
+
+        int timeout = 180_000;
+
+        try {
+            IgniteEx ignite0 = startGrid(0);
+
+            ignite0.cluster().active(true);
+
+            blt.add(ignite0.localNode());
+
+            ignite0.cluster().setBaselineTopology(blt);
+
+            loadData(ignite0, CACHE1, entriesCnt);
+            loadData(ignite0, CACHE2, entriesCnt);
+
+            forceCheckpoint(ignite0);
+
+            AtomicLong cntr = new AtomicLong(entriesCnt);
+
+            ConstantLoader ldr = new ConstantLoader(ignite0.cache(CACHE1), cntr, false, threads);
+
+            IgniteInternalFuture ldrFut = GridTestUtils.runMultiThreadedAsync(ldr, threads, "loader");
+
+            long endTime = System.currentTimeMillis() + timeout;
+
+            int nodes = 3;
+
+            int started = 1;
+
+            for (int i = 0; i < nodes; i++) {
+                int time0 = ThreadLocalRandom.current().nextInt(1000);
+
+                IgniteEx igniteX = startGrid(i + started);
+
+                blt.add(igniteX.localNode());
+
+                if (time0 % 2 == 0)
+                    U.sleep(time0);
+
+                ignite0.cluster().setBaselineTopology(blt);
+            }
+
+            for (int i = 0; i < nodes; i++) {
+                int time0 = ThreadLocalRandom.current().nextInt(2000);
+
+                U.sleep(time0);
+
+                stopGrid(i + started);
+            }
+
+            U.sleep(3_000);
+
+
+            for (int i = 0; i < nodes; i++) {
+                int time0 = ThreadLocalRandom.current().nextInt(1000);
+
+                if (time0 % 2 == 0)
+                    U.sleep(time0);
+
+                System.out.println("*******************************");
+                System.out.println("  starting test killer " + (i + started));
+                System.out.println("*******************************");
+
+                startGrid(i + started);
+            }
+
+
+//            do {
+
+//
+//                awaitPartitionMapExchange();
+//
+//                for (int i = 0; i < nodes; i++) {
+//                    int time0 = ThreadLocalRandom.current().nextInt(1000);
+//
+//                    if (time0 % 2 == 0)
+//                        U.sleep(time0);
+//
+//                    startGrid(i + started);
+//
+//                    //                blt.add(igniteX.localNode());;
+//
+//
+//
+//                    //                ignite0.cluster().setBaselineTopology(blt);
+//                }
+//
+//                awaitPartitionMapExchange();
+//            }
+//            while (U.currentTimeMillis() < endTime);
+
+            awaitPartitionMapExchange();
+
+            ldr.stop();
+
+            ldrFut.get();
+
+            for (Ignite g : G.allGrids()) {
+                verifyCacheContent(g.cache(CACHE1), ldr.cntr.get());
+                verifyCacheContent(g.cache(CACHE2), entriesCnt);
+            }
+        } catch (Error | RuntimeException | IgniteCheckedException e) {
+            for (Ignite g : G.allGrids()) {
+                GridPartitionFilePreloader filePreloader = ((IgniteEx)g).context().cache().context().filePreloader();
+
+                synchronized (System.err) {
+                    if (filePreloader != null)
+                        filePreloader.printDiagnostic();
+                }
+            }
+
+            throw e;
+        }
+    }
+
+
     private void verifyCacheContent(IgniteCache<Object, Object> cache, long cnt) {
         verifyCacheContent(cache, cnt, false);
     }
