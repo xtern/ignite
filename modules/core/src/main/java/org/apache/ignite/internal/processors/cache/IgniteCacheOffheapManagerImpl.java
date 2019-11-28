@@ -1210,6 +1210,9 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
             iterators.put(p, partIter);
         }
 
+        if (!parts.historicalMap().isEmpty())
+            log.info("Historical supply " + parts.historicalMap());
+
         IgniteHistoricalIterator historicalIterator = historicalIterator(parts.historicalMap(), missing);
 
         IgniteRebalanceIterator iter = new IgniteRebalanceIteratorImpl(iterators, historicalIterator);

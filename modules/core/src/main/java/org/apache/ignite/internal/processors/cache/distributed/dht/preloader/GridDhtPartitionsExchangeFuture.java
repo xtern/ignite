@@ -3257,8 +3257,8 @@ public class GridDhtPartitionsExchangeFuture extends GridDhtTopologyFutureAdapte
         }
 
         if (detected.get() > 0) {
-            if (log.isDebugEnabled())
-                log.debug("Partitions have been scheduled to resend [reason=" +
+            if (log.isInfoEnabled())
+                log.info("Partitions have been scheduled to resend [reason=" +
                     "Lost partitions detect on " + resTopVer + "]");
 
             cctx.exchange().scheduleResendPartitions();
