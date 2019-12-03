@@ -33,7 +33,9 @@ import org.apache.ignite.internal.IgniteInternalFuture;
 import org.apache.ignite.internal.pagemem.PageIdUtils;
 import org.apache.ignite.internal.processors.affinity.AffinityTopologyVersion;
 import org.apache.ignite.internal.processors.cache.CacheGroupContext;
+import org.apache.ignite.internal.processors.cache.DynamicCacheDescriptor;
 import org.apache.ignite.internal.processors.cache.GridCacheContext;
+import org.apache.ignite.internal.processors.cache.GridCacheContextInfo;
 import org.apache.ignite.internal.processors.cache.GridCacheSharedContext;
 import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtLocalPartition;
 import org.apache.ignite.internal.processors.cache.persistence.file.FilePageStoreManager;
@@ -69,6 +71,8 @@ public class FileRebalanceFuture extends GridFutureAdapter<Boolean> {
 
     /** */
     private final Map<String, GridFutureAdapter> regions = new HashMap<>();
+
+    private final Map<String, Set<Integer>> regionsToGroups = new HashMap<>();
 
     /** */
     private final ReentrantLock cancelLock = new ReentrantLock();
@@ -152,6 +156,8 @@ public class FileRebalanceFuture extends GridFutureAdapter<Boolean> {
 
                         Set<Long> regionParts = regionToParts.computeIfAbsent(regName, v -> new HashSet<>());
 
+                        regionsToGroups.computeIfAbsent(regName, v -> new HashSet<>()).add(grpId);
+
                         Set<Integer> allPartitions = allPartsMap.computeIfAbsent(grpId, v -> new HashSet<>());
 
                         for (Integer partId : entry.getValue()) {
@@ -162,6 +168,8 @@ public class FileRebalanceFuture extends GridFutureAdapter<Boolean> {
 
                             allPartitions.add(partId);
                         }
+
+
 
                         regionParts.add(((long)grpId << 32) + INDEX_PARTITION);
                     }
@@ -383,6 +391,27 @@ public class FileRebalanceFuture extends GridFutureAdapter<Boolean> {
 
                             invalidatePartitions(parts);
 
+                            GridQueryProcessor qryProc = cctx.kernalContext().query();
+
+                            if (qryProc.moduleEnabled()) {
+                                Set<Integer> grps = regionsToGroups.get(region);
+
+                                for (Integer grpId : grps) {
+                                    CacheGroupContext grpCtx = cctx.cache().cacheGroup(grpId);
+
+                                    for (GridCacheContext ctx : grpCtx.caches()) {
+                                        GridCacheContextInfo cacheInfo = new GridCacheContextInfo(ctx, false);
+                                        DynamicCacheDescriptor desc = cctx.cache().cacheDescriptor(ctx.cacheId());
+                                        assert desc != null : ctx.cache().name();
+
+                                        ctx.offheap().start(cctx, grpCtx);
+
+                                        qryProc.onCacheStop0(cacheInfo, false);
+                                        qryProc.onCacheStart0(cacheInfo, desc.schema(), desc.sql());
+                                    }
+                                }
+                            }
+
                             fut.onDone();
                         }
                         catch (RuntimeException | IgniteCheckedException e) {
@@ -429,7 +458,7 @@ public class FileRebalanceFuture extends GridFutureAdapter<Boolean> {
 
     private void reservePartitions(Set<Long> partitionSet) {
         for (long entry : partitionSet) {
-            GridDhtLocalPartition part = getPartition(entry);
+            GridDhtLocalPartition part = localPartition(entry);
 
             if (part != null)
                 part.reserve();
@@ -438,16 +467,16 @@ public class FileRebalanceFuture extends GridFutureAdapter<Boolean> {
 
     private void releasePartitions(Set<Long> partitionSet) {
         for (long entry : partitionSet) {
-            GridDhtLocalPartition part = getPartition(entry);
+            GridDhtLocalPartition part = localPartition(entry);
 
             if (part != null)
                 part.release();
         }
     }
 
-    private GridDhtLocalPartition getPartition(long entry) {
-        int grpId = (int)(entry >> 32);
-        int partId = (int)entry;
+    private GridDhtLocalPartition localPartition(long globalPartId) {
+        int grpId = (int)(globalPartId >> 32);
+        int partId = (int)globalPartId;
 
         if (partId == INDEX_PARTITION)
             return null;
