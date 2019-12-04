@@ -1454,7 +1454,8 @@ public class GridCacheFileRebalanceSelfTest extends GridCommonAbstractTest {
     @WithSystemProperty(key = IGNITE_PDS_FILE_REBALANCE_THRESHOLD, value="1")
     public void testMultipleCachesCancelRebalanceConstantLoadPartitioned() throws Exception {
         cacheMode = PARTITIONED;
-        backups = 0;
+        parts = 64;
+        backups = 3;
 
         List<ClusterNode> blt = new ArrayList<>();
 

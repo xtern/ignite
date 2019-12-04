@@ -43,6 +43,7 @@ import org.apache.ignite.internal.processors.cache.persistence.pagemem.PageMemor
 import org.apache.ignite.internal.processors.query.GridQueryProcessor;
 import org.apache.ignite.internal.util.GridConcurrentHashSet;
 import org.apache.ignite.internal.util.future.GridCompoundFuture;
+import org.apache.ignite.internal.util.future.GridFinishedFuture;
 import org.apache.ignite.internal.util.future.GridFutureAdapter;
 import org.apache.ignite.internal.util.typedef.T2;
 import org.apache.ignite.internal.util.typedef.internal.CU;
@@ -293,6 +294,9 @@ public class FileRebalanceFuture extends GridFutureAdapter<Boolean> {
                     cancelLock.unlock();
                 }
             }
+            else
+            if (log.isInfoEnabled())
+                log.info("Skipping index rebuild for cache group: " + grp.cacheOrGroupName());
 
             GridDhtPreloaderAssignments assigns = historicalAssignments.remove(grpId);
 

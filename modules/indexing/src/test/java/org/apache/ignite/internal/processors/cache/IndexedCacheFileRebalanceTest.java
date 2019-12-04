@@ -1,11 +1,17 @@
 package org.apache.ignite.internal.processors.cache;
 
 import java.io.Serializable;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.atomic.AtomicInteger;
+import org.apache.ignite.Ignite;
+import org.apache.ignite.IgniteCache;
 import org.apache.ignite.IgniteDataStreamer;
 import org.apache.ignite.cache.CacheAtomicityMode;
 import org.apache.ignite.cache.CacheMode;
@@ -14,18 +20,23 @@ import org.apache.ignite.cache.CacheWriteSynchronizationMode;
 import org.apache.ignite.cache.QueryEntity;
 import org.apache.ignite.cache.QueryIndex;
 import org.apache.ignite.cache.affinity.rendezvous.RendezvousAffinityFunction;
+import org.apache.ignite.cluster.ClusterNode;
 import org.apache.ignite.configuration.CacheConfiguration;
 import org.apache.ignite.configuration.DataRegionConfiguration;
 import org.apache.ignite.configuration.DataStorageConfiguration;
 import org.apache.ignite.configuration.IgniteConfiguration;
 import org.apache.ignite.configuration.WALMode;
 import org.apache.ignite.internal.IgniteEx;
+import org.apache.ignite.internal.IgniteInternalFuture;
+import org.apache.ignite.internal.IgniteInterruptedCheckedException;
 import org.apache.ignite.internal.pagemem.PageIdAllocator;
-import org.apache.ignite.internal.processors.cache.persistence.IgnitePdsCacheRebalancingAbstractTest;
 import org.apache.ignite.internal.processors.cache.persistence.file.FilePageStoreManager;
 import org.apache.ignite.internal.processors.cache.persistence.pagemem.PageMemoryEx;
 import org.apache.ignite.internal.processors.query.GridQueryProcessor;
 import org.apache.ignite.internal.util.typedef.internal.U;
+import org.apache.ignite.internal.visor.verify.ValidateIndexesClosure;
+import org.apache.ignite.internal.visor.verify.VisorValidateIndexesJobResult;
+import org.apache.ignite.testframework.GridTestUtils;
 import org.apache.ignite.testframework.junits.WithSystemProperty;
 import org.apache.ignite.testframework.junits.common.GridCommonAbstractTest;
 import org.junit.Test;
@@ -56,7 +67,7 @@ public class IndexedCacheFileRebalanceTest extends GridCommonAbstractTest {
 //            .setWriteSynchronizationMode(CacheWriteSynchronizationMode.FULL_SYNC);
 
         CacheConfiguration ccfg2 = cacheConfiguration(INDEXED_CACHE)
-            .setBackups(2)
+            .setBackups(0)
             .setAffinity(new RendezvousAffinityFunction(false, 32))
             .setWriteSynchronizationMode(CacheWriteSynchronizationMode.FULL_SYNC);
 
@@ -255,7 +266,6 @@ public class IndexedCacheFileRebalanceTest extends GridCommonAbstractTest {
 
         qryProc.onCacheStop0(cacheInfo, false);
         qryProc.onCacheStart0(cacheInfo, node0.context().cache().cacheDescriptor(INDEXED_CACHE).schema(), node0.context().cache().cacheDescriptor(INDEXED_CACHE).sql());
-
 //
 //
 //        cctx.kernalContext().query().onCacheStart(new GridCacheContextInfo(cache.context(), false),
@@ -282,6 +292,90 @@ public class IndexedCacheFileRebalanceTest extends GridCommonAbstractTest {
 //
 //        for (int i = 10_000; i < 11_000; i++)
 //            node0.cache(INDEXED_CACHE).put(i, new TestValue(i, i, i));
+    }
+
+    @Override protected long getPartitionMapExchangeTimeout() {
+        return 60_000;
+    }
+
+    @Test
+    @WithSystemProperty(key = IGNITE_FILE_REBALANCE_ENABLED, value = "true")
+    @WithSystemProperty(key = IGNITE_BASELINE_AUTO_ADJUST_ENABLED, value = "false")
+    @WithSystemProperty(key = IGNITE_PDS_FILE_REBALANCE_THRESHOLD, value="1")
+    public void testMultipleCachesCancelRebalanceConstantLoadPartitioned() throws Exception {
+//        cacheMode = PARTITIONED;
+//        backups = 0;
+
+        List<ClusterNode> blt = new ArrayList<>();
+
+        int entriesCnt = 400_000;
+
+        IgniteEx ignite0 = startGrid(0);
+
+        ignite0.cluster().active(true);
+
+        blt.add(ignite0.localNode());
+
+        ignite0.cluster().setBaselineTopology(blt);
+
+        int threads = Runtime.getRuntime().availableProcessors();
+
+        loadData(ignite0, INDEXED_CACHE, entriesCnt);
+
+        AtomicInteger cntr = new AtomicInteger(entriesCnt);
+
+        ConstantLoader ldr = new ConstantLoader(ignite0.cache(INDEXED_CACHE), cntr, false, threads);
+
+        IgniteInternalFuture ldrFut = GridTestUtils.runMultiThreadedAsync(ldr, threads, "thread");
+
+        forceCheckpoint(ignite0);
+
+        IgniteEx ignite1 = startGrid(1);
+
+        blt.add(ignite1.localNode());
+
+        ignite0.cluster().setBaselineTopology(blt);
+
+        U.sleep(80);
+
+        IgniteEx ignite2 = startGrid(2);
+
+        blt.add(ignite2.localNode());
+
+        ignite0.cluster().setBaselineTopology(blt);
+
+        U.sleep(80);
+
+        IgniteEx ignite3 = startGrid(3);
+
+        blt.add(ignite3.localNode());
+
+        ignite0.cluster().setBaselineTopology(blt);
+
+        awaitPartitionMapExchange();
+
+        ldr.stop();
+
+        ldrFut.get();
+
+//        verifyCacheContent(ignite2.cache(INDEXED_CACHE), cntr.get());
+
+        // Validate indexes on start.
+        ValidateIndexesClosure clo = new ValidateIndexesClosure(Collections.singleton(INDEXED_CACHE), 0, 0);
+
+        ignite0.cluster().active(false);
+
+        ignite1.context().resource().injectGeneric(clo);
+
+        VisorValidateIndexesJobResult res = clo.call();
+
+        assertFalse(res.hasIssues());
+
+        ignite2.context().resource().injectGeneric(clo);
+
+        res = clo.call();
+
+        assertFalse(res.hasIssues());
     }
 
     /**
@@ -336,6 +430,170 @@ public class IndexedCacheFileRebalanceTest extends GridCommonAbstractTest {
                 ", v1=" + v1 +
                 ", v2=" + v2 +
                 '}';
+        }
+    }
+
+    private void verifyCacheContent(IgniteCache<Object, Object> cache, long cnt) {
+        verifyCacheContent(cache, cnt, false);
+    }
+
+    // todo should check partitions
+    private void verifyCacheContent(IgniteCache<Object, Object> cache, long cnt, boolean removes) {
+        log.info("Verifying cache contents [cache=" + cache.getName() + ", size=" + cnt + "]");
+
+        StringBuilder buf = new StringBuilder();
+
+        int fails = 0;
+
+        long expSize = 0;
+
+        for (int k = 0; k < cnt; k++) {
+            if (removes && k % 10 == 0)
+                continue;
+
+            ++expSize;
+
+            TestValue exp = new TestValue(k, k, k);;
+            TestValue actual = (TestValue)cache.get(k);
+
+            if (!Objects.equals(exp, actual)) {
+//                if (fails++ < 100)
+                buf.append("cache=").append(cache.getName()).append(", key=").append(k).append(", expect=").append(exp).append(", actual=").append(actual).append('\n');
+//                else {
+//                    buf.append("\n... and so on\n");
+
+//                    break;
+//                }
+            }
+
+            if ((k + 1) % (cnt / 10) == 0)
+                log.info("Verification: " + (k + 1) * 100 / cnt + "%");
+        }
+
+        if (!removes && cnt != cache.size())
+            buf.append("\ncache=").append(cache.getName()).append(" size mismatch [expect=").append(cnt).append(", actual=").append(cache.size()).append('\n');
+
+        assertTrue(buf.toString(), buf.length() == 0);
+    }
+
+    /**
+     * @param ignite Ignite instance to load.
+     * @param name The cache name to add random data to.
+     * @param size The total size of entries.
+     */
+    private void loadData(Ignite ignite, String name, int size) {
+        try (IgniteDataStreamer<Integer, TestValue> streamer = ignite.dataStreamer(name)) {
+            streamer.allowOverwrite(true);
+
+            for (int i = 0; i < size; i++) {
+                if ((i + 1) % (size / 10) == 0)
+                    log.info("Prepared " + (i + 1) * 100 / (size) + "% entries.");
+
+                streamer.addData(i, new TestValue(i, i, i));
+            }
+        }
+    }
+
+
+    /** */
+    private static class ConstantLoader implements Runnable {
+        /** */
+        private final AtomicInteger cntr;
+
+        /** */
+        private final boolean enableRemove;
+
+        /** */
+        private final CyclicBarrier pauseBarrier;
+
+        /** */
+        private volatile boolean pause;
+
+        /** */
+        private volatile boolean paused;
+
+        /** */
+        private volatile boolean stop;
+
+        /** */
+        private final IgniteCache<Integer, TestValue> cache;
+
+        /** */
+        public ConstantLoader(IgniteCache<Integer, TestValue> cache, AtomicInteger cntr, boolean enableRemove, int threadCnt) {
+            this.cache = cache;
+            this.cntr = cntr;
+            this.enableRemove = enableRemove;
+            this.pauseBarrier = new CyclicBarrier(threadCnt + 1); // +1 waiter
+        }
+
+        /** {@inheritDoc} */
+        @Override public void run() {
+            String cacheName = cache.getName();
+
+            while (!stop && !Thread.currentThread().isInterrupted()) {
+                if (pause) {
+                    if (!paused) {
+                        U.awaitQuiet(pauseBarrier);
+
+                        log.info("Async loader paused.");
+
+                        paused = true;
+                    }
+
+                    // Busy wait for resume.
+                    try {
+                        U.sleep(100);
+                    }
+                    catch (IgniteInterruptedCheckedException e) {
+                        break;
+                    }
+
+                    continue;
+                }
+
+                int from = cntr.getAndAdd(100);
+
+                for (int i = from; i < from + 100; i++)
+                    cache.put(i, new TestValue(i, i, i));
+
+                if (!enableRemove)
+                    continue;
+
+                for (int i = from; i < from + 100; i += 10)
+                    cache.remove(i);
+            }
+
+            log.info("Async loader stopped.");
+        }
+
+        /**
+         * Stop loader thread.
+         */
+        public void stop() {
+            stop = true;
+        }
+
+        /**
+         * Pause loading.
+         */
+        public void pause() {
+            pause = true;
+
+            log.info("Suspending loader threads: " + pauseBarrier.getParties());
+
+            // Wait all workers came to barrier.
+            U.awaitQuiet(pauseBarrier);
+
+            log.info("Loader suspended");
+        }
+
+        /**
+         * Resume loading.
+         */
+        public void resume() {
+            paused = false;
+            pause = false;
+
         }
     }
 

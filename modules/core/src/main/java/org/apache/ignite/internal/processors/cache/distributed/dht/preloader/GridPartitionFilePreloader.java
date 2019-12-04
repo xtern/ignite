@@ -32,7 +32,6 @@ import java.util.TreeMap;
 import java.util.UUID;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentLinkedQueue;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.IgniteSystemProperties;
@@ -790,9 +789,15 @@ public class GridPartitionFilePreloader extends GridCacheSharedManagerAdapter {
     private class PartitionSnapshotListener implements SnapshotListener {
         /** {@inheritDoc} */
         @Override public void onPartition(UUID nodeId, File file, int grpId, int partId) {
+            if (log.isTraceEnabled())
+                log.trace("Processing partition file: " + file);
+
             FileRebalanceNodeRoutine fut = fileRebalanceFut.nodeRoutine(grpId, nodeId);
 
             if (staleFuture(fut)) {
+                if (log.isTraceEnabled())
+                    log.trace("Stale future, removing file: " + file);
+
                 file.delete();
 
                 return;
