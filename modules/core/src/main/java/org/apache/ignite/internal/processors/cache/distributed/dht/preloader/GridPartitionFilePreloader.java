@@ -54,6 +54,7 @@ import org.apache.ignite.internal.processors.cache.persistence.GridCacheOffheapM
 import org.apache.ignite.internal.processors.cache.persistence.file.FilePageStore;
 import org.apache.ignite.internal.processors.cache.persistence.file.FilePageStoreManager;
 import org.apache.ignite.internal.processors.cache.persistence.snapshot.SnapshotListener;
+import org.apache.ignite.internal.processors.cluster.BaselineTopologyHistoryItem;
 import org.apache.ignite.internal.util.future.GridFutureAdapter;
 import org.apache.ignite.internal.util.lang.IgniteInClosureX;
 import org.apache.ignite.internal.util.typedef.T2;
@@ -173,26 +174,16 @@ public class GridPartitionFilePreloader extends GridCacheSharedManagerAdapter {
             return;
         }
 
-        log.info(">>>>>>> localJoinExchange: " + exchFut.localJoinExchange());
-        StateChangeRequest req = exchFut.exchangeActions() != null ? exchFut.exchangeActions().stateChangeRequest() : null;
-
-        if (req != null && req.prevBaselineTopologyHistoryItem() != null) {
-            Set<Object> set = new HashSet<>(req.baselineTopology().consistentIds());
-
-            set.removeAll(req.prevBaselineTopologyHistoryItem().consIds());
-
-            assert !set.contains(cctx.localNode().consistentId());
-        }
-
-        System.out.println(cctx.localNodeId() + " >xxx> NOT THE CASE");
-
         // Should interrupt current rebalance.
         if (!rebFut.isDone())
             rebFut.cancel();
 
         assert fileRebalanceFut.isDone();
 
-        // At this point cache updates are queued and we can safely switch partitions to read-only mode and vice-versa.
+        // todo imagine two nodes failed and returned back with sequential baseline change
+        boolean locJoinBaselineChange = isLocalBaselineChange(exchFut);
+
+        // At this point cache updates are queued and we can safely switch partitions to read-only mode.
         for (CacheGroupContext grp : cctx.cache().cacheGroups()) {
             if (!fileRebalanceSupported(grp))
                 continue;
@@ -201,6 +192,15 @@ public class GridPartitionFilePreloader extends GridCacheSharedManagerAdapter {
 
             if (moving != null && !moving.isEmpty() && log.isDebugEnabled())
                 log.debug("Set READ-ONLY mode for cache=" + grp.cacheOrGroupName() + " parts=" + moving);
+
+            for (GridDhtLocalPartition part : grp.topology().currentLocalPartitions()) {
+                // todo Cannot continue file rebalancing, index.may be not empty.
+                if (!locJoinBaselineChange && !part.dataStore().readOnly()) {
+                    if (log.isDebugEnabled())
+                        log.debug("File rebalancing skipped for group: " + grp.cacheOrGroupName());
+                    return;
+                }
+            }
 
             // Should switch read-only partitions into full mode for eviction.
             // Also, "global" partition size can change and file rebalance will not be applicable to it.
@@ -214,6 +214,20 @@ public class GridPartitionFilePreloader extends GridCacheSharedManagerAdapter {
                 }
             }
         }
+    }
+
+    private boolean isLocalBaselineChange(GridDhtPartitionsExchangeFuture exchFut) {
+        if (exchFut.exchangeActions() == null)
+            return false;
+
+        StateChangeRequest req = exchFut.exchangeActions().stateChangeRequest();
+
+        if (req == null)
+            return false;
+
+        BaselineTopologyHistoryItem prevBaseline = req.prevBaselineTopologyHistoryItem();
+
+        return !prevBaseline.consistentIds().contains(cctx.localNode().consistentId());
     }
 
     private Set<Integer> detectMovingPartitions(CacheGroupContext grp, GridDhtPartitionsExchangeFuture exchFut) {
