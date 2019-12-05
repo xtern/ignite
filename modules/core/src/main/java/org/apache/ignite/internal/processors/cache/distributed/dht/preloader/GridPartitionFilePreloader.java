@@ -46,6 +46,7 @@ import org.apache.ignite.internal.processors.cache.CacheGroupContext;
 import org.apache.ignite.internal.processors.cache.GridCacheContext;
 import org.apache.ignite.internal.processors.cache.GridCacheSharedManagerAdapter;
 import org.apache.ignite.internal.processors.cache.PartitionUpdateCounter;
+import org.apache.ignite.internal.processors.cache.StateChangeRequest;
 import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtLocalPartition;
 import org.apache.ignite.internal.processors.cache.persistence.DbCheckpointListener;
 import org.apache.ignite.internal.processors.cache.persistence.GridCacheDatabaseSharedManager;
@@ -171,6 +172,19 @@ public class GridPartitionFilePreloader extends GridCacheSharedManagerAdapter {
 
             return;
         }
+
+        log.info(">>>>>>> localJoinExchange: " + exchFut.localJoinExchange());
+        StateChangeRequest req = exchFut.exchangeActions() != null ? exchFut.exchangeActions().stateChangeRequest() : null;
+
+        if (req != null && req.prevBaselineTopologyHistoryItem() != null) {
+            Set<Object> set = new HashSet<>(req.baselineTopology().consistentIds());
+
+            set.removeAll(req.prevBaselineTopologyHistoryItem().consIds());
+
+            assert !set.contains(cctx.localNode().consistentId());
+        }
+
+        System.out.println(cctx.localNodeId() + " >xxx> NOT THE CASE");
 
         // Should interrupt current rebalance.
         if (!rebFut.isDone())

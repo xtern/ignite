@@ -76,4 +76,8 @@ public class BaselineTopologyHistoryItem implements Serializable {
     public List<Long> branchingHistory() {
         return branchingHistory;
     }
+
+    public Collection<Object> consIds() {
+        return consIds;
+    }
 }
