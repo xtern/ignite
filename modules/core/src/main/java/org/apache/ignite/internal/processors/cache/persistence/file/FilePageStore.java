@@ -25,8 +25,9 @@ import java.nio.channels.ClosedByInterruptException;
 import java.nio.channels.ClosedChannelException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.IgniteException;
@@ -34,6 +35,7 @@ import org.apache.ignite.IgniteSystemProperties;
 import org.apache.ignite.configuration.DataStorageConfiguration;
 import org.apache.ignite.internal.pagemem.PageIdUtils;
 import org.apache.ignite.internal.pagemem.store.PageStore;
+import org.apache.ignite.internal.pagemem.store.PageWriteListener;
 import org.apache.ignite.internal.processors.cache.persistence.StorageException;
 import org.apache.ignite.internal.processors.cache.persistence.tree.io.PageIO;
 import org.apache.ignite.internal.processors.cache.persistence.wal.crc.FastCrc;
@@ -87,6 +89,9 @@ public class FilePageStore implements PageStore {
     /** Region metrics updater. */
     private final LongAdderMetric allocatedTracker;
 
+    /** List of listeners for current page store to handle. */
+    private final List<PageWriteListener> lsnrs = new CopyOnWriteArrayList<>();
+
     /** */
     protected final int pageSize;
 
@@ -103,7 +108,7 @@ public class FilePageStore implements PageStore {
     private boolean skipCrc = IgniteSystemProperties.getBoolean(IGNITE_PDS_SKIP_CRC, false);
 
     /** */
-    private final ReadWriteLock lock = new ReentrantReadWriteLock();
+    private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock();
 
     /** */
     public FilePageStore(
@@ -120,6 +125,16 @@ public class FilePageStore implements PageStore {
         this.allocated = new AtomicLong();
         this.pageSize = dbCfg.getPageSize();
         this.allocatedTracker = allocatedTracker;
+    }
+
+    /** {@inheritDoc} */
+    @Override public void addWriteListener(PageWriteListener lsnr) {
+        lsnrs.add(lsnr);
+    }
+
+    /** {@inheritDoc} */
+    @Override public void removeWriteListener(PageWriteListener lsnr) {
+        lsnrs.remove(lsnr);
     }
 
     /** {@inheritDoc} */
@@ -297,8 +312,11 @@ public class FilePageStore implements PageStore {
         return fileSize;
     }
 
-    /** {@inheritDoc} */
-    @Override public void stop(boolean delete) throws StorageException {
+    /**
+     * @param delete {@code True} to delete file.
+     * @throws IOException If fails.
+     */
+    private void stop0(boolean delete) throws IOException {
         lock.writeLock().lock();
 
         try {
@@ -324,10 +342,6 @@ public class FilePageStore implements PageStore {
                 fileExists = false;
             }
         }
-        catch (IOException e) {
-            throw new StorageException("Failed to stop serving partition file [file=" + getFileAbsolutePath()
-                + ", delete=" + delete + "]", e);
-        }
         finally {
             allocatedTracker.add(-1L * allocated.getAndSet(0) / pageSize);
 
@@ -335,6 +349,22 @@ public class FilePageStore implements PageStore {
 
             lock.writeLock().unlock();
         }
+    }
+
+    /** {@inheritDoc} */
+    @Override public void stop(boolean delete) throws StorageException {
+        try {
+            stop0(delete);
+        }
+        catch (IOException e) {
+            throw new StorageException("Failed to stop serving partition file [file=" + getFileAbsolutePath()
+                + ", delete=" + delete + "]", e);
+        }
+    }
+
+    /** {@inheritDoc} */
+    @Override public void close() throws IOException {
+        stop0(false);
     }
 
     /** {@inheritDoc} */
@@ -433,7 +463,7 @@ public class FilePageStore implements PageStore {
     }
 
     /** {@inheritDoc} */
-    @Override public void read(long pageId, ByteBuffer pageBuf, boolean keepCrc) throws IgniteCheckedException {
+    @Override public boolean read(long pageId, ByteBuffer pageBuf, boolean keepCrc) throws IgniteCheckedException {
         init();
 
         try {
@@ -453,7 +483,7 @@ public class FilePageStore implements PageStore {
             if (n < 0) {
                 pageBuf.put(new byte[pageBuf.remaining()]);
 
-                return;
+                return false;
             }
 
             int savedCrc32 = PageIO.getCrc(pageBuf);
@@ -478,6 +508,8 @@ public class FilePageStore implements PageStore {
 
             if (keepCrc)
                 PageIO.setCrc(pageBuf, savedCrc32);
+
+            return true;
         }
         catch (IOException e) {
             throw new StorageException("Failed to read page [file=" + getFileAbsolutePath() + ", pageId=" + pageId + "]", e);
@@ -501,12 +533,14 @@ public class FilePageStore implements PageStore {
     /**
      * @throws StorageException If failed to initialize store file.
      */
-    private void init() throws StorageException {
+    public void init() throws StorageException {
         if (!inited) {
             lock.writeLock().lock();
 
             try {
                 if (!inited) {
+//                    U.dumpStack("Init page store: " + getFileAbsolutePath());
+
                     FileIO fileIO = null;
 
                     StorageException err = null;
@@ -675,6 +709,12 @@ public class FilePageStore implements PageStore {
 
                     assert pageBuf.position() == 0 : pageBuf.position();
 
+                    for (PageWriteListener lsnr : lsnrs) {
+                        lsnr.accept(pageId, pageBuf);
+
+                        pageBuf.rewind();
+                    }
+
                     fileIO.writeFully(pageBuf, off);
 
                     PageIO.setCrc(pageBuf, 0);
@@ -743,6 +783,10 @@ public class FilePageStore implements PageStore {
         lock.writeLock().lock();
 
         try {
+            // todo why checkpointer syncs read-only partition?
+            if (!inited)
+                return;
+
             init();
 
             FileIO fileIO = this.fileIO;

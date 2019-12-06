@@ -43,6 +43,7 @@ import org.apache.ignite.internal.managers.systemview.ScanQuerySystemView;
 import org.apache.ignite.internal.pagemem.store.IgnitePageStoreManager;
 import org.apache.ignite.internal.pagemem.wal.IgniteWriteAheadLogManager;
 import org.apache.ignite.internal.processors.affinity.AffinityTopologyVersion;
+import org.apache.ignite.internal.processors.cache.distributed.dht.preloader.GridPartitionFilePreloader;
 import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtPartitionTopology;
 import org.apache.ignite.internal.processors.cache.distributed.dht.topology.PartitionsEvictManager;
 import org.apache.ignite.internal.processors.cache.distributed.near.GridNearTxLocal;
@@ -53,6 +54,7 @@ import org.apache.ignite.internal.processors.cache.mvcc.MvccProcessor;
 import org.apache.ignite.internal.processors.cache.persistence.DataRegion;
 import org.apache.ignite.internal.processors.cache.persistence.IgniteCacheDatabaseSharedManager;
 import org.apache.ignite.internal.processors.cache.persistence.snapshot.IgniteCacheSnapshotManager;
+import org.apache.ignite.internal.processors.cache.persistence.snapshot.IgniteSnapshotManager;
 import org.apache.ignite.internal.processors.cache.store.CacheStoreManager;
 import org.apache.ignite.internal.processors.cache.transactions.IgniteInternalTx;
 import org.apache.ignite.internal.processors.cache.transactions.IgniteTxManager;
@@ -124,6 +126,9 @@ public class GridCacheSharedContext<K, V> {
     /** Page store manager. {@code Null} if persistence is not enabled. */
     @Nullable private IgnitePageStoreManager pageStoreMgr;
 
+    /** Page file snapshot manager. Can be {@code null} if presistence is not enabled. */
+    private IgniteSnapshotManager snapshotMgr;
+
     /** Affinity manager. */
     private CacheAffinitySharedManager affMgr;
 
@@ -187,6 +192,9 @@ public class GridCacheSharedContext<K, V> {
     /** Cluster is in read-only mode. */
     private volatile boolean readOnlyMode;
 
+    /** Manager to preload cache partions. Can be {@code null} if presistence is not enabled. */
+    private GridPartitionFilePreloader filePreloader;
+
     /**
      * @param kernalCtx  Context.
      * @param txMgr Transaction manager.
@@ -217,6 +225,7 @@ public class GridCacheSharedContext<K, V> {
         @Nullable IgniteWriteAheadLogManager walMgr,
         WalStateManager walStateMgr,
         IgniteCacheDatabaseSharedManager dbMgr,
+        IgniteSnapshotManager snapshotMgr,
         IgniteCacheSnapshotManager snpMgr,
         GridCacheDeploymentManager<K, V> depMgr,
         GridCachePartitionExchangeManager<K, V> exchMgr,
@@ -228,7 +237,8 @@ public class GridCacheSharedContext<K, V> {
         Collection<CacheStoreSessionListener> storeSesLsnrs,
         MvccCachingManager mvccCachingMgr,
         DeadlockDetectionManager deadlockDetectionMgr,
-        CacheDiagnosticManager diagnosticMgr
+        CacheDiagnosticManager diagnosticMgr,
+        GridPartitionFilePreloader filePreloader
     ) {
         this.kernalCtx = kernalCtx;
 
@@ -242,8 +252,10 @@ public class GridCacheSharedContext<K, V> {
             walMgr,
             walStateMgr,
             dbMgr,
+            snapshotMgr,
             snpMgr,
             depMgr,
+            filePreloader,
             exchMgr,
             affMgr,
             ioMgr,
@@ -413,8 +425,10 @@ public class GridCacheSharedContext<K, V> {
             walMgr,
             walStateMgr,
             dbMgr,
+            snapshotMgr,
             snpMgr,
             new GridCacheDeploymentManager<K, V>(),
+            filePreloader,
             new GridCachePartitionExchangeManager<K, V>(),
             affMgr,
             ioMgr,
@@ -462,8 +476,10 @@ public class GridCacheSharedContext<K, V> {
         IgniteWriteAheadLogManager walMgr,
         WalStateManager walStateMgr,
         IgniteCacheDatabaseSharedManager dbMgr,
+        IgniteSnapshotManager snapshotMgr,
         IgniteCacheSnapshotManager snpMgr,
         GridCacheDeploymentManager<K, V> depMgr,
+        GridPartitionFilePreloader filePreloader,
         GridCachePartitionExchangeManager<K, V> exchMgr,
         CacheAffinitySharedManager affMgr,
         GridCacheIoManager ioMgr,
@@ -481,9 +497,11 @@ public class GridCacheSharedContext<K, V> {
         this.walMgr = add(mgrs, walMgr);
         this.walStateMgr = add(mgrs, walStateMgr);
         this.dbMgr = add(mgrs, dbMgr);
+        this.snapshotMgr = add(mgrs, snapshotMgr);
         this.snpMgr = add(mgrs, snpMgr);
         this.jtaMgr = add(mgrs, jtaMgr);
         this.depMgr = add(mgrs, depMgr);
+        this.filePreloader = add(mgrs, filePreloader);
         this.exchMgr = add(mgrs, exchMgr);
         this.affMgr = add(mgrs, affMgr);
         this.ioMgr = add(mgrs, ioMgr);
@@ -718,6 +736,13 @@ public class GridCacheSharedContext<K, V> {
     }
 
     /**
+     * @return File preloading manager.
+     */
+    public GridPartitionFilePreloader filePreloader() {
+        return filePreloader;
+    }
+
+    /**
      * @return Snapshot manager.
      */
     public IgniteCacheSnapshotManager snapshot() {
@@ -729,6 +754,13 @@ public class GridCacheSharedContext<K, V> {
      */
     @Nullable public IgnitePageStoreManager pageStore() {
         return pageStoreMgr;
+    }
+
+    /**
+     * @return Page storage snapshot manager.
+     */
+    public IgniteSnapshotManager snapshotMgr() {
+        return snapshotMgr;
     }
 
     /**

@@ -143,7 +143,7 @@ public interface IgniteCacheOffheapManager {
      * @return Data store.
      * @throws IgniteCheckedException If failed.
      */
-    public CacheDataStore createCacheDataStore(int p) throws IgniteCheckedException;
+    public CacheDataStoreEx createCacheDataStore(int p) throws IgniteCheckedException;
 
     /**
      * @return Iterable over all existing cache data stores.
@@ -633,6 +633,11 @@ public interface IgniteCacheOffheapManager {
          * @return {@code True} if initialized.
          */
         boolean init();
+
+        /**
+         * Re-initialize data store if it exists.
+         */
+        long reinit();
 
         /**
          * @return Partition ID.

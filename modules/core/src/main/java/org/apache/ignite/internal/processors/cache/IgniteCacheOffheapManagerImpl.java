@@ -154,7 +154,7 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
     public static final int PRELOAD_SIZE_UNDER_CHECKPOINT_LOCK = 100;
 
     /** */
-    private final boolean failNodeOnPartitionInconsistency = Boolean.getBoolean(
+    protected final boolean failNodeOnPartitionInconsistency = Boolean.getBoolean(
         IgniteSystemProperties.IGNITE_FAIL_NODE_ON_UNRECOVERABLE_PARTITION_INCONSISTENCY);
 
     /** */
@@ -1266,8 +1266,8 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
     }
 
     /** {@inheritDoc} */
-    @Override public final CacheDataStore createCacheDataStore(int p) throws IgniteCheckedException {
-        CacheDataStore dataStore;
+    @Override public final CacheDataStoreEx createCacheDataStore(int p) throws IgniteCheckedException {
+        CacheDataStoreEx dataStore;
 
         partStoreLock.lock(p);
 
@@ -1290,7 +1290,7 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
      * @return Cache data store.
      * @throws IgniteCheckedException If failed.
      */
-    protected CacheDataStore createCacheDataStore0(int p) throws IgniteCheckedException {
+    protected CacheDataStoreEx createCacheDataStore0(int p) throws IgniteCheckedException {
         final long rootPage = allocateForTree();
 
         CacheDataRowStore rowStore = new CacheDataRowStore(grp, grp.freeList(), p);
@@ -1309,7 +1309,13 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
             lsnr
         );
 
-        return new CacheDataStoreImpl(p, rowStore, dataTree);
+        return new CacheDataStoreExImpl(grp.shared(),
+            new CacheDataStoreImpl(
+                p,
+                rowStore,
+                dataTree),
+            null,
+            log);
     }
 
     /** {@inheritDoc} */
@@ -1325,7 +1331,7 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
     }
 
     /** {@inheritDoc} */
-    @Override public final void destroyCacheDataStore(CacheDataStore store) throws IgniteCheckedException {
+    @Override public final void destroyCacheDataStore(CacheDataStore store) {
         int p = store.partId();
 
         partStoreLock.lock(p);
@@ -1333,7 +1339,7 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
         try {
             boolean removed = partDataStores.remove(p, store);
 
-            assert removed;
+            assert removed : "cache=" + grp.cacheOrGroupName() + " p=" + p;
 
             destroyCacheDataStore0(store);
         }
@@ -1459,7 +1465,7 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
         private final CacheDataTree dataTree;
 
         /** Update counter. */
-        protected final PartitionUpdateCounter pCntr;
+        private final PartitionUpdateCounter pCntr;
 
         /** Partition size. */
         private final AtomicLong storageSize = new AtomicLong();
@@ -1519,6 +1525,11 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
         /** {@inheritDoc} */
         @Override public boolean init() {
             return false;
+        }
+
+        /** {@inheritDoc} */
+        @Override public long reinit() {
+            throw new IllegalStateException("Re-initialization of non-persisted partition is redundant.");
         }
 
         /** {@inheritDoc} */

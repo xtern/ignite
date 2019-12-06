@@ -99,7 +99,7 @@ public class DataStorageConfiguration implements Serializable {
     public static final String DFLT_DATA_REG_DEFAULT_NAME = "default";
 
     /** */
-    public static final int DFLT_CHECKPOINT_FREQ = 180000;
+    public static final int DFLT_CHECKPOINT_FREQ = 3_000;
 
     /** Lock default wait time, 10 sec. */
     public static final int DFLT_LOCK_WAIT_TIME = 10 * 1000;
@@ -157,6 +157,9 @@ public class DataStorageConfiguration implements Serializable {
 
     /** Default wal archive directory. */
     public static final String DFLT_WAL_ARCHIVE_PATH = "db/wal/archive";
+
+    /** Default working directory for backup temporary files. */
+    public static final String DFLT_BACKUP_DIRECTORY = "db/backup";
 
     /** Default write throttling enabled. */
     public static final boolean DFLT_WRITE_THROTTLING_ENABLED = false;

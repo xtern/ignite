@@ -62,6 +62,7 @@ import org.apache.ignite.internal.pagemem.wal.record.PageSnapshot;
 import org.apache.ignite.internal.pagemem.wal.record.WALRecord;
 import org.apache.ignite.internal.pagemem.wal.record.delta.InitNewPageRecord;
 import org.apache.ignite.internal.pagemem.wal.record.delta.PageDeltaRecord;
+import org.apache.ignite.internal.processors.cache.CacheGroupContext;
 import org.apache.ignite.internal.processors.cache.GridCacheSharedContext;
 import org.apache.ignite.internal.processors.cache.persistence.CheckpointLockStateChecker;
 import org.apache.ignite.internal.processors.cache.persistence.CheckpointWriteProgressSupplier;
@@ -816,7 +817,7 @@ public class PageMemoryImpl implements PageMemoryEx {
                 }
             }
             else if (relPtr == OUTDATED_REL_PTR) {
-                assert PageIdUtils.pageIndex(pageId) == 0 : fullId;
+                assert PageIdUtils.pageIndex(pageId) == 0 : fullId + " p=" + PageIdUtils.partId(pageId);
 
                 relPtr = refreshOutdatedPage(seg, grpId, pageId, false);
 
@@ -1425,6 +1426,8 @@ public class PageMemoryImpl implements PageMemoryEx {
                 }
             }
 
+//            U.dumpStack("invalidate p=" + partId + ", tag=" + tag);
+
             return tag;
         }
     }
@@ -1831,7 +1834,14 @@ public class PageMemoryImpl implements PageMemoryEx {
         if (dirty) {
             assert stateChecker.checkpointLockIsHeldByThread();
 
-            if (!wasDirty || forceAdd) {
+            if ((!wasDirty || forceAdd)) {
+                CacheGroupContext grp = ctx.cache().cacheGroup(pageId.groupId());
+
+                int partId = PageIdUtils.partId(pageId.pageId());
+
+                if (grp != null && partId != INDEX_PARTITION && grp.topology().localPartition(partId).dataStore().readOnly())
+                    return;
+
                 boolean added = segment(pageId.groupId(), pageId.pageId()).dirtyPages.add(pageId);
 
                 if (added)

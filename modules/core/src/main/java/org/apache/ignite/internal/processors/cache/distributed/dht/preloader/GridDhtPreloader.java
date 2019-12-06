@@ -20,6 +20,7 @@ package org.apache.ignite.internal.processors.cache.distributed.dht.preloader;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
@@ -245,8 +246,11 @@ public class GridDhtPreloader extends GridCachePreloaderAdapter {
 
                 ClusterNode histSupplier = null;
 
-                if (grp.persistenceEnabled() && exchFut != null) {
+                if (grp.persistenceEnabled() && exchFut != null && countersMap.updateCounter(p) != part.initialUpdateCounter()) {
                     UUID nodeId = exchFut.partitionHistorySupplier(grp.groupId(), p, part.initialUpdateCounter());
+
+                    if (log.isDebugEnabled())
+                        log.info("Got historical supplier: " + nodeId + " p=" + p + " initial=" + part.initialUpdateCounter() + ", curr=" + part.updateCounter());
 
                     if (nodeId != null)
                         histSupplier = ctx.discovery().node(nodeId);
@@ -272,7 +276,7 @@ public class GridDhtPreloader extends GridCachePreloaderAdapter {
                 else {
                     // If for some reason (for example if supplier fails and new supplier is elected) partition is
                     // assigned for full rebalance force clearing if not yet set.
-                    if (grp.persistenceEnabled() && exchFut != null && !exchFut.isClearingPartition(grp, p))
+                    if (grp.persistenceEnabled() && exchFut != null && !exchFut.isClearingPartition(grp, p) && !part.dataStore().readOnly())
                         part.clearAsync();
 
                     List<ClusterNode> picked = remoteOwners(p, topVer);
@@ -292,7 +296,23 @@ public class GridDhtPreloader extends GridCachePreloaderAdapter {
                             log.debug("Owning partition as there are no other owners: " + part);
                     }
                     else {
-                        ClusterNode n = picked.get(p % picked.size());
+                        ClusterNode n = null;
+
+                        // file rebalance
+                        if (exchFut != null) {
+                            UUID nodeId = exchFut.partitionFileSupplier(grp.groupId(), p, countersMap.updateCounter(p));
+
+                            if (nodeId != null) {
+                                log.info("Got file rebalance supplier=" + nodeId + ", p=" + p + "  cache=" + ctx.cache().cacheGroup(grp.groupId()).cacheOrGroupName());
+
+                                n = ctx.discovery().node(nodeId);
+
+                                assert picked.contains(n);
+                            }
+                        }
+
+                        if (n == null)
+                            n = picked.get(p % picked.size());
 
                         GridDhtPartitionDemandMessage msg = assignments.get(n);
 
@@ -312,7 +332,32 @@ public class GridDhtPreloader extends GridCachePreloaderAdapter {
         if (!assignments.isEmpty())
             ctx.database().lastCheckpointInapplicableForWalRebalance(grp.groupId());
 
+        debugInfo(assignments);
+
         return assignments;
+    }
+
+    private void debugInfo(GridDhtPreloaderAssignments assignments) {
+        if (!log.isDebugEnabled())
+            return;
+
+        StringBuilder buf = new StringBuilder("\n****************************************\n\tAssignments on " + ctx.localNodeId() + " grp="+grp.cacheOrGroupName() + "\n");
+
+        for (Map.Entry<ClusterNode, GridDhtPartitionDemandMessage> entry : assignments.entrySet()) {
+            buf.append("\t\tNode " + entry.getKey().id()+"\n");
+
+            buf.append("\t\t\tfull parts: \n");
+
+            for (Integer p : entry.getValue().partitions().fullSet())
+                buf.append("\t\t\t\t" + p + "\n");
+
+            buf.append("\t\t\tHist parts: \n");
+
+            for (Integer p : entry.getValue().partitions().historicalSet())
+                buf.append("\t\t\t\t" + p + "\n");
+        }
+
+        log.debug(buf.toString());
     }
 
     /** {@inheritDoc} */

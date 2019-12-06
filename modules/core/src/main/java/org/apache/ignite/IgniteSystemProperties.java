@@ -740,6 +740,8 @@ public final class IgniteSystemProperties {
      */
     public static final String IGNITE_PDS_WAL_REBALANCE_THRESHOLD = "IGNITE_PDS_WAL_REBALANCE_THRESHOLD";
 
+    public static final String IGNITE_PDS_FILE_REBALANCE_THRESHOLD = "IGNITE_PDS_FILE_REBALANCE_THRESHOLD";
+
     /** Ignite page memory concurrency level. */
     public static final String IGNITE_OFFHEAP_LOCK_CONCURRENCY_LEVEL = "IGNITE_OFFHEAP_LOCK_CONCURRENCY_LEVEL";
 
@@ -1159,6 +1161,11 @@ public final class IgniteSystemProperties {
      * Flag to enable baseline auto-adjust by default.
      */
     public static final String IGNITE_BASELINE_AUTO_ADJUST_ENABLED = "IGNITE_BASELINE_AUTO_ADJUST_ENABLED";
+
+    /**
+     * Flag to enable persistence rebalance.
+     */
+    public static final String IGNITE_FILE_REBALANCE_ENABLED = "IGNITE_FILE_REBALANCE_ENABLED";
 
     /**
      * Maximum number of diagnostic warning messages per category, when waiting for PME.

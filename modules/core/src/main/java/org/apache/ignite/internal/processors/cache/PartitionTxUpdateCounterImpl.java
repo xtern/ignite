@@ -102,8 +102,8 @@ public class PartitionTxUpdateCounterImpl implements PartitionUpdateCounter {
         return cntr.get();
     }
 
-    /** */
-    protected synchronized long highestAppliedCounter() {
+    /** {@inheritDoc} */
+    @Override public synchronized long highestAppliedCounter() {
         return queue.isEmpty() ? cntr.get() : queue.last().absolute();
     }
 

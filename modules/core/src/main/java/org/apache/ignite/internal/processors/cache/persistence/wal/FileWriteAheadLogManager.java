@@ -1004,13 +1004,14 @@ public class FileWriteAheadLogManager extends GridCacheSharedManagerAdapter impl
 
         String zipSegmentName = FileDescriptor.fileName(absIdx) + FilePageStoreManager.ZIP_SUFFIX;
 
+        boolean wasInArchive = absIdx <= lastArchivedIndex();
+
         boolean inArchive = new File(walArchiveDir, segmentName).exists() ||
             new File(walArchiveDir, zipSegmentName).exists();
 
         if (inArchive)
             return true;
-
-        if (absIdx <= lastArchivedIndex())
+        else if (wasInArchive)
             return false;
 
         FileWriteHandle cur = currHnd;
@@ -1372,6 +1373,13 @@ public class FileWriteAheadLogManager extends GridCacheSharedManagerAdapter impl
         catch (IOException e) {
             throw new StorageException("Failed to restore WAL write handle: " + curFile.getAbsolutePath(), e);
         }
+    }
+
+    /**
+     * @return WAL working directory.
+     */
+    public File walWorkDir() {
+        return walWorkDir;
     }
 
     /**
@@ -2827,8 +2835,8 @@ public class FileWriteAheadLogManager extends GridCacheSharedManagerAdapter impl
             try {
                 fd = segmentRouter.findSegment(curWalSegmIdx);
 
-                if (log.isDebugEnabled())
-                    log.debug("Reading next file [absIdx=" + curWalSegmIdx + ", file=" + fd.file.getAbsolutePath() + ']');
+                if (log.isInfoEnabled())
+                    log.info("Reading next file [absIdx=" + curWalSegmIdx + ", file=" + fd.file.getAbsolutePath() + ']');
 
                 nextHandle = initReadHandle(fd, start != null && curWalSegmIdx == start.index() ? start : null);
             }

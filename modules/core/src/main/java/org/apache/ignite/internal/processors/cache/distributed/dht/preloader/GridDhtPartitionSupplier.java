@@ -297,6 +297,11 @@ class GridDhtPartitionSupplier {
                     if (iter.isPartitionMissing(p))
                         continue;
 
+                    assert grp.topology().localPartition(p).updateCounter() >= histMap.updateCounterAt(i) : "Invalid update counter [p=" + p + " curr=" + grp.topology().localPartition(p).updateCounter() + " max = " + grp.topology().localPartition(p).reservedCounter() + ", req=" + histMap.updateCounterAt(i) + "]";
+
+                    if (log.isDebugEnabled())
+                        log.debug("Supply historical rebalancing p=" + p + " range [" + histMap.initialUpdateCounterAt(i) + " - " + histMap.updateCounterAt(i) + "]");
+
                     supplyMsg.addEstimatedKeysCount(histMap.updateCounterAt(i) - histMap.initialUpdateCounterAt(i));
                 }
             }
@@ -460,7 +465,7 @@ class GridDhtPartitionSupplier {
             try {
                 if (sctx != null)
                     clearContext(sctx, log);
-                else if (iter != null)
+                else if (iter != null && !iter.isClosed())
                     iter.close();
             }
             catch (Throwable t1) {
