@@ -332,54 +332,50 @@ public class IndexedCacheFileRebalanceTest extends GridCommonAbstractTest {
 
         IgniteEx ignite1 = startGrid(1);
 
-        System.out.println("sleep");
-
-        U.sleep(5_000);
-
         blt.add(ignite1.localNode());
 
         ignite0.cluster().setBaselineTopology(blt);
 
-//        U.sleep(80);
-//
-//        IgniteEx ignite2 = startGrid(2);
-//
-//        blt.add(ignite2.localNode());
-//
-//        ignite0.cluster().setBaselineTopology(blt);
-//
-//        U.sleep(80);
-//
-//        IgniteEx ignite3 = startGrid(3);
-//
-//        blt.add(ignite3.localNode());
-//
-//        ignite0.cluster().setBaselineTopology(blt);
-//
-//        awaitPartitionMapExchange();
-//
-//        ldr.stop();
-//
-//        ldrFut.get();
-//
-////        verifyCacheContent(ignite2.cache(INDEXED_CACHE), cntr.get());
-//
-//        // Validate indexes on start.
-//        ValidateIndexesClosure clo = new ValidateIndexesClosure(Collections.singleton(INDEXED_CACHE), 0, 0);
-//
-//        ignite0.cluster().active(false);
-//
-//        ignite1.context().resource().injectGeneric(clo);
-//
-//        VisorValidateIndexesJobResult res = clo.call();
-//
-//        assertFalse(res.hasIssues());
-//
-//        ignite2.context().resource().injectGeneric(clo);
-//
-//        res = clo.call();
-//
-//        assertFalse(res.hasIssues());
+        U.sleep(80);
+
+        IgniteEx ignite2 = startGrid(2);
+
+        blt.add(ignite2.localNode());
+
+        ignite0.cluster().setBaselineTopology(blt);
+
+        U.sleep(80);
+
+        IgniteEx ignite3 = startGrid(3);
+
+        blt.add(ignite3.localNode());
+
+        ignite0.cluster().setBaselineTopology(blt);
+
+        awaitPartitionMapExchange();
+
+        ldr.stop();
+
+        ldrFut.get();
+
+//        verifyCacheContent(ignite2.cache(INDEXED_CACHE), cntr.get());
+
+        // Validate indexes on start.
+        ValidateIndexesClosure clo = new ValidateIndexesClosure(Collections.singleton(INDEXED_CACHE), 0, 0);
+
+        ignite0.cluster().active(false);
+
+        ignite1.context().resource().injectGeneric(clo);
+
+        VisorValidateIndexesJobResult res = clo.call();
+
+        assertFalse(res.hasIssues());
+
+        ignite2.context().resource().injectGeneric(clo);
+
+        res = clo.call();
+
+        assertFalse(res.hasIssues());
     }
 
     /**

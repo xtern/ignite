@@ -59,6 +59,7 @@ import org.apache.ignite.internal.util.future.GridFutureAdapter;
 import org.apache.ignite.internal.util.lang.IgniteInClosureX;
 import org.apache.ignite.internal.util.typedef.T2;
 import org.apache.ignite.internal.util.typedef.internal.CU;
+import org.apache.ignite.internal.util.typedef.internal.U;
 
 import static org.apache.ignite.IgniteSystemProperties.IGNITE_PDS_FILE_REBALANCE_THRESHOLD;
 import static org.apache.ignite.configuration.IgniteConfiguration.DFLT_IGNITE_PDS_WAL_REBALANCE_THRESHOLD;
@@ -131,7 +132,7 @@ public class GridPartitionFilePreloader extends GridCacheSharedManagerAdapter {
      * @param exchFut Exchange future.
      */
     public void onExchangeDone(GridDhtPartitionsExchangeFuture exchFut) {
-        assert !cctx.kernalContext().clientNode() : "File preloader should not be created on client node";
+        assert !cctx.kernalContext().clientNode() : "File preloader should never be created on the client node";
         assert exchFut != null;
 
         if (!FILE_REBALANCE_ENABLED)
@@ -175,12 +176,13 @@ public class GridPartitionFilePreloader extends GridCacheSharedManagerAdapter {
         }
 
         // Should interrupt current rebalance.
+        // todo if memory cleanup in progress we should not wait for cleanup-future finish (on cancel)
+        //      should somehow "re-set" the old-one cleanup future to new created rebalance future.
         if (!rebFut.isDone())
             rebFut.cancel();
 
         assert fileRebalanceFut.isDone();
 
-        // todo imagine two nodes failed and returned back with sequential baseline change
         boolean locJoinBaselineChange = isLocalBaselineChange(exchFut);
 
         // At this point cache updates are queued and we can safely switch partitions to read-only mode.
@@ -193,20 +195,18 @@ public class GridPartitionFilePreloader extends GridCacheSharedManagerAdapter {
             if (moving != null && !moving.isEmpty() && log.isDebugEnabled())
                 log.debug("Set READ-ONLY mode for cache=" + grp.cacheOrGroupName() + " parts=" + moving);
 
-            for (GridDhtLocalPartition part : grp.topology().currentLocalPartitions()) {
-                // todo Cannot continue file rebalancing, index.may be not empty.
-                if (!locJoinBaselineChange && !part.dataStore().readOnly()) {
-                    if (log.isDebugEnabled())
-                        log.debug("File rebalancing skipped for group: " + grp.cacheOrGroupName());
-                    return;
-                }
+            if (!locJoinBaselineChange && !readOnlyGroup(grp)) {
+                if (log.isDebugEnabled())
+                    log.debug("File rebalancing skipped for group " + grp.cacheOrGroupName());
             }
 
-            // Should switch read-only partitions into full mode for eviction.
-            // Also, "global" partition size can change and file rebalance will not be applicable to it.
-            // todo add test case for specified scenario with global size change.
+            // todo "global" partition size can change and file rebalance will not be applicable to it.
+            //       add test case for specified scenario with global size change.
             for (GridDhtLocalPartition part : grp.topology().currentLocalPartitions()) {
                 boolean toReadOnly = moving != null && moving.contains(part.id());
+
+                // todo redundant check for debugging should be removed
+                //assert toReadOnly : "grp=" + grp.cacheOrGroupName() + " p=" + part;
 
                 if (part.dataStore().readOnly(toReadOnly)) {
                     // Should close cache data store - no updates expected..
@@ -214,6 +214,15 @@ public class GridPartitionFilePreloader extends GridCacheSharedManagerAdapter {
                 }
             }
         }
+    }
+
+    private boolean readOnlyGroup(CacheGroupContext grp) {
+        for (GridDhtLocalPartition part : grp.topology().currentLocalPartitions()) {
+            if (!part.dataStore().readOnly())
+                return false;
+        }
+
+        return true;
     }
 
     private boolean isLocalBaselineChange(GridDhtPartitionsExchangeFuture exchFut) {
@@ -226,6 +235,9 @@ public class GridPartitionFilePreloader extends GridCacheSharedManagerAdapter {
             return false;
 
         BaselineTopologyHistoryItem prevBaseline = req.prevBaselineTopologyHistoryItem();
+
+        if (prevBaseline == null)
+            return false;
 
         return !prevBaseline.consistentIds().contains(cctx.localNode().consistentId());
     }
@@ -265,13 +277,6 @@ public class GridPartitionFilePreloader extends GridCacheSharedManagerAdapter {
             // todo think about reserve/clear
             if (part.state() == RENTING)
                 part.moving();
-
-//                    // If partition was destroyed recreate it.
-//                    if (part.state() == EVICTED) {
-//                        part.awaitDestroy();
-//
-//                        part = grp.topology().localPartition(p, topVer, true);
-//                    }
 
             assert part.state() == MOVING : "Unexpected partition state [cache=" + grp.cacheOrGroupName() +
                 ", p=" + p + ", state=" + part.state() + "]";
@@ -450,6 +455,9 @@ public class GridPartitionFilePreloader extends GridCacheSharedManagerAdapter {
             CacheGroupContext grp = cctx.cache().cacheGroup(grpId);
 
             GridDhtPreloaderAssignments assigns = grpEntry.getValue();
+
+            if (!readOnlyGroup(grp))
+                continue;
 
             if (!fileRebalanceRequired(grp, assigns, exchFut))
                 continue;
@@ -650,6 +658,8 @@ public class GridPartitionFilePreloader extends GridCacheSharedManagerAdapter {
      *                                           /
      *                                    return future (cancel can be implemented similar to destroy)
      *
+     *  todo  this seems to be the responsibility of the snapshot manager to restore the cache group.
+     *
      * Restore partition on new file. Partition should be completely destroyed before restore it with new file.
      *
      * @param grpId Group id.
@@ -741,6 +751,76 @@ public class GridPartitionFilePreloader extends GridCacheSharedManagerAdapter {
         return endFut;
     }
 
+    public IgniteInternalFuture<Map<Integer, T2<Long, Long>>> switchPartitions(int grpId, Map<Integer, Long> parts, IgniteInternalFuture fut) {
+        final CacheGroupContext grp = cctx.cache().cacheGroup(grpId);
+
+        GridFutureAdapter<Map<Integer, T2<Long, Long>>> endFut = new GridFutureAdapter<>();
+
+        cpLsnr.schedule(() -> {
+            if (fut.isDone())
+                return;
+
+            Map<Integer, T2<Long, Long>> resCntrs = new HashMap<>(U.capacity(parts.size()));
+
+            Map<Integer, T2<PartitionUpdateCounter, PartitionUpdateCounter>> tempCntrs = new HashMap<>(U.capacity(parts.size()));
+
+            // todo should be under cancel lock?
+            for (Map.Entry<Integer, Long> entry : parts.entrySet()) {
+//                long initialCntr = entry.getValue();
+                int partId = entry.getKey();
+
+                GridDhtLocalPartition part = grp.topology().localPartition(partId);
+
+                assert part.dataStore().readOnly() : "cache=" + grpId + " p=" + partId;
+
+                // Save current counter.
+                PartitionUpdateCounter readCntr = part.dataStore().store(true).partUpdateCounter();
+
+                // Save current update counter.
+                PartitionUpdateCounter snapshotCntr = part.dataStore().store(false).partUpdateCounter();
+
+                part.readOnly(false);
+
+                // Clear all on-heap entries.
+                // todo something smarter and check large partition
+                if (grp.sharedGroup()) {
+                    for (GridCacheContext ctx : grp.caches())
+                        part.entriesMap(ctx).map.clear();
+                }
+                else
+                    part.entriesMap(null).map.clear();
+
+                assert readCntr != snapshotCntr && snapshotCntr != null && readCntr != null : "grp=" +
+                    grp.cacheOrGroupName() + ", p=" + partId + ", readCntr=" + readCntr + ", snapCntr=" + snapshotCntr;
+
+                tempCntrs.put(partId, new T2<>(readCntr, snapshotCntr));
+            }
+
+            AffinityTopologyVersion infinTopVer = new AffinityTopologyVersion(Long.MAX_VALUE, 0);
+
+            IgniteInternalFuture<?> partReleaseFut = cctx.partitionReleaseFuture(infinTopVer);
+
+            // Operations that are in progress now will be lost and should be included in historical rebalancing.
+            // These operations can update the old update counter or the new update counter, so the maximum applied
+            // counter is used after all updates are completed.
+            partReleaseFut.listen(c -> {
+                    for (Map.Entry<Integer, T2<PartitionUpdateCounter, PartitionUpdateCounter>> entry : tempCntrs.entrySet()) {
+                        int partId = entry.getKey();
+
+                        PartitionUpdateCounter readCntr = entry.getValue().get1();
+                        PartitionUpdateCounter snapshotCntr = entry.getValue().get2();
+
+                        resCntrs.put(entry.getKey(), new T2<>(parts.get(partId), Math.max(readCntr.highestAppliedCounter(), snapshotCntr.highestAppliedCounter())));
+                    }
+
+                    endFut.onDone(resCntrs);
+                }
+            );
+        });
+
+        return endFut;
+    }
+
     /**todo should be elimiaated (see comment about restorepartition) */
     public static class CheckpointListener implements DbCheckpointListener {
         /** Queue. */
@@ -817,49 +897,7 @@ public class GridPartitionFilePreloader extends GridCacheSharedManagerAdapter {
     private class PartitionSnapshotListener implements SnapshotListener {
         /** {@inheritDoc} */
         @Override public void onPartition(UUID nodeId, File file, int grpId, int partId) {
-            if (log.isTraceEnabled())
-                log.trace("Processing partition file: " + file);
-
-            FileRebalanceNodeRoutine fut = fileRebalanceFut.nodeRoutine(grpId, nodeId);
-
-            if (staleFuture(fut)) {
-                if (log.isTraceEnabled())
-                    log.trace("Stale future, removing file: " + file);
-
-                file.delete();
-
-                return;
-            }
-
-            try {
-                fileRebalanceFut.awaitCleanupIfNeeded(grpId);
-
-                if (fut.isDone())
-                    return;
-
-                restorePartition(grpId, partId, file, fut).listen(f -> {
-                    try {
-                        T2<Long, Long> cntrs = f.get();
-
-                        assert cntrs != null;
-
-                        cctx.kernalContext().closure().runLocalSafe(() -> {
-                            fut.onPartitionRestored(grpId, partId, cntrs.get1(), cntrs.get2());
-                        });
-                    }
-                    catch (IgniteCheckedException e) {
-                        log.error("Unable to restore partition snapshot [cache=" +
-                            cctx.cache().cacheGroup(grpId) + ", p=" + partId, e);
-
-                        fut.onDone(e);
-                    }
-                });
-            }
-            catch (IgniteCheckedException e) {
-                log.error("Unable to handle partition snapshot", e);
-
-                fut.onDone(e);
-            }
+            fileRebalanceFut.onPartitionSnapshotReceived(nodeId, file, grpId, partId);
         }
 
         /** {@inheritDoc} */
