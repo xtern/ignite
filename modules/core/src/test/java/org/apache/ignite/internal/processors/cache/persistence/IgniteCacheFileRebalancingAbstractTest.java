@@ -129,15 +129,17 @@ public abstract class IgniteCacheFileRebalancingAbstractTest extends IgnitePdsCa
         baseline.add(ignite0.localNode());
         baseline.add(ignite1.localNode());
 
-        DataLoader<TestValue> ldr = testValuesLoader(checkRemoves, DFLT_LOADER_THREADS).loadData(ignite0);
+        //DataLoader<TestValue> ldr = testValuesLoader(checkRemoves, DFLT_LOADER_THREADS).loadData(ignite0);
+        for (int i = 0; i < 20_000; i++)
+            ignite0.cache(INDEXED_CACHE).put(i, new TestValue(i, i, i));
 
         ignite1.close();
 
-        ldr.start();
+        for (int i = 20_000; i < 25_000; i++)
+            ignite0.cache(INDEXED_CACHE).put(i, new TestValue(i, i, i));
 
-        U.sleep(1_000);
-
-        ldr.stop();
+//        U.sleep(1_000);
+//        ldr.stop();
 
         forceCheckpoint(ignite0);
 
@@ -145,12 +147,18 @@ public abstract class IgniteCacheFileRebalancingAbstractTest extends IgnitePdsCa
 
         baseline.add(ignite2.localNode());
 
+//        startGrid(1);
+
         // we need to start node1 and include node2 into baseline at the same exchange.
         GridTestUtils.runAsync(() -> startGrid(1));
 
         ignite0.cluster().setBaselineTopology(baseline);
 
         awaitPartitionMapExchange();
+
+//        ignite0.cluster().setBaselineTopology(baseline);
+//
+//        awaitPartitionMapExchange();
     }
 
     /**
