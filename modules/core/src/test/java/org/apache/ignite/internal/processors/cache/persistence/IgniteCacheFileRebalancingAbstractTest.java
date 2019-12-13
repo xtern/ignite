@@ -24,6 +24,7 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
@@ -49,6 +50,7 @@ import org.junit.Test;
 import static org.apache.ignite.IgniteSystemProperties.IGNITE_BASELINE_AUTO_ADJUST_ENABLED;
 import static org.apache.ignite.IgniteSystemProperties.IGNITE_FILE_REBALANCE_ENABLED;
 import static org.apache.ignite.IgniteSystemProperties.IGNITE_PDS_FILE_REBALANCE_THRESHOLD;
+import static org.apache.ignite.IgniteSystemProperties.IGNITE_PDS_WAL_REBALANCE_THRESHOLD;
 
 /**
  * File rebalancing tests.
@@ -107,6 +109,48 @@ public abstract class IgniteCacheFileRebalancingAbstractTest extends IgnitePdsCa
         ldr.stop();
 
         verifyCache(ignite0, ldr);
+    }
+
+    /**
+     * @throws Exception If failed.
+     */
+    @Test
+    @WithSystemProperty(key = IGNITE_PDS_WAL_REBALANCE_THRESHOLD, value = "0")
+    public void testHistoricalWithFileRebalancing() throws Exception {
+        boolean checkRemoves = false;
+
+        IgniteEx ignite0 = startGrid(0);
+        IgniteEx ignite1 = startGrid(1);
+
+        ignite0.cluster().active(true);
+
+        List<ClusterNode> baseline = new ArrayList<>(3);
+
+        baseline.add(ignite0.localNode());
+        baseline.add(ignite1.localNode());
+
+        DataLoader<TestValue> ldr = testValuesLoader(checkRemoves, DFLT_LOADER_THREADS).loadData(ignite0);
+
+        ignite1.close();
+
+        ldr.start();
+
+        U.sleep(1_000);
+
+        ldr.stop();
+
+        forceCheckpoint(ignite0);
+
+        IgniteEx ignite2 = startGrid(2);
+
+        baseline.add(ignite2.localNode());
+
+        // we need to start node1 and include node2 into baseline at the same exchange.
+        GridTestUtils.runAsync(() -> startGrid(1));
+
+        ignite0.cluster().setBaselineTopology(baseline);
+
+        awaitPartitionMapExchange();
     }
 
     /**
