@@ -3113,6 +3113,11 @@ public class GridDhtPartitionsExchangeFuture extends GridDhtTopologyFutureAdapte
         Map<Integer, CounterWithNodes> maxCntrs = new HashMap<>();
         Map<Integer, Long> minCntrs = new HashMap<>();
 
+        CacheGroupContext grp = cctx.cache().cacheGroup(top.groupId());
+
+        if (grp != null && "indexed".equals(grp.cacheOrGroupName()))
+            log.info("*************************************\n\tASSIGN PART STATES\n\tnodes: " + msgs.keySet());
+
         for (Map.Entry<UUID, GridDhtPartitionsSingleMessage> e : msgs.entrySet()) {
             CachePartitionPartialCountersMap nodeCntrs = e.getValue().partitionUpdateCounters(top.groupId(),
                 top.partitions());
@@ -3148,6 +3153,15 @@ public class GridDhtPartitionsExchangeFuture extends GridDhtTopologyFutureAdapte
                 else if (cntr == maxCntr.cnt)
                     maxCntr.nodes.add(uuid);
             }
+        }
+
+        if (grp != null && "indexed".equals(grp.cacheOrGroupName())) {
+            StringBuilder buf = new StringBuilder();
+
+            for (Map.Entry<Integer, Long> entry : minCntrs.entrySet())
+                buf.append("\n\tp=" + entry.getKey() + " cntr="+entry.getValue());
+
+            log.info("\n\nminCounters: " + buf);
         }
 
         // Also must process counters from the local node.
@@ -3204,7 +3218,7 @@ public class GridDhtPartitionsExchangeFuture extends GridDhtTopologyFutureAdapte
         Collection<ClusterNode> nodes =
             F.concat(false, cctx.localNode(), F.viewReadOnly(msgs.keySet(), v -> cctx.discovery().node(v)));
 
-        CacheGroupContext grp = cctx.cache().cacheGroup(top.groupId());
+//        CacheGroupContext grp = cctx.cache().cacheGroup(top.groupId());
 
         boolean fileRebalanceApplicable = grp != null && cctx.filePreloader() != null &&
             cctx.filePreloader().fileRebalanceSupported(grp, nodes);
