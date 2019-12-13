@@ -3124,6 +3124,13 @@ public class GridDhtPartitionsExchangeFuture extends GridDhtTopologyFutureAdapte
 
             assert nodeCntrs != null;
 
+            if (grp != null && "indexed".equals(grp.cacheOrGroupName())) {
+                System.out.println(e.getKey() + " node cntrs: " + nodeCntrs);
+
+                if (e.getKey().toString().endsWith("002"))
+                    System.out.println(e.getKey() + " state " + top.partitionState(e.getKey(), 0));
+            }
+
             for (int i = 0; i < nodeCntrs.size(); i++) {
                 int p = nodeCntrs.partitionAt(i);
 
