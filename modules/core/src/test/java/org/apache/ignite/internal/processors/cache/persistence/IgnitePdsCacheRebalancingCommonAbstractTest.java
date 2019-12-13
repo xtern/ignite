@@ -40,7 +40,7 @@ import org.apache.ignite.lang.IgnitePredicate;
 import org.apache.ignite.testframework.junits.common.GridCommonAbstractTest;
 
 /**
- * Base prmitives for testing persistence rebalancing.
+ * Base primitives for testing persistence rebalancing.
  */
 public abstract class IgnitePdsCacheRebalancingCommonAbstractTest extends GridCommonAbstractTest {
     /** Default cache. */

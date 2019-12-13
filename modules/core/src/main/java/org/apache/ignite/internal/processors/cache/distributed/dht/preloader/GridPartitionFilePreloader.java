@@ -325,12 +325,6 @@ public class GridPartitionFilePreloader extends GridCacheSharedManagerAdapter {
             return null;
         }
 
-        if (log.isInfoEnabled())
-            log.info("Starting file rebalancing");
-
-        if (log.isTraceEnabled())
-            log.trace(formatMappings(nodeOrderAssignsMap));
-
         // Start new rebalance session.
         FileRebalanceFuture rebFut = fileRebalanceFut;
 
@@ -341,6 +335,12 @@ public class GridPartitionFilePreloader extends GridCacheSharedManagerAdapter {
                 rebFut.cancel();
 
             fileRebalanceFut = rebFut = new FileRebalanceFuture(cpLsnr, nodeOrderAssignsMap, topVer, cctx, rebalanceId, log);
+
+            if (log.isTraceEnabled())
+                log.trace(formatMappings(nodeOrderAssignsMap));
+            else
+            if (log.isInfoEnabled())
+                log.info("File rebalancing started " + rebFut.groups());
 
             FileRebalanceNodeRoutine lastFut = null;
 
@@ -421,7 +421,7 @@ public class GridPartitionFilePreloader extends GridCacheSharedManagerAdapter {
     }
 
     private String formatMappings(Map<Integer, Map<ClusterNode, Map<Integer, Set<Integer>>>> map) {
-        StringBuilder buf = new StringBuilder("\nFile rebalancing mappings [node=" + cctx.localNodeId() + "]\n");
+        StringBuilder buf = new StringBuilder("\nFile rebalancing started [node=" + cctx.localNodeId() + "]\n");
 
         for (Map.Entry<Integer, Map<ClusterNode, Map<Integer, Set<Integer>>>> entry : map.entrySet()) {
             buf.append("\torder=").append(entry.getKey()).append('\n');

@@ -20,6 +20,7 @@ package org.apache.ignite.internal.processors.cache.distributed.dht.preloader;
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
@@ -48,6 +49,7 @@ import org.apache.ignite.internal.processors.query.GridQueryProcessor;
 import org.apache.ignite.internal.util.GridConcurrentHashSet;
 import org.apache.ignite.internal.util.future.GridCompoundFuture;
 import org.apache.ignite.internal.util.future.GridFutureAdapter;
+import org.apache.ignite.internal.util.typedef.F;
 import org.apache.ignite.internal.util.typedef.T2;
 import org.apache.ignite.internal.util.typedef.X;
 import org.apache.ignite.internal.util.typedef.internal.CU;
@@ -126,6 +128,13 @@ public class FileRebalanceFuture extends GridFutureAdapter<Boolean> {
         // The dummy future does not require initialization.
         if (assignsMap != null)
             initialize(assignsMap);
+    }
+
+    /**
+     * @return Rebalanced groups with suppliers.
+     */
+    public Collection<T2<String, Set<UUID>>> groups() {
+        return F.viewReadOnly(allGroupsMap.entrySet(), e -> new T2<>(cctx.cache().cacheGroup(e.getKey()).cacheOrGroupName(), e.getValue()));
     }
 
     /** @deprecated used only for debugging, should be removed */

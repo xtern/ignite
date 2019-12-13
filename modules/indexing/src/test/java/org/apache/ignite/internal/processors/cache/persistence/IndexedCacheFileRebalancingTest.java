@@ -32,12 +32,12 @@ import static org.apache.ignite.internal.processors.query.h2.opt.H2TableScanInde
 /**
  *
  */
-public class IndexedCacheFileRebalancingTest extends IgnitePdsCacheFileRebalancingTxTest {
+public class IndexedCacheFileRebalancingTest extends IgniteCacheFileRebalancingTxTest {
     /** {@inheritDoc} */
-    @Override protected <V> void verifyCache(IgniteEx node, DataLoader<V> ldr) throws Exception {
-        super.verifyCache(node, ldr);
+    @Override protected <V> void verifyCache(IgniteEx node, LoadParameters<V> cfg) throws Exception {
+        super.verifyCache(node, cfg);
 
-        String name = ldr.cacheName();
+        String name = cfg.cacheName();
 
         if (!name.equals(INDEXED_CACHE))
             return;
@@ -46,14 +46,13 @@ public class IndexedCacheFileRebalancingTest extends IgnitePdsCacheFileRebalanci
 
         log.info("Index validation");
 
-        int cnt = ldr.cnt();
-        boolean removes = ldr.checkRemoves();
+        boolean removes = cfg.checkRemoves();
 
         IgniteCache cache = node.cache(name);
 
         cache.indexReadyFuture().get(15_000);
 
-        int expSize = removes ? cache.size() : cnt;
+        int expSize = removes ? cache.size() : cfg.entriesCnt();
         String tbl = "\"" + name + "\"." + TestValue.class.getSimpleName();
         String sql = "select COUNT(V1) from " + tbl + " where V1 >= 0 and V1 < 2147483647";
 
@@ -72,18 +71,6 @@ public class IndexedCacheFileRebalancingTest extends IgnitePdsCacheFileRebalanci
 
             assertEquals("node=" + nodeId, expSize, idxCnt);
         }
-//        // Validate indexes consistency.
-//        ValidateIndexesClosure clo = new ValidateIndexesClosure(Collections.singleton(name), 0, 0);
-//
-//        node.cluster().active(false);
-//
-//        for (Ignite g : G.allGrids()) {
-//            ((IgniteEx)g).context().resource().injectGeneric(clo);
-//
-//            VisorValidateIndexesJobResult res = clo.call();
-//
-//            assertFalse(res.hasIssues());
-//        }
     }
 
     /** */
