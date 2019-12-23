@@ -469,6 +469,11 @@ class FileWriteHandleImpl extends AbstractFileHandle implements FileWriteHandle 
         buf.close();
     }
 
+    /** {@inheritDoc} */
+    @Override public boolean closed() {
+        return stop.get();
+    }
+
     /**
      * @return {@code true} If this thread actually closed the segment.
      * @throws IgniteCheckedException If failed.

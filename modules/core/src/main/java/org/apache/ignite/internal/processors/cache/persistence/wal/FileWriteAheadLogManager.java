@@ -72,6 +72,8 @@ import org.apache.ignite.internal.managers.eventstorage.GridEventStorageManager;
 import org.apache.ignite.internal.pagemem.wal.IgniteWriteAheadLogManager;
 import org.apache.ignite.internal.pagemem.wal.WALIterator;
 import org.apache.ignite.internal.pagemem.wal.WALPointer;
+import org.apache.ignite.internal.pagemem.wal.record.DataEntry;
+import org.apache.ignite.internal.pagemem.wal.record.DataRecord;
 import org.apache.ignite.internal.pagemem.wal.record.MarshalledRecord;
 import org.apache.ignite.internal.pagemem.wal.record.MemoryRecoveryRecord;
 import org.apache.ignite.internal.pagemem.wal.record.PageSnapshot;
@@ -936,8 +938,15 @@ public class FileWriteAheadLogManager extends GridCacheSharedManagerAdapter impl
 
         FileWALPointer end = null;
 
-        if (hnd != null)
+        if (hnd != null) {
+            if (hnd.closed()) {
+                hnd.awaitNext();
+
+                hnd = currentHandle();
+            }
+
             end = hnd.position();
+        }
 
         RecordsIterator iter = new RecordsIterator(
             cctx,
@@ -1272,15 +1281,27 @@ public class FileWriteAheadLogManager extends GridCacheSharedManagerAdapter impl
             if (rec != null) {
                 WALPointer ptr = next.addRecord(rec);
 
+                if (rec instanceof DataRecord) {
+                    DataRecord dataRec = (DataRecord)rec;
+
+                    assert dataRec.writeEntries().size() == 1 : dataRec.writeEntries().size();
+
+                    DataEntry entry = dataRec.writeEntries().iterator().next();
+
+                    System.out.println(">xxx> wal cntr =" + entry.partitionCounter() + " p=" + entry.partitionId() + " k=" + entry.key().value(cctx.cacheObjectContext(entry.cacheId()), false) + " idx=" + next.getSegmentId());
+                }
+
                 assert ptr != null;
             }
 
-            if (next.getSegmentId() - lashCheckpointFileIdx() >= maxSegCountWithoutCheckpoint)
-                cctx.database().forceCheckpoint("too big size of WAL without checkpoint");
-
             boolean swapped = CURR_HND_UPD.compareAndSet(this, hnd, next);
 
+            System.out.println("swapped: " + hnd.getSegmentId() + " -> " + next.getSegmentId());
+
             assert swapped : "Concurrent updates on rollover are not allowed";
+
+            if (next.getSegmentId() - lashCheckpointFileIdx() >= maxSegCountWithoutCheckpoint)
+                cctx.database().forceCheckpoint("too big size of WAL without checkpoint");
 
             if (walAutoArchiveAfterInactivity > 0)
                 lastRecordLoggedMs.set(0);

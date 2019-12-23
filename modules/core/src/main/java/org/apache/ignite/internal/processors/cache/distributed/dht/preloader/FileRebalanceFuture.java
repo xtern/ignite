@@ -324,14 +324,14 @@ public class FileRebalanceFuture extends GridFutureAdapter<Boolean> {
                 Runnable task = grp.preloader().addAssignments(assigns, true, rebalanceId, null, histFut);
 
                 // todo investigate "end handler" in WAL iterator, seems we failing when collecting most recent updates at the same time.
-                try {
-                    U.sleep(500);
-                }
-                catch (IgniteInterruptedCheckedException e) {
-                    log.warning("Thread was interrupred,", e);
-
-                    Thread.currentThread().interrupt();
-                }
+//                try {
+//                    U.sleep(500);
+//                }
+//                catch (IgniteInterruptedCheckedException e) {
+//                    log.warning("Thread was interrupred,", e);
+//
+//                    Thread.currentThread().interrupt();
+//                }
 
                 cctx.kernalContext().getSystemExecutorService().submit(task);
 

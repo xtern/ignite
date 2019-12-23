@@ -238,6 +238,10 @@ class FsyncFileWriteHandle extends AbstractFileHandle implements FileWriteHandle
         return stopped(head.get());
     }
 
+    public boolean closed() {
+        return stopped();
+    }
+
     /**
      * @param record Record to check.
      * @return {@code true} if the record is fake close record.
