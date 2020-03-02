@@ -37,6 +37,7 @@ import org.apache.ignite.internal.processors.cache.ExchangeActions;
 import org.apache.ignite.internal.processors.cache.GridCacheContext;
 import org.apache.ignite.internal.processors.cache.GridCacheSharedManagerAdapter;
 import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtLocalPartition;
+import org.apache.ignite.internal.processors.cluster.BaselineTopology;
 import org.apache.ignite.internal.util.typedef.internal.CU;
 import org.jetbrains.annotations.NotNull;
 
@@ -127,6 +128,15 @@ public class IgnitePartitionPreloadManager extends GridCacheSharedManagerAdapter
     }
 
     /**
+     * @return {@code true} if local node is in baseline and {@code false} otherwise.
+     */
+    private boolean isLocalNodeInBaseline() {
+        BaselineTopology topology = cctx.discovery().discoCache().state().baselineTopology();
+
+        return topology != null && topology.consistentIds().contains(cctx.localNode().consistentId());
+    }
+
+    /**
      * Callback on exchange done, should be invoked before initialize file page store.
      *
      * @param exchActions Exchange actions.
@@ -157,12 +167,17 @@ public class IgnitePartitionPreloadManager extends GridCacheSharedManagerAdapter
 
         boolean hasIdleParttition = false;
 
-        Object constId = cctx.localNode().consistentId();
+        boolean canStartRebalance = true;
 
-        boolean locJoinBaselineChange = exchActions != null && exchActions.changedBaseline() &&
-            !exchActions.stateChangeRequest().prevBaselineTopologyHistoryItem().consistentIds().contains(constId);
+        for (GridDhtLocalPartition part : grp.topology().currentLocalPartitions()) {
+            if (cctx.pageStore().exists(grp.groupId(), part.id())) {
+                canStartRebalance = false;
 
-        if (!locJoinBaselineChange) {
+                break;
+            }
+        }
+
+        if (!canStartRebalance || !isLocalNodeInBaseline()) {
             if (log.isDebugEnabled())
                 log.debug("Partition file preloading skipped [grp=" + grp.cacheOrGroupName() + "]");
 
@@ -315,6 +330,9 @@ public class IgnitePartitionPreloadManager extends GridCacheSharedManagerAdapter
         Map<Integer, Long> globalSizes,
         IgniteDhtPartitionHistorySuppliersMap suppliers
     ) {
+        if (globalSizes == null)
+            return false;
+
         AffinityAssignment aff = grp.affinity().readyAffinity(resVer);
 
         assert aff != null;
@@ -325,7 +343,12 @@ public class IgnitePartitionPreloadManager extends GridCacheSharedManagerAdapter
 
         for (int p = 0; p < grp.affinity().partitions(); p++) {
             if (!aff.get(p).contains(cctx.localNode())) {
-                assert grp.topology().localPartition(p) == null : "Should not start when a partition is evicting";
+                if (grp.topology().localPartition(p) != null) {
+                    if (log.isDebugEnabled())
+                        log.debug("SKipping file rebalancing - has not affinity partition [grp=" + grp.cacheOrGroupName() + ", p=" + p + ", state=" + grp.topology().localPartition(p).state() + "]");
+
+                    return false;
+                }
 
                 continue;
             }
@@ -337,12 +360,21 @@ public class IgnitePartitionPreloadManager extends GridCacheSharedManagerAdapter
                     hasApplicablePart = true;
             }
 
-            assert grp.topology().localPartition(p).state() == MOVING :
-                "grp=" + grp.cacheOrGroupName() + ", p=" + p + ", state=" + grp.topology().localPartition(p).state();
+            if (grp.topology().localPartition(p).state() != MOVING) {
+                if (log.isDebugEnabled())
+                    log.debug("SKipping file rebalancing - no moving [grp=" + grp.cacheOrGroupName() + ", p=" + p + ", state=" + grp.topology().localPartition(p).state() + "]");
+
+                return false;
+            }
+//                "grp=" + grp.cacheOrGroupName() + ", p=" + p + ", state=" + grp.topology().localPartition(p).state();
 
             // Should have partition file supplier for all partitions to start file preloading.
-            if (suppliers.getSupplier(grp.groupId(), p, cntrs.updateCounter(p)) == null)
+            if (suppliers.getSupplier(grp.groupId(), p, cntrs.updateCounter(p)) == null) {
+                if (log.isDebugEnabled())
+                    log.debug("SKipping file rebalancing - no supplier [grp=" + grp.cacheOrGroupName() + ", p=" + p + "]");
+
                 return false;
+            }
         }
 
         return hasApplicablePart;

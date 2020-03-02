@@ -47,6 +47,7 @@ import org.apache.ignite.internal.processors.cache.persistence.GridCacheDatabase
 import org.apache.ignite.internal.processors.cache.persistence.GridCacheOffheapManager;
 import org.apache.ignite.internal.processors.query.GridQueryProcessor;
 import org.apache.ignite.internal.util.GridConcurrentHashSet;
+import org.apache.ignite.internal.util.future.GridCompoundFuture;
 import org.apache.ignite.internal.util.future.GridFutureAdapter;
 import org.apache.ignite.internal.util.tostring.GridToStringInclude;
 import org.apache.ignite.internal.util.typedef.internal.S;
@@ -321,26 +322,44 @@ public class PartitionPreloadingRoutine extends GridFutureAdapter<Boolean> {
 
         GridQueryProcessor qryProc = cctx.kernalContext().query();
 
+        GridCompoundFuture idxFut = new GridCompoundFuture();
+
         if (qryProc.moduleEnabled()) {
             for (GridCacheContext ctx : grp.caches()) {
-                IgniteInternalFuture<?> idxFut = qryProc.rebuildIndexesFromHash(ctx);
+                IgniteInternalFuture<?> fut0 = qryProc.rebuildIndexesFromHash(ctx);
 
-                if (idxFut != null) {
+                if (fut0 != null) {
                     if (log.isInfoEnabled())
                         log.info("Starting index rebuild [cache=" + ctx.cache().name() + "]");
 
-                    idxFut.listen(f -> log.info("Finished index rebuild [cache=" + ctx.cache().name() +
+                    fut0.listen(f -> log.info("Finished index rebuild [cache=" + ctx.cache().name() +
                         ", success=" + (!f.isCancelled() && f.error() == null) + "]"));
+
+                    idxFut.add(fut0);
                 }
             }
         }
 
+        idxFut.markInitialized();
+
+        GridDhtPreloaderAssignments histAssignments = makeHistAssignments(grp, maxCntrs);
+
+        if (histAssignments.isEmpty()) {
+            idxFut.listen(f -> {
+                finishRebalance(grp, histAssignments, fut);
+            });
+
+            return;
+        }
+
+        finishRebalance(grp, histAssignments, fut);
+    }
+
+    void finishRebalance(CacheGroupContext grp, GridDhtPreloaderAssignments histAssignments, GridFutureAdapter<GridDhtPreloaderAssignments> fut) {
         // Cache group File preloading is finished, historical rebalancing will send separate events.
         grp.preloader().sendRebalanceFinishedEvent(exchId.discoveryEvent());
 
-        assert fut != null : "Duplicate remove [grp=" + grp.cacheOrGroupName() + "]";
-
-        GridDhtPreloaderAssignments histAssignments = makeHistAssignments(grp, maxCntrs);
+        //GridDhtPreloaderAssignments histAssignments = makeHistAssignments(grp, maxCntrs);
 
         fut.onDone(histAssignments);
 
@@ -351,7 +370,7 @@ public class PartitionPreloadingRoutine extends GridFutureAdapter<Boolean> {
 
         if (log.isInfoEnabled()) {
             log.info("Completed" + (remainGroupsCnt == 0 ? " (final)" : "") +
-                " partition files preloading [grp=" + grpName + ", remaining=" + remainGroupsCnt + "]");
+                " partition files preloading [grp=" + grp.cacheOrGroupName() + ", remaining=" + remainGroupsCnt + "]");
         }
 
         if (remainGroupsCnt == 0)
@@ -386,7 +405,7 @@ public class PartitionPreloadingRoutine extends GridFutureAdapter<Boolean> {
                 snapshotFut.cancel();
             }
 
-            for (GridFutureAdapter fut : grpRoutines.values())
+            for (GridFutureAdapter<GridDhtPreloaderAssignments> fut : grpRoutines.values())
                 fut.onDone();
 
             if (isFailed()) {

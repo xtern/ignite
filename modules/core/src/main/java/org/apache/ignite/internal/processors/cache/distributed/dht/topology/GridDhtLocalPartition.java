@@ -463,7 +463,7 @@ public class GridDhtLocalPartition extends GridCacheConcurrentMapImpl implements
      */
     public boolean enable() {
         if (state() != MOVING)
-            throw new IgniteException("Expected MIVING partition, actual state is " + state());
+            return false;
 
         if (store.enable()) {
             // Clear all on-heap entries before start processing updates.
