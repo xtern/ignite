@@ -21,6 +21,7 @@ import java.io.Serializable;
 import java.util.Objects;
 import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.IgniteLogger;
+import org.apache.ignite.IgniteSystemProperties;
 import org.apache.ignite.internal.GridKernalContext;
 import org.apache.ignite.internal.IgniteInternalFuture;
 import org.apache.ignite.internal.processors.configuration.distributed.DistributePropertyListener;
@@ -35,6 +36,8 @@ import org.apache.ignite.lang.IgniteInClosure;
 import org.jetbrains.annotations.NotNull;
 
 import static java.lang.String.format;
+import static org.apache.ignite.IgniteSystemProperties.IGNITE_FILE_REBALANCE_THRESHOLD;
+import static org.apache.ignite.configuration.IgniteConfiguration.DFLT_PDS_WAL_REBALANCE_THRESHOLD;
 import static org.apache.ignite.internal.processors.configuration.distributed.DistributedBooleanProperty.detachedBooleanProperty;
 import static org.apache.ignite.internal.processors.configuration.distributed.DistributedLongProperty.detachedLongProperty;
 
@@ -51,15 +54,19 @@ public class DistributedBaselineConfiguration {
     /** Message of baseline auto-adjust configuration. */
     private static final String AUTO_ADJUST_CONFIGURED_MESSAGE = "Baseline auto-adjust is '%s' with timeout='%d' ms";
 
+    /** */
+    private final long dfltFileRebalanceThreshold =
+        IgniteSystemProperties.getLong(IGNITE_FILE_REBALANCE_THRESHOLD, 33333);
+
     /** Message of baseline auto-adjust parameter was changed. */
     private static final String PROPERTY_UPDATE_MESSAGE =
         "Baseline parameter '%s' was changed from '%s' to '%s'";
 
     /** */
-    private volatile long dfltTimeout;
+    private final long dfltTimeout;
 
     /** Default auto-adjust enable/disable. */
-    private volatile boolean dfltEnabled;
+    private final boolean dfltEnabled;
 
     /** */
     private final IgniteLogger log;
@@ -73,6 +80,10 @@ public class DistributedBaselineConfiguration {
      */
     private final DistributedChangeableProperty<Long> baselineAutoAdjustTimeout =
         detachedLongProperty("baselineAutoAdjustTimeout");
+
+    /** */
+    private final DistributedChangeableProperty<Long> fileRebalanceThreshold =
+        detachedLongProperty("fileRebalanceThreshold");
 
     /**
      * @param isp Subscription processor.
@@ -94,13 +105,15 @@ public class DistributedBaselineConfiguration {
                 @Override public void onReadyToRegister(DistributedPropertyDispatcher dispatcher) {
                     baselineAutoAdjustEnabled.addListener(makeUpdateListener());
                     baselineAutoAdjustTimeout.addListener(makeUpdateListener());
+                    fileRebalanceThreshold.addListener(makeUpdateListener());
 
-                    dispatcher.registerProperties(baselineAutoAdjustEnabled, baselineAutoAdjustTimeout);
+                    dispatcher.registerProperties(baselineAutoAdjustEnabled, baselineAutoAdjustTimeout, fileRebalanceThreshold);
                 }
 
                 @Override public void onReadyToWrite() {
                     setDefaultValue(baselineAutoAdjustEnabled, dfltEnabled, log);
                     setDefaultValue(baselineAutoAdjustTimeout, dfltTimeout, log);
+                    setDefaultValue(fileRebalanceThreshold, dfltFileRebalanceThreshold, log);
                 }
             }
         );
@@ -181,5 +194,17 @@ public class DistributedBaselineConfiguration {
     public GridFutureAdapter<?> updateBaselineAutoAdjustTimeoutAsync(
         long baselineAutoAdjustTimeout) throws IgniteCheckedException {
         return this.baselineAutoAdjustTimeout.propagateAsync(baselineAutoAdjustTimeout);
+    }
+
+    /**
+     * @param count Count.
+     */
+    public GridFutureAdapter<?> updateFileRebalanceThresholdAsync(long count) throws IgniteCheckedException {
+        return fileRebalanceThreshold.propagateAsync(count);
+    }
+
+    /** */
+    public long getFileRebalanceThreshold() {
+        return fileRebalanceThreshold.getOrDefault(dfltFileRebalanceThreshold);
     }
 }

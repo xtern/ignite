@@ -79,4 +79,19 @@ public class BaselineAutoAdjustMXBeanImpl implements BaselineAutoAdjustMXBean {
             throw new IgniteException(e);
         }
     }
+
+    /** {@inheritDoc} */
+    @Override public long getFileRebalanceThreshold() {
+        return baselineConfiguration.getFileRebalanceThreshold();
+    }
+
+    /** {@inheritDoc} */
+    @Override public void setFileRebalanceThreshold(long count) {
+        try {
+            baselineConfiguration.updateFileRebalanceThresholdAsync(count).get();
+        }
+        catch (IgniteCheckedException e) {
+            throw new IgniteException(e);
+        }
+    }
 }

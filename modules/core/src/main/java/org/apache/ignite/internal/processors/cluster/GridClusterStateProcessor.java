@@ -1656,6 +1656,11 @@ public class GridClusterStateProcessor extends GridProcessorAdapter implements I
         return distributedBaselineConfiguration.isBaselineAutoAdjustEnabled();
     }
 
+    /** */
+    public long fileRebalanceThreshold() {
+        return distributedBaselineConfiguration.getFileRebalanceThreshold();
+    }
+
     /**
      * @param baselineAutoAdjustEnabled Value of manual baseline control or auto adjusting baseline. {@code True} If
      * cluster in auto-adjust. {@code False} If cluster in manuale.

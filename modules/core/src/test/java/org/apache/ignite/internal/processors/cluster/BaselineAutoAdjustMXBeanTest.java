@@ -23,10 +23,14 @@ import javax.management.MBeanServerInvocationHandler;
 import javax.management.ObjectName;
 import org.apache.ignite.Ignite;
 import org.apache.ignite.IgniteCluster;
+import org.apache.ignite.internal.IgniteEx;
 import org.apache.ignite.internal.util.typedef.internal.U;
 import org.apache.ignite.mxbean.BaselineAutoAdjustMXBean;
+import org.apache.ignite.testframework.junits.WithSystemProperty;
 import org.apache.ignite.testframework.junits.common.GridCommonAbstractTest;
 import org.junit.Test;
+
+import static org.apache.ignite.IgniteSystemProperties.IGNITE_FILE_REBALANCE_THRESHOLD;
 
 /** */
 public class BaselineAutoAdjustMXBeanTest extends GridCommonAbstractTest {
@@ -75,6 +79,44 @@ public class BaselineAutoAdjustMXBeanTest extends GridCommonAbstractTest {
         finally {
             stopGrid();
         }
+    }
+
+    /**
+     *
+     */
+    @Test
+    @WithSystemProperty(key = IGNITE_FILE_REBALANCE_THRESHOLD, value="0")
+    public void testFileRebalanceThreshold() throws Exception {
+        IgniteEx ignite0 = startGrid();
+
+        BaselineAutoAdjustMXBean bean = bltMxBean();
+
+        GridClusterStateProcessor state = ignite0.context().state();
+
+        assertEquals(0, state.fileRebalanceThreshold());
+
+        assert state.fileRebalanceThreshold() == 0 : state.fileRebalanceThreshold();
+
+        long newVal = 30000;
+
+        bean.setFileRebalanceThreshold(newVal);
+
+        assertEquals(newVal, state.fileRebalanceThreshold());
+
+        IgniteEx ignite1 = startGrid(1);
+
+        assertEquals(newVal, ignite1.context().state().fileRebalanceThreshold());
+
+        newVal = 40000;
+
+        bean.setFileRebalanceThreshold(newVal);
+
+        assertEquals(newVal, ignite1.context().state().fileRebalanceThreshold());
+    }
+
+    /** {@inheritDoc} */
+    @Override protected void afterTest() throws Exception {
+        stopAllGrids();
     }
 
     /**

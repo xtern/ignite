@@ -260,7 +260,7 @@ public class GridCacheDatabaseSharedManager extends IgniteCacheDatabaseSharedMan
 
     /** */
     private final long fileRebalanceThreshold =
-        getLong(IGNITE_FILE_REBALANCE_THRESHOLD, DFLT_PDS_WAL_REBALANCE_THRESHOLD);
+        getLong(IGNITE_FILE_REBALANCE_THRESHOLD, 33333);
 
     /** Value of property for throttling policy override. */
     private final String throttlingPolicyOverride = IgniteSystemProperties.getString(
@@ -1828,6 +1828,8 @@ public class GridCacheDatabaseSharedManager extends IgniteCacheDatabaseSharedMan
      */
     private Map<Integer, Set<Integer>> partitionsApplicableForWalOrFileRebalance() {
         Map<Integer, Set<Integer>> res = new HashMap<>();
+
+        long fileRebalanceThreshold = cctx.kernalContext().state().fileRebalanceThreshold();
 
         for (CacheGroupContext grp : cctx.cache().cacheGroups()) {
             if (grp.isLocal())

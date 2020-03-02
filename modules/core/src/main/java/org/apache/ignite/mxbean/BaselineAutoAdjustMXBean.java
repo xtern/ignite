@@ -32,6 +32,10 @@ public interface BaselineAutoAdjustMXBean {
     long getAutoAdjustmentTimeout();
 
     /** */
+    @MXBeanDescription("File rebalance threshold entries count.")
+    long getFileRebalanceThreshold();
+
+    /** */
     @MXBeanDescription("Time until baseline will be adjusted automatically.")
     long getTimeUntilAutoAdjust();
 
@@ -50,4 +54,10 @@ public interface BaselineAutoAdjustMXBean {
     public void setAutoAdjustmentTimeout(
         @MXBeanParameter(name = "timeout", description = "Timeout value.") long timeout
     );
+
+    /** */
+    @MXBeanDescription("Set file rebalance threshold.")
+    @MXBeanParametersNames("count")
+    @MXBeanParametersDescriptions("Partition entries count.")
+    public void setFileRebalanceThreshold(long count);
 }
