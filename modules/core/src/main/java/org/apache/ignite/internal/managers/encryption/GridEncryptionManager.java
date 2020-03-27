@@ -47,18 +47,29 @@ import org.apache.ignite.internal.IgniteInternalFuture;
 import org.apache.ignite.internal.managers.GridManagerAdapter;
 import org.apache.ignite.internal.managers.communication.GridMessageListener;
 import org.apache.ignite.internal.managers.eventstorage.DiscoveryEventListener;
+import org.apache.ignite.internal.pagemem.PageMemory;
+import org.apache.ignite.internal.pagemem.store.PageStore;
 import org.apache.ignite.internal.pagemem.wal.WALPointer;
 import org.apache.ignite.internal.pagemem.wal.record.MasterKeyChangeRecord;
 import org.apache.ignite.internal.processors.cache.CacheGroupDescriptor;
+import org.apache.ignite.internal.processors.cache.IgniteInternalCache;
+import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtLocalPartition;
+import org.apache.ignite.internal.processors.cache.persistence.CacheDataRow;
+import org.apache.ignite.internal.processors.cache.persistence.file.FilePageStoreManager;
 import org.apache.ignite.internal.processors.cache.persistence.metastorage.MetastorageLifecycleListener;
 import org.apache.ignite.internal.processors.cache.persistence.metastorage.ReadOnlyMetastorage;
 import org.apache.ignite.internal.processors.cache.persistence.metastorage.ReadWriteMetastorage;
+import org.apache.ignite.internal.processors.cache.persistence.pagemem.PageMemoryEx;
+import org.apache.ignite.internal.processors.cache.persistence.tree.io.DataPageIO;
+import org.apache.ignite.internal.processors.cache.persistence.tree.io.PageIO;
+import org.apache.ignite.internal.processors.cache.tree.CacheDataRowStore;
 import org.apache.ignite.internal.processors.cluster.IgniteChangeGlobalStateSupport;
 import org.apache.ignite.internal.util.distributed.DistributedProcess;
 import org.apache.ignite.internal.util.future.GridFinishedFuture;
 import org.apache.ignite.internal.util.future.GridFutureAdapter;
 import org.apache.ignite.internal.util.future.IgniteFinishedFutureImpl;
 import org.apache.ignite.internal.util.future.IgniteFutureImpl;
+import org.apache.ignite.internal.util.lang.GridCursor;
 import org.apache.ignite.internal.util.typedef.F;
 import org.apache.ignite.internal.util.typedef.T2;
 import org.apache.ignite.internal.util.typedef.internal.S;
@@ -85,6 +96,7 @@ import static org.apache.ignite.internal.GridComponent.DiscoveryDataExchangeType
 import static org.apache.ignite.internal.GridTopic.TOPIC_GEN_ENC_KEY;
 import static org.apache.ignite.internal.IgniteFeatures.MASTER_KEY_CHANGE;
 import static org.apache.ignite.internal.managers.communication.GridIoPolicy.SYSTEM_POOL;
+import static org.apache.ignite.internal.processors.cache.persistence.tree.io.PageIO.T_DATA;
 import static org.apache.ignite.internal.util.distributed.DistributedProcess.DistributedProcessType.MASTER_KEY_CHANGE_FINISH;
 import static org.apache.ignite.internal.util.distributed.DistributedProcess.DistributedProcessType.MASTER_KEY_CHANGE_PREPARE;
 
@@ -772,8 +784,11 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
      * @return Future that will contain results of generation.
      */
     public IgniteInternalFuture<T2<Collection<byte[]>, byte[]>> generateKeys(int keyCnt) {
-        if (keyCnt == 0 || !ctx.clientNode())
+        if (keyCnt == 0 || !ctx.clientNode()) {
+            U.dumpStack(">>> GENERATE KEYS: cnt=" + keyCnt);
+
             return new GridFinishedFuture<>(createKeys(keyCnt));
+        }
 
         synchronized (opsMux) {
             if (disconnected || stopped) {
@@ -1265,6 +1280,138 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
 
             return U.fromBytes(serKeyName);
         });
+    }
+
+    public void reencrypt(String name) throws IgniteCheckedException {
+        IgniteInternalCache encCache = ctx.cache().cache(name);
+
+        int cacheId = encCache.context().cacheId();
+        int grpId = encCache.context().groupId();
+
+        PageMemory pageMem = encCache.context().group().dataRegion().pageMemory();
+
+        for (GridDhtLocalPartition part : encCache.context().topology().currentLocalPartitions()) {
+            System.out.println("p="+part.id() + ", size=" + part.fullSize());
+
+            long startPageId = ((PageMemoryEx)pageMem).partitionMetaPageId(grpId, part.id());
+
+            PageStore store =
+                    ((FilePageStoreManager)encCache.context().shared().pageStore()).getStore(cacheId, part.id());
+
+            GridCursor<Long> pageScanner = new DirectDataPageScanCursor(store, grpId, pageMem, startPageId);
+
+            while (pageScanner.next()) {
+                System.out.println(pageScanner.get());
+            }
+        }
+        // DirectDataPageScanCursor
+//        for (GridDhtLocalPartition part : encCache.context().topology().currentLocalPartitions()) {
+//
+//            long startPageId = ((PageMemoryEx)pageMem).partitionMetaPageId(grpId, part.id());
+//
+//            GridCursor<? extends CacheDataRow> cursor = part.dataStore().cursor(cacheId, null, null);
+//
+//            while (cursor.next()) {
+//                CacheDataRow row = cursor.get();
+//
+//                long pageId = PageIdUtils.pageId(row.link());
+//
+//                System.out.println("p=" + row.partition() + " pageId=" + pageId);
+//
+//                PageStore store =
+//                    ((FilePageStoreManager)encCache.context().shared().pageStore()).getStore(cacheId, row.partition());
+//
+//
+//
+////                store.write();
+//            }
+//        }
+    }
+
+    static class DirectDataPageScanCursor implements GridCursor<Long> {
+        final PageStore pageStore;
+
+        /** */
+        int pagesCnt;
+
+        /** */
+        int curPage = -1;
+
+        /** */
+        CacheDataRow[] rows = {};
+
+        /** */
+        long curPageAddr;
+
+        final int grpId;
+
+        final PageMemory pageMem;
+
+        final long startPageId;
+
+        DirectDataPageScanCursor(PageStore pageStore, int grpId, PageMemory pageMem, long startPageId) {
+            this.pageStore = pageStore;
+
+            pagesCnt = pageStore.pages();
+            this.grpId = grpId;
+            this.pageMem = pageMem;
+            this.startPageId = startPageId;
+        }
+
+        /** {@inheritDoc} */
+        @Override public boolean next() throws IgniteCheckedException {
+            for (;;) {
+                if (++curPage >= pagesCnt) {
+                    // Reread number of pages when we reach it (it may grow).
+                    int newPagesCnt = pageStore.pages();
+
+                    if (newPagesCnt <= pagesCnt) {
+                        rows = null;
+                        return false;
+                    }
+
+                    pagesCnt = newPagesCnt;
+                }
+
+                long pageId = startPageId + curPage;
+                long page = pageMem.acquirePage(grpId, pageId);
+
+                try {
+                    boolean skipVer = CacheDataRowStore.getSkipVersion();
+
+                    long pageAddr = ((PageMemoryEx)pageMem).readLock(page, pageId, true, false);
+
+                    try {
+                        // TODO https://issues.apache.org/jira/browse/IGNITE-11998.
+                        // Here we should also exclude fragmented pages that don't contain the head of the entry.
+                        if (PageIO.getType(pageAddr) != T_DATA)
+                            continue; // Not a data page.
+
+                        DataPageIO io = PageIO.getPageIO(T_DATA, PageIO.getVersion(pageAddr));
+
+                        int rowsCnt = io.getRowsCount(pageAddr);
+
+                        if (rowsCnt == 0)
+                            continue; // Empty page.
+
+                        curPageAddr = pageAddr;
+
+                        return true;
+                    }
+                    finally {
+                        pageMem.readUnlock(grpId, pageId, page);
+                    }
+                }
+                finally{
+                    pageMem.releasePage(grpId, pageId, page);
+                }
+            }
+        }
+
+        /** {@inheritDoc} */
+        @Override public Long get() {
+            return curPageAddr;
+        }
     }
 
     /** Master key change request. */

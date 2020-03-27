@@ -27,6 +27,8 @@ import javax.crypto.KeyGenerator;
 import javax.crypto.SecretKey;
 import org.apache.ignite.Ignite;
 import org.apache.ignite.IgniteCache;
+import org.apache.ignite.cache.CacheMode;
+import org.apache.ignite.cache.affinity.rendezvous.RendezvousAffinityFunction;
 import org.apache.ignite.configuration.CacheConfiguration;
 import org.apache.ignite.configuration.DataRegionConfiguration;
 import org.apache.ignite.configuration.DataStorageConfiguration;
@@ -170,13 +172,19 @@ public abstract class AbstractEncryptionTest extends GridCommonAbstractTest {
         createEncryptedCache(grid0, grid1, cacheName, cacheGroup, true);
     }
 
+    protected int partitions() {
+        return 1024;
+    }
+
     /** */
     protected void createEncryptedCache(IgniteEx grid0, @Nullable IgniteEx grid1, String cacheName, String cacheGroup,
         boolean putData) throws IgniteInterruptedCheckedException {
         CacheConfiguration<Long, String> ccfg = new CacheConfiguration<Long, String>(cacheName)
             .setWriteSynchronizationMode(FULL_SYNC)
             .setGroupName(cacheGroup)
-            .setEncryptionEnabled(true);
+            .setEncryptionEnabled(true)
+            .setCacheMode(cacheMode())
+            .setAffinity(new RendezvousAffinityFunction(false, partitions()));
 
         IgniteCache<Long, String> cache = grid0.createCache(ccfg);
 
@@ -190,6 +198,10 @@ public abstract class AbstractEncryptionTest extends GridCommonAbstractTest {
             for (long i = 0; i < 100; i++)
                 assertEquals("" + i, cache.get(i));
         }
+    }
+
+    protected CacheMode cacheMode() {
+        return CacheMode.PARTITIONED;
     }
 
     /**
