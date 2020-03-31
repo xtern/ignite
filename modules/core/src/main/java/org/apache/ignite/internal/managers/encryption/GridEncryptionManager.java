@@ -88,6 +88,7 @@ import org.apache.ignite.spi.discovery.DiscoveryDataBag.JoiningNodeDiscoveryData
 import org.apache.ignite.spi.discovery.DiscoverySpi;
 import org.apache.ignite.spi.discovery.tcp.TcpDiscoverySpi;
 import org.apache.ignite.spi.encryption.EncryptionSpi;
+import org.apache.ignite.spi.encryption.keystore.KeystoreEncryptionKey;
 import org.jetbrains.annotations.Nullable;
 
 import static org.apache.ignite.IgniteSystemProperties.IGNITE_MASTER_KEY_NAME_TO_CHANGE_BEFORE_STARTUP;
@@ -1316,11 +1317,11 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
         int cacheId = encCache.context().cacheId();
         int grpId = encCache.context().groupId();
 
-//        Serializable encKey = getSpi().decryptKey(knownEncryptionKeys().get(grpId));
-//
-//        assert encKey instanceof KeystoreEncryptionKey : encKey.getClass().getName();
-//
-//        assert encKey != null;
+        Serializable encKey = getSpi().decryptKey(knownEncryptionKeys().get(grpId));
+
+        assert encKey instanceof KeystoreEncryptionKey : encKey.getClass().getName();
+
+        assert encKey != null;
 
         PageMemory pageMem = encCache.context().group().dataRegion().pageMemory();
 
@@ -1336,6 +1337,8 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
 
             IgniteInClosure2X<Long, Long> clo = new IgniteInClosure2X<Long, Long>() {
                 @Override public void applyx(Long pageId, Long pageAddr) throws IgniteCheckedException {
+                    //int encPageSize = GridCacheUtils.encryptedPageSize(pageSize, getSpi());
+
                     byte[] pageBytes = PageUtils.getBytes(pageAddr, 0, pageSize);
 
                     ByteBuffer pageBuf = ByteBuffer.wrap(pageBytes);
@@ -1350,23 +1353,35 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
 
                     PageIO.setCrc(pageBuf, crc);
 
-                    pageBuf.position(4);
+                    pageBuf.position(0);
+
+                    pageBuf.limit(pageMem.realPageSize(grpId));
 
 //                    calcCrc32(pageBuf, getCrcSize(pageId, pageBuf));
 
 //                    ByteBuffer inBuf = ByteBuffer.wrap(pageBytes);
 //
-//                    ByteBuffer encryptedBuf = ByteBuffer.allocate(store.getPageSize() + 32);
+                    ByteBuffer encryptedBuf = ByteBuffer.allocate(store.getPageSize());
 //
 ////                    assert encryptedBuf.remaining() > 4112 : encryptedBuf.remaining();
 //
 //                    System.out.println(">>>> custom enc: " + pageId);
 //
-//                    getSpi().encrypt(inBuf, encKey, encryptedBuf);
+                    getSpi().encrypt(pageBuf, encKey, encryptedBuf);
+
+                    pageBuf.position(0);
+
+//                    ByteBuffer encryptedBuf1 = ByteBuffer.allocate(store.getPageSize());
+//
+//                    getSpi().encrypt(pageBuf, encKey, encryptedBuf1);
+
+//                    assert Arrays.equals(encryptedBuf.array(), encryptedBuf1.array());
 
                     System.out.println("crc=" + Integer.toHexString(crc) + ", pageId=" + Long.toHexString(pageId) + " addr=" + Long.toHexString(pageAddr));
-                    System.out.println(bytesToHex(pageBytes));
+                    System.out.println(bytesToHex(encryptedBuf.array()));
 
+                    // todo how to get tag
+//                    store.write(pageId, encryptedBuf, Integer.MAX_VALUE, false);
                 }
             };
 

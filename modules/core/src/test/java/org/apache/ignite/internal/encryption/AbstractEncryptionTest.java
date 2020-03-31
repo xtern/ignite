@@ -184,7 +184,7 @@ public abstract class AbstractEncryptionTest extends GridCommonAbstractTest {
         CacheConfiguration<Long, String> ccfg = new CacheConfiguration<Long, String>(cacheName)
             .setWriteSynchronizationMode(FULL_SYNC)
             .setGroupName(cacheGroup)
-            .setEncryptionEnabled(false)
+            .setEncryptionEnabled(true)
             .setCacheMode(cacheMode())
             .setAffinity(new RendezvousAffinityFunction(false, partitions()));
 
