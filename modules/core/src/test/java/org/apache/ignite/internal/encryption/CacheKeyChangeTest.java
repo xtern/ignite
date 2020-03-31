@@ -72,7 +72,6 @@ public class CacheKeyChangeTest extends AbstractEncryptionTest {
         T2<IgniteEx, IgniteEx> grids = startTestGrids(true);
 
         IgniteEx node1 = grids.get1();
-
         IgniteEx node2 = grids.get2();
 
         createEncryptedCache(node1, node2, cacheName(), null);

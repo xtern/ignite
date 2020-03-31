@@ -19,6 +19,7 @@ package org.apache.ignite.internal.managers.encryption;
 
 import java.io.Serializable;
 import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
@@ -61,6 +62,8 @@ import org.apache.ignite.internal.processors.cache.persistence.metastorage.Metas
 import org.apache.ignite.internal.processors.cache.persistence.metastorage.ReadOnlyMetastorage;
 import org.apache.ignite.internal.processors.cache.persistence.metastorage.ReadWriteMetastorage;
 import org.apache.ignite.internal.processors.cache.persistence.pagemem.PageMemoryEx;
+import org.apache.ignite.internal.processors.cache.persistence.tree.io.PageIO;
+import org.apache.ignite.internal.processors.cache.persistence.wal.crc.FastCrc;
 import org.apache.ignite.internal.processors.cluster.IgniteChangeGlobalStateSupport;
 import org.apache.ignite.internal.util.distributed.DistributedProcess;
 import org.apache.ignite.internal.util.future.GridFinishedFuture;
@@ -85,7 +88,6 @@ import org.apache.ignite.spi.discovery.DiscoveryDataBag.JoiningNodeDiscoveryData
 import org.apache.ignite.spi.discovery.DiscoverySpi;
 import org.apache.ignite.spi.discovery.tcp.TcpDiscoverySpi;
 import org.apache.ignite.spi.encryption.EncryptionSpi;
-import org.apache.ignite.spi.encryption.keystore.KeystoreEncryptionKey;
 import org.jetbrains.annotations.Nullable;
 
 import static org.apache.ignite.IgniteSystemProperties.IGNITE_MASTER_KEY_NAME_TO_CHANGE_BEFORE_STARTUP;
@@ -1290,7 +1292,22 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
             hexChars[j * 2] = HEX_ARRAY[v >>> 4];
             hexChars[j * 2 + 1] = HEX_ARRAY[v & 0x0F];
         }
-        return new String(hexChars);
+
+        StringBuilder buf = new StringBuilder();
+
+        for (int j = 0; j < bytes.length; j++) {
+            if (j != 0 && j % 4 == 0)
+                buf.append(" | ");
+
+            if (j != 0 && j % 16 == 0)
+                buf.append('\n');
+
+            buf.append(hexChars[j * 2]);
+            buf.append(hexChars[j * 2 + 1]);
+            buf.append(' ');
+        }
+
+        return buf.toString();
     }
 
     public void reencrypt(String name) throws IgniteCheckedException {
@@ -1299,11 +1316,11 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
         int cacheId = encCache.context().cacheId();
         int grpId = encCache.context().groupId();
 
-        Serializable encKey = getSpi().decryptKey(knownEncryptionKeys().get(grpId));
-
-        assert encKey instanceof KeystoreEncryptionKey : encKey.getClass().getName();
-
-        assert encKey != null;
+//        Serializable encKey = getSpi().decryptKey(knownEncryptionKeys().get(grpId));
+//
+//        assert encKey instanceof KeystoreEncryptionKey : encKey.getClass().getName();
+//
+//        assert encKey != null;
 
         PageMemory pageMem = encCache.context().group().dataRegion().pageMemory();
 
@@ -1315,21 +1332,41 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
             PageStore store =
                     ((FilePageStoreManager)encCache.context().shared().pageStore()).getStore(cacheId, part.id());
 
+            int pageSize = store.getPageSize();
+
             IgniteInClosure2X<Long, Long> clo = new IgniteInClosure2X<Long, Long>() {
                 @Override public void applyx(Long pageId, Long pageAddr) throws IgniteCheckedException {
-                    byte[] pageBytes = PageUtils.getBytes(pageAddr, 0, store.getPageSize());
+                    byte[] pageBytes = PageUtils.getBytes(pageAddr, 0, pageSize);
 
-                    ByteBuffer inBuf = ByteBuffer.wrap(pageBytes);
+                    ByteBuffer pageBuf = ByteBuffer.wrap(pageBytes);
 
-                    ByteBuffer encryptedBuf = ByteBuffer.allocate(store.getPageSize() + 32);
+                    pageBuf.order(ByteOrder.LITTLE_ENDIAN);
 
-//                    assert encryptedBuf.remaining() > 4112 : encryptedBuf.remaining();
+                    pageBuf.position(0);
 
-                    System.out.println(">>>> custom enc: " + pageId);
+                    int crc = FastCrc.calcCrc(pageBuf, pageSize);
 
-                    getSpi().encrypt(inBuf, encKey, encryptedBuf);
+                    pageBuf.position(0);
 
-                    System.out.println(bytesToHex(encryptedBuf.array()));
+                    PageIO.setCrc(pageBuf, crc);
+
+                    pageBuf.position(4);
+
+//                    calcCrc32(pageBuf, getCrcSize(pageId, pageBuf));
+
+//                    ByteBuffer inBuf = ByteBuffer.wrap(pageBytes);
+//
+//                    ByteBuffer encryptedBuf = ByteBuffer.allocate(store.getPageSize() + 32);
+//
+////                    assert encryptedBuf.remaining() > 4112 : encryptedBuf.remaining();
+//
+//                    System.out.println(">>>> custom enc: " + pageId);
+//
+//                    getSpi().encrypt(inBuf, encKey, encryptedBuf);
+
+                    System.out.println("crc=" + Integer.toHexString(crc) + ", pageId=" + Long.toHexString(pageId) + " addr=" + Long.toHexString(pageAddr));
+                    System.out.println(bytesToHex(pageBytes));
+
                 }
             };
 
