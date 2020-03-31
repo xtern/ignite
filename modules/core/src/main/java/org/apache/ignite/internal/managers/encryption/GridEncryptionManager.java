@@ -48,6 +48,7 @@ import org.apache.ignite.internal.managers.GridManagerAdapter;
 import org.apache.ignite.internal.managers.communication.GridMessageListener;
 import org.apache.ignite.internal.managers.eventstorage.DiscoveryEventListener;
 import org.apache.ignite.internal.pagemem.PageMemory;
+import org.apache.ignite.internal.pagemem.PageUtils;
 import org.apache.ignite.internal.pagemem.store.PageStore;
 import org.apache.ignite.internal.pagemem.wal.WALPointer;
 import org.apache.ignite.internal.pagemem.wal.record.MasterKeyChangeRecord;
@@ -60,9 +61,6 @@ import org.apache.ignite.internal.processors.cache.persistence.metastorage.Metas
 import org.apache.ignite.internal.processors.cache.persistence.metastorage.ReadOnlyMetastorage;
 import org.apache.ignite.internal.processors.cache.persistence.metastorage.ReadWriteMetastorage;
 import org.apache.ignite.internal.processors.cache.persistence.pagemem.PageMemoryEx;
-import org.apache.ignite.internal.processors.cache.persistence.tree.io.DataPageIO;
-import org.apache.ignite.internal.processors.cache.persistence.tree.io.PageIO;
-import org.apache.ignite.internal.processors.cache.tree.CacheDataRowStore;
 import org.apache.ignite.internal.processors.cluster.IgniteChangeGlobalStateSupport;
 import org.apache.ignite.internal.util.distributed.DistributedProcess;
 import org.apache.ignite.internal.util.future.GridFinishedFuture;
@@ -70,6 +68,7 @@ import org.apache.ignite.internal.util.future.GridFutureAdapter;
 import org.apache.ignite.internal.util.future.IgniteFinishedFutureImpl;
 import org.apache.ignite.internal.util.future.IgniteFutureImpl;
 import org.apache.ignite.internal.util.lang.GridCursor;
+import org.apache.ignite.internal.util.lang.IgniteInClosure2X;
 import org.apache.ignite.internal.util.typedef.F;
 import org.apache.ignite.internal.util.typedef.T2;
 import org.apache.ignite.internal.util.typedef.internal.S;
@@ -86,6 +85,7 @@ import org.apache.ignite.spi.discovery.DiscoveryDataBag.JoiningNodeDiscoveryData
 import org.apache.ignite.spi.discovery.DiscoverySpi;
 import org.apache.ignite.spi.discovery.tcp.TcpDiscoverySpi;
 import org.apache.ignite.spi.encryption.EncryptionSpi;
+import org.apache.ignite.spi.encryption.keystore.KeystoreEncryptionKey;
 import org.jetbrains.annotations.Nullable;
 
 import static org.apache.ignite.IgniteSystemProperties.IGNITE_MASTER_KEY_NAME_TO_CHANGE_BEFORE_STARTUP;
@@ -96,7 +96,6 @@ import static org.apache.ignite.internal.GridComponent.DiscoveryDataExchangeType
 import static org.apache.ignite.internal.GridTopic.TOPIC_GEN_ENC_KEY;
 import static org.apache.ignite.internal.IgniteFeatures.MASTER_KEY_CHANGE;
 import static org.apache.ignite.internal.managers.communication.GridIoPolicy.SYSTEM_POOL;
-import static org.apache.ignite.internal.processors.cache.persistence.tree.io.PageIO.T_DATA;
 import static org.apache.ignite.internal.util.distributed.DistributedProcess.DistributedProcessType.MASTER_KEY_CHANGE_FINISH;
 import static org.apache.ignite.internal.util.distributed.DistributedProcess.DistributedProcessType.MASTER_KEY_CHANGE_PREPARE;
 
@@ -1282,23 +1281,59 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
         });
     }
 
+    private static final char[] HEX_ARRAY = "0123456789ABCDEF".toCharArray();
+
+    public static String bytesToHex(byte[] bytes) {
+        char[] hexChars = new char[bytes.length * 2];
+        for (int j = 0; j < bytes.length; j++) {
+            int v = bytes[j] & 0xFF;
+            hexChars[j * 2] = HEX_ARRAY[v >>> 4];
+            hexChars[j * 2 + 1] = HEX_ARRAY[v & 0x0F];
+        }
+        return new String(hexChars);
+    }
+
     public void reencrypt(String name) throws IgniteCheckedException {
         IgniteInternalCache encCache = ctx.cache().cache(name);
 
         int cacheId = encCache.context().cacheId();
         int grpId = encCache.context().groupId();
 
+        Serializable encKey = getSpi().decryptKey(knownEncryptionKeys().get(grpId));
+
+        assert encKey instanceof KeystoreEncryptionKey : encKey.getClass().getName();
+
+        assert encKey != null;
+
         PageMemory pageMem = encCache.context().group().dataRegion().pageMemory();
 
         for (GridDhtLocalPartition part : encCache.context().topology().currentLocalPartitions()) {
-            System.out.println("p="+part.id() + ", size=" + part.fullSize());
+            System.out.println("p=" + part.id() + ", size=" + part.fullSize());
 
             long startPageId = ((PageMemoryEx)pageMem).partitionMetaPageId(grpId, part.id());
 
             PageStore store =
                     ((FilePageStoreManager)encCache.context().shared().pageStore()).getStore(cacheId, part.id());
 
-            GridCursor<Long> pageScanner = new DirectDataPageScanCursor(store, grpId, pageMem, startPageId);
+            IgniteInClosure2X<Long, Long> clo = new IgniteInClosure2X<Long, Long>() {
+                @Override public void applyx(Long pageId, Long pageAddr) throws IgniteCheckedException {
+                    byte[] pageBytes = PageUtils.getBytes(pageAddr, 0, store.getPageSize());
+
+                    ByteBuffer inBuf = ByteBuffer.wrap(pageBytes);
+
+                    ByteBuffer encryptedBuf = ByteBuffer.allocate(store.getPageSize() + 32);
+
+//                    assert encryptedBuf.remaining() > 4112 : encryptedBuf.remaining();
+
+                    System.out.println(">>>> custom enc: " + pageId);
+
+                    getSpi().encrypt(inBuf, encKey, encryptedBuf);
+
+                    System.out.println(bytesToHex(encryptedBuf.array()));
+                }
+            };
+
+            GridCursor<Long> pageScanner = new DirectDataPageScanCursor(store, grpId, pageMem, startPageId, clo);
 
             while (pageScanner.next()) {
                 System.out.println(pageScanner.get());
@@ -1349,13 +1384,16 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
 
         final long startPageId;
 
-        DirectDataPageScanCursor(PageStore pageStore, int grpId, PageMemory pageMem, long startPageId) {
+        final IgniteInClosure2X<Long, Long> clo;
+
+        DirectDataPageScanCursor(PageStore pageStore, int grpId, PageMemory pageMem, long startPageId, IgniteInClosure2X<Long, Long> clo) {
             this.pageStore = pageStore;
 
             pagesCnt = pageStore.pages();
             this.grpId = grpId;
             this.pageMem = pageMem;
             this.startPageId = startPageId;
+            this.clo = clo;
         }
 
         /** {@inheritDoc} */
@@ -1377,22 +1415,25 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
                 long page = pageMem.acquirePage(grpId, pageId);
 
                 try {
-                    boolean skipVer = CacheDataRowStore.getSkipVersion();
+//                    boolean skipVer = CacheDataRowStore.getSkipVersion();
 
                     long pageAddr = ((PageMemoryEx)pageMem).readLock(page, pageId, true, false);
 
                     try {
-                        // TODO https://issues.apache.org/jira/browse/IGNITE-11998.
-                        // Here we should also exclude fragmented pages that don't contain the head of the entry.
-                        if (PageIO.getType(pageAddr) != T_DATA)
-                            continue; // Not a data page.
+//                        // TODO https://issues.apache.org/jira/browse/IGNITE-11998.
+//                        // Here we should also exclude fragmented pages that don't contain the head of the entry.
+//                        if (PageIO.getType(pageAddr) != T_DATA)
+//                            continue; // Not a data page.
+//
+//                        DataPageIO io = PageIO.getPageIO(PageIO.getType(pageAddr), PageIO.getVersion(pageAddr));
 
-                        DataPageIO io = PageIO.getPageIO(T_DATA, PageIO.getVersion(pageAddr));
+                        clo.apply(pageId, pageAddr);
+//
+//                        int rowsCnt = io.getRowsCount(pageAddr);
+//
+//                        if (rowsCnt == 0)
+//                            continue; // Empty page.
 
-                        int rowsCnt = io.getRowsCount(pageAddr);
-
-                        if (rowsCnt == 0)
-                            continue; // Empty page.
 
                         curPageAddr = pageAddr;
 

@@ -77,6 +77,9 @@ public class CacheKeyChangeTest extends AbstractEncryptionTest {
 
         createEncryptedCache(node1, node2, cacheName(), null);
 
+        forceCheckpoint(node1);
+        forceCheckpoint(node2);
+
         node1.context().encryption().reencrypt(cacheName());
 
         //node1.cache()

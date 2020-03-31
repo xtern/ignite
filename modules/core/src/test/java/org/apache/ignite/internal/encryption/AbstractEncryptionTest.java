@@ -89,6 +89,8 @@ public abstract class AbstractEncryptionTest extends GridCommonAbstractTest {
 
         cfg.setEncryptionSpi(encSpi);
 
+        cfg.setConsistentId(name);
+
         DataStorageConfiguration memCfg = new DataStorageConfiguration()
             .setDefaultDataRegionConfiguration(
                 new DataRegionConfiguration()
@@ -192,10 +194,10 @@ public abstract class AbstractEncryptionTest extends GridCommonAbstractTest {
             GridTestUtils.waitForCondition(() -> grid1.cachex(cacheName()) != null, 2_000L);
 
         if (putData) {
-            for (long i = 0; i < 100; i++)
+            for (long i = 0; i < 104; i++)
                 cache.put(i, "" + i);
 
-            for (long i = 0; i < 100; i++)
+            for (long i = 0; i < 104; i++)
                 assertEquals("" + i, cache.get(i));
         }
     }
