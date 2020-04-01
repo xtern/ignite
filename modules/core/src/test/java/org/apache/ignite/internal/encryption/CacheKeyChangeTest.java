@@ -4,6 +4,7 @@ import java.io.Serializable;
 import java.util.Map;
 import java.util.UUID;
 import java.util.function.Function;
+import org.apache.ignite.IgniteCache;
 import org.apache.ignite.cache.CacheMode;
 import org.apache.ignite.configuration.DataRegionConfiguration;
 import org.apache.ignite.configuration.DataStorageConfiguration;
@@ -69,10 +70,10 @@ public class CacheKeyChangeTest extends AbstractEncryptionTest {
 
     @Test
     public void checkReencryption() throws Exception {
-        T2<IgniteEx, IgniteEx> grids = startTestGrids(true);
+        startTestGrids(true);
 
-        IgniteEx node1 = grids.get1();
-        IgniteEx node2 = grids.get2();
+        IgniteEx node1 = grid(GRID_0);
+        IgniteEx node2 = grid(GRID_1);
 
         createEncryptedCache(node1, node2, cacheName(), null);
 
@@ -80,8 +81,21 @@ public class CacheKeyChangeTest extends AbstractEncryptionTest {
         forceCheckpoint(node2);
 
         node1.context().encryption().reencrypt(cacheName());
+        node2.context().encryption().reencrypt(cacheName());
 
-        //node1.cache()
+        stopAllGrids(false);
+
+        startTestGrids(false);
+
+        node1 = grid(GRID_0);
+        node2 = grid(GRID_1);
+
+        IgniteCache<Object, Object> cache0 = node1.cache(ENCRYPTED_CACHE);
+
+        assert cache0 != null;
+
+        for (long i = 0; i < 104; i++)
+            assertEquals("" + i, cache0.get(i));
     }
 
     @Test

@@ -1341,47 +1341,45 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
 
                     byte[] pageBytes = PageUtils.getBytes(pageAddr, 0, pageSize);
 
-                    ByteBuffer pageBuf = ByteBuffer.wrap(pageBytes);
-
-                    pageBuf.order(ByteOrder.LITTLE_ENDIAN);
+                    ByteBuffer pageBuf = ByteBuffer.wrap(pageBytes).order(ByteOrder.LITTLE_ENDIAN);
 
                     pageBuf.position(0);
 
-                    int crc = FastCrc.calcCrc(pageBuf, pageSize);
-
-                    pageBuf.position(0);
-
-                    PageIO.setCrc(pageBuf, crc);
-
-                    pageBuf.position(0);
-
-                    pageBuf.limit(pageMem.realPageSize(grpId));
-
-//                    calcCrc32(pageBuf, getCrcSize(pageId, pageBuf));
-
-//                    ByteBuffer inBuf = ByteBuffer.wrap(pageBytes);
+//                    int crc = FastCrc.calcCrc(pageBuf, pageSize);
 //
-                    ByteBuffer encryptedBuf = ByteBuffer.allocate(store.getPageSize());
+//                    pageBuf.position(0);
 //
-////                    assert encryptedBuf.remaining() > 4112 : encryptedBuf.remaining();
+//                    PageIO.setCrc(pageBuf, crc);
 //
-//                    System.out.println(">>>> custom enc: " + pageId);
+//                    pageBuf.position(0);
 //
-                    getSpi().encrypt(pageBuf, encKey, encryptedBuf);
-
-                    pageBuf.position(0);
-
-//                    ByteBuffer encryptedBuf1 = ByteBuffer.allocate(store.getPageSize());
+//                    pageBuf.limit(pageMem.realPageSize(grpId));
 //
-//                    getSpi().encrypt(pageBuf, encKey, encryptedBuf1);
-
-//                    assert Arrays.equals(encryptedBuf.array(), encryptedBuf1.array());
-
-                    System.out.println("crc=" + Integer.toHexString(crc) + ", pageId=" + Long.toHexString(pageId) + " addr=" + Long.toHexString(pageAddr));
-                    System.out.println(bytesToHex(encryptedBuf.array()));
+////                    calcCrc32(pageBuf, getCrcSize(pageId, pageBuf));
+//
+////                    ByteBuffer inBuf = ByteBuffer.wrap(pageBytes);
+////
+//                    ByteBuffer encryptedBuf = ByteBuffer.allocate(store.getPageSize()).order(ByteOrder.LITTLE_ENDIAN);
+////
+//////                    assert encryptedBuf.remaining() > 4112 : encryptedBuf.remaining();
+////
+////                    System.out.println(">>>> custom enc: " + pageId);
+////
+//                    getSpi().encrypt(pageBuf, encKey, encryptedBuf);
+//
+////                    ByteBuffer encryptedBuf1 = ByteBuffer.allocate(store.getPageSize());
+////
+////                    getSpi().encrypt(pageBuf, encKey, encryptedBuf1);
+//
+////                    assert Arrays.equals(encryptedBuf.array(), encryptedBuf1.array());
+//
+////                    System.out.println("crc=" + Integer.toHexString(crc) + ", pageId=" + Long.toHexString(pageId) + " addr=" + Long.toHexString(pageAddr));
+////                    System.out.println(bytesToHex(encryptedBuf.array()));
+//
+//                    encryptedBuf.position(0);
 
                     // todo how to get tag
-//                    store.write(pageId, encryptedBuf, Integer.MAX_VALUE, false);
+                    store.write(pageId, pageBuf, Integer.MAX_VALUE, true);
                 }
             };
 
