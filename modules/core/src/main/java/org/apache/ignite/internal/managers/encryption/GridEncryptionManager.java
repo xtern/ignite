@@ -62,8 +62,6 @@ import org.apache.ignite.internal.processors.cache.persistence.metastorage.Metas
 import org.apache.ignite.internal.processors.cache.persistence.metastorage.ReadOnlyMetastorage;
 import org.apache.ignite.internal.processors.cache.persistence.metastorage.ReadWriteMetastorage;
 import org.apache.ignite.internal.processors.cache.persistence.pagemem.PageMemoryEx;
-import org.apache.ignite.internal.processors.cache.persistence.tree.io.PageIO;
-import org.apache.ignite.internal.processors.cache.persistence.wal.crc.FastCrc;
 import org.apache.ignite.internal.processors.cluster.IgniteChangeGlobalStateSupport;
 import org.apache.ignite.internal.util.distributed.DistributedProcess;
 import org.apache.ignite.internal.util.future.GridFinishedFuture;
@@ -88,7 +86,6 @@ import org.apache.ignite.spi.discovery.DiscoveryDataBag.JoiningNodeDiscoveryData
 import org.apache.ignite.spi.discovery.DiscoverySpi;
 import org.apache.ignite.spi.discovery.tcp.TcpDiscoverySpi;
 import org.apache.ignite.spi.encryption.EncryptionSpi;
-import org.apache.ignite.spi.encryption.keystore.KeystoreEncryptionKey;
 import org.jetbrains.annotations.Nullable;
 
 import static org.apache.ignite.IgniteSystemProperties.IGNITE_MASTER_KEY_NAME_TO_CHANGE_BEFORE_STARTUP;
@@ -99,6 +96,7 @@ import static org.apache.ignite.internal.GridComponent.DiscoveryDataExchangeType
 import static org.apache.ignite.internal.GridTopic.TOPIC_GEN_ENC_KEY;
 import static org.apache.ignite.internal.IgniteFeatures.MASTER_KEY_CHANGE;
 import static org.apache.ignite.internal.managers.communication.GridIoPolicy.SYSTEM_POOL;
+import static org.apache.ignite.internal.pagemem.PageIdAllocator.INDEX_PARTITION;
 import static org.apache.ignite.internal.util.distributed.DistributedProcess.DistributedProcessType.MASTER_KEY_CHANGE_FINISH;
 import static org.apache.ignite.internal.util.distributed.DistributedProcess.DistributedProcessType.MASTER_KEY_CHANGE_PREPARE;
 
@@ -560,6 +558,11 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
     public void groupKey(int grpId, byte[] encGrpKey) {
         assert !grpEncKeys.containsKey(grpId);
 
+        replaceKey(grpId, encGrpKey);
+    }
+
+    // todo sync properly
+    public void replaceKey(int grpId, byte[] encGrpKey) {
         Serializable encKey = withMasterKeyChangeReadLock(() -> getSpi().decryptKey(encGrpKey));
 
         synchronized (metaStorageMux) {
@@ -1311,106 +1314,52 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
         return buf.toString();
     }
 
-    public void reencrypt(String name) throws IgniteCheckedException {
+    public void reencrypt(String name, byte[] newKey) throws IgniteCheckedException {
         IgniteInternalCache encCache = ctx.cache().cache(name);
 
         int cacheId = encCache.context().cacheId();
         int grpId = encCache.context().groupId();
 
-        Serializable encKey = getSpi().decryptKey(knownEncryptionKeys().get(grpId));
+        // todo not all pages in memory
+        replaceKey(grpId, newKey);
 
-        assert encKey instanceof KeystoreEncryptionKey : encKey.getClass().getName();
-
-        assert encKey != null;
+//        Serializable grpKey = groupKey(grpId);
+//
+//        assert grpKey instanceof KeystoreEncryptionKey : grpKey.getClass().getName();
 
         PageMemory pageMem = encCache.context().group().dataRegion().pageMemory();
 
-        for (GridDhtLocalPartition part : encCache.context().topology().currentLocalPartitions()) {
-            System.out.println("p=" + part.id() + ", size=" + part.fullSize());
+        Collection<Integer> parts = F.concat(false, INDEX_PARTITION, F.viewReadOnly(encCache.context().topology().localPartitions(), GridDhtLocalPartition::id));
 
-            long startPageId = ((PageMemoryEx)pageMem).partitionMetaPageId(grpId, part.id());
+        for (int p : parts) {
+            long startPageId = ((PageMemoryEx)pageMem).partitionMetaPageId(grpId, p);
 
             PageStore store =
-                    ((FilePageStoreManager)encCache.context().shared().pageStore()).getStore(cacheId, part.id());
+                    ((FilePageStoreManager)encCache.context().shared().pageStore()).getStore(cacheId, p);
 
             int pageSize = store.getPageSize();
 
             IgniteInClosure2X<Long, Long> clo = new IgniteInClosure2X<Long, Long>() {
                 @Override public void applyx(Long pageId, Long pageAddr) throws IgniteCheckedException {
-                    //int encPageSize = GridCacheUtils.encryptedPageSize(pageSize, getSpi());
-
                     byte[] pageBytes = PageUtils.getBytes(pageAddr, 0, pageSize);
 
                     ByteBuffer pageBuf = ByteBuffer.wrap(pageBytes).order(ByteOrder.LITTLE_ENDIAN);
-
-                    pageBuf.position(0);
-
-//                    int crc = FastCrc.calcCrc(pageBuf, pageSize);
-//
-//                    pageBuf.position(0);
-//
-//                    PageIO.setCrc(pageBuf, crc);
-//
-//                    pageBuf.position(0);
-//
-//                    pageBuf.limit(pageMem.realPageSize(grpId));
-//
-////                    calcCrc32(pageBuf, getCrcSize(pageId, pageBuf));
-//
-////                    ByteBuffer inBuf = ByteBuffer.wrap(pageBytes);
-////
-//                    ByteBuffer encryptedBuf = ByteBuffer.allocate(store.getPageSize()).order(ByteOrder.LITTLE_ENDIAN);
-////
-//////                    assert encryptedBuf.remaining() > 4112 : encryptedBuf.remaining();
-////
-////                    System.out.println(">>>> custom enc: " + pageId);
-////
-//                    getSpi().encrypt(pageBuf, encKey, encryptedBuf);
-//
-////                    ByteBuffer encryptedBuf1 = ByteBuffer.allocate(store.getPageSize());
-////
-////                    getSpi().encrypt(pageBuf, encKey, encryptedBuf1);
-//
-////                    assert Arrays.equals(encryptedBuf.array(), encryptedBuf1.array());
-//
-////                    System.out.println("crc=" + Integer.toHexString(crc) + ", pageId=" + Long.toHexString(pageId) + " addr=" + Long.toHexString(pageAddr));
-////                    System.out.println(bytesToHex(encryptedBuf.array()));
-//
-//                    encryptedBuf.position(0);
 
                     // todo how to get tag
                     store.write(pageId, pageBuf, Integer.MAX_VALUE, true);
                 }
             };
 
-            GridCursor<Long> pageScanner = new DirectDataPageScanCursor(store, grpId, pageMem, startPageId, clo);
+            ctx.cache().context().database().checkpointReadLock();
 
-            while (pageScanner.next()) {
-                System.out.println(pageScanner.get());
+            try {
+                GridCursor<Long> pageScanner = new DirectDataPageScanCursor(store, grpId, pageMem, startPageId, clo);
+
+                while (pageScanner.next());
+            } finally {
+                ctx.cache().context().database().checkpointReadUnlock();
             }
         }
-        // DirectDataPageScanCursor
-//        for (GridDhtLocalPartition part : encCache.context().topology().currentLocalPartitions()) {
-//
-//            long startPageId = ((PageMemoryEx)pageMem).partitionMetaPageId(grpId, part.id());
-//
-//            GridCursor<? extends CacheDataRow> cursor = part.dataStore().cursor(cacheId, null, null);
-//
-//            while (cursor.next()) {
-//                CacheDataRow row = cursor.get();
-//
-//                long pageId = PageIdUtils.pageId(row.link());
-//
-//                System.out.println("p=" + row.partition() + " pageId=" + pageId);
-//
-//                PageStore store =
-//                    ((FilePageStoreManager)encCache.context().shared().pageStore()).getStore(cacheId, row.partition());
-//
-//
-//
-////                store.write();
-//            }
-//        }
     }
 
     static class DirectDataPageScanCursor implements GridCursor<Long> {

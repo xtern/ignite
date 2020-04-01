@@ -6,6 +6,7 @@ import java.util.UUID;
 import java.util.function.Function;
 import org.apache.ignite.IgniteCache;
 import org.apache.ignite.cache.CacheMode;
+import org.apache.ignite.cluster.ClusterState;
 import org.apache.ignite.configuration.DataRegionConfiguration;
 import org.apache.ignite.configuration.DataStorageConfiguration;
 import org.apache.ignite.configuration.IgniteConfiguration;
@@ -14,6 +15,7 @@ import org.apache.ignite.internal.IgniteInternalFuture;
 import org.apache.ignite.internal.util.distributed.DistributedProcess;
 import org.apache.ignite.internal.util.future.GridFutureAdapter;
 import org.apache.ignite.internal.util.typedef.T2;
+import org.apache.ignite.spi.encryption.EncryptionSpi;
 import org.junit.Test;
 
 import static org.apache.ignite.internal.util.distributed.DistributedProcess.DistributedProcessType.CACHE_KEY_CHANGE_PREPARE;
@@ -77,11 +79,18 @@ public class CacheKeyChangeTest extends AbstractEncryptionTest {
 
         createEncryptedCache(node1, node2, cacheName(), null);
 
-        forceCheckpoint(node1);
-        forceCheckpoint(node2);
+        forceCheckpoint();
 
-        node1.context().encryption().reencrypt(cacheName());
-        node2.context().encryption().reencrypt(cacheName());
+        node1.cluster().state(ClusterState.ACTIVE_READ_ONLY);
+
+        EncryptionSpi spi = node1.context().config().getEncryptionSpi();
+
+        byte[] key = node1.context().config().getEncryptionSpi().encryptKey(spi.create());
+
+        node1.context().encryption().reencrypt(cacheName(), key);
+        node2.context().encryption().reencrypt(cacheName(), key);
+
+        forceCheckpoint();
 
         stopAllGrids(false);
 

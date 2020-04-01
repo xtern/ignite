@@ -338,10 +338,10 @@ public class EncryptedFileIO implements FileIO {
      * @return Encryption key.
      */
     private Serializable key() {
-        if (encKey == null)
+//        if (encKey == null)
             return encKey = encMgr.groupKey(groupId);
 
-        return encKey;
+//        return encKey;
     }
 
     /** {@inheritDoc} */
