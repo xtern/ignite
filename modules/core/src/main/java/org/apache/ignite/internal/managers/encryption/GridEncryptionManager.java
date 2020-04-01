@@ -49,7 +49,6 @@ import org.apache.ignite.internal.managers.GridManagerAdapter;
 import org.apache.ignite.internal.managers.communication.GridMessageListener;
 import org.apache.ignite.internal.managers.eventstorage.DiscoveryEventListener;
 import org.apache.ignite.internal.pagemem.PageMemory;
-import org.apache.ignite.internal.pagemem.PageUtils;
 import org.apache.ignite.internal.pagemem.store.PageStore;
 import org.apache.ignite.internal.pagemem.wal.WALPointer;
 import org.apache.ignite.internal.pagemem.wal.record.MasterKeyChangeRecord;
@@ -174,6 +173,8 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
 
     /** Group encryption keys. */
     private final ConcurrentHashMap<Integer, Serializable> grpEncKeys = new ConcurrentHashMap<>();
+
+    private final ConcurrentHashMap<Integer, Serializable> grpReadKeys = new ConcurrentHashMap<>();
 
     /** Pending generate encryption key futures. */
     private ConcurrentMap<IgniteUuid, GenerateEncryptionKeyFuture> genEncKeyFuts = new ConcurrentHashMap<>();
@@ -549,6 +550,15 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
         return grpEncKeys.get(grpId);
     }
 
+    @Nullable public Serializable groupReadKey(int grpId) {
+        Serializable key = grpReadKeys.get(grpId);
+
+        if (key != null)
+            System.out.println("Found old key (decrypt)");
+
+        return key != null ? key : groupKey(grpId);
+    }
+
     /**
      * Store group encryption key.
      *
@@ -569,7 +579,13 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
             if (log.isDebugEnabled())
                 log.debug("Key added. [grp=" + grpId + "]");
 
-            grpEncKeys.put(grpId, encKey);
+            Serializable old = grpEncKeys.put(grpId, encKey);
+
+            if (old != null) {
+                System.out.println("add previous key");
+
+                grpReadKeys.put(grpId, old);
+            }
 
             writeToMetaStore(grpId, encGrpKey);
         }
@@ -1339,11 +1355,24 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
 
             int pageSize = store.getPageSize();
 
-            IgniteInClosure2X<Long, Long> clo = new IgniteInClosure2X<Long, Long>() {
-                @Override public void applyx(Long pageId, Long pageAddr) throws IgniteCheckedException {
-                    byte[] pageBytes = PageUtils.getBytes(pageAddr, 0, pageSize);
+//            IgniteInClosure2X<Long, Long> clo = new IgniteInClosure2X<Long, Long>() {
+//                @Override public void applyx(Long pageId, Long pageAddr) throws IgniteCheckedException {
+//                    byte[] pageBytes = PageUtils.getBytes(pageAddr, 0, pageSize);
+//
+//                    ByteBuffer pageBuf = ByteBuffer.wrap(pageBytes).order(ByteOrder.LITTLE_ENDIAN);
+//
+//                    // todo how to get tag
+//                    store.write(pageId, pageBuf, Integer.MAX_VALUE, true);
+//                }
+//            };
 
-                    ByteBuffer pageBuf = ByteBuffer.wrap(pageBytes).order(ByteOrder.LITTLE_ENDIAN);
+            IgniteInClosure2X<Long, ByteBuffer> clo = new IgniteInClosure2X<Long, ByteBuffer>() {
+                @Override public void applyx(Long pageId, ByteBuffer pageBuf) throws IgniteCheckedException {
+                    //byte[] pageBytes = PageUtils.getBytes(pageAddr, 0, pageSize);
+
+                    //ByteBuffer pageBuf = ByteBuffer.wrap(pageBytes).order(ByteOrder.LITTLE_ENDIAN);
+
+                    pageBuf.position(0);
 
                     // todo how to get tag
                     store.write(pageId, pageBuf, Integer.MAX_VALUE, true);
@@ -1353,12 +1382,27 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
             ctx.cache().context().database().checkpointReadLock();
 
             try {
-                GridCursor<Long> pageScanner = new DirectDataPageScanCursor(store, grpId, pageMem, startPageId, clo);
-
-                while (pageScanner.next());
+                scanFileStore(store, startPageId, clo);
             } finally {
                 ctx.cache().context().database().checkpointReadUnlock();
             }
+        }
+
+        grpReadKeys.remove(grpId);
+    }
+
+    private void scanFileStore(PageStore pageStore, long startPageId, IgniteInClosure2X<Long, ByteBuffer> clo) throws IgniteCheckedException {
+        int pagesCnt = pageStore.pages();
+        int pageSize = pageStore.getPageSize();
+
+        for (int n = 0; n < pagesCnt; n++) {
+            long pageId = startPageId + n;
+
+            ByteBuffer pageBuf = ByteBuffer.allocate(pageSize).order(ByteOrder.LITTLE_ENDIAN);
+
+            pageStore.read(pageId, pageBuf, false);
+
+            clo.applyx(pageId, pageBuf);
         }
     }
 
