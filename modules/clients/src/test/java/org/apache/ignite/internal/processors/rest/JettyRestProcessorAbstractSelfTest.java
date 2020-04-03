@@ -17,6 +17,7 @@
 
 package org.apache.ignite.internal.processors.rest;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.databind.JsonNode;
 import java.io.IOException;
 import java.io.Serializable;
@@ -27,11 +28,17 @@ import java.sql.Date;
 import java.sql.Time;
 import java.sql.Timestamp;
 import java.text.DateFormat;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Calendar;
 import java.util.Collection;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Iterator;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -342,6 +349,91 @@ public abstract class JettyRestProcessorAbstractSelfTest extends JettyRestProces
         assertEquals(p.getFirstName(), res.get("firstName").asText());
         assertEquals(p.getLastName(), res.get("lastName").asText());
         assertEquals(p.getSalary(), res.get("salary").asDouble());
+    }
+
+    /**
+     * @throws Exception If failed.
+     */
+    @Test
+    public void testPutSimpleBinary() throws Exception {
+        Person simple = new Person(1, "John", "Doe", 300);
+
+        String cacheName = "person";
+
+        String ret = content(cacheName, GridRestCommand.CACHE_PUT,
+            "keyType", "int",
+            "key", "300",
+            "valueType", Person.class.getName(),
+            "val", JSON_MAPPER.writeValueAsString(simple)
+        );
+
+        assertResponseSucceeded(ret, false);
+
+        ret = content(cacheName, GridRestCommand.CACHE_GET,
+            "keyType", "int",
+            "key", "300"
+        );
+
+        info("Get command result: " + ret);
+
+        JsonNode jsonNode = JSON_MAPPER.readTree(ret).get("response");
+
+        assertEquals(simple, JSON_MAPPER.treeToValue(jsonNode, Person.class));
+    }
+
+    /**
+     * @throws Exception If failed.
+     */
+    @Test
+    public void testPutComplexBinary() throws Exception {
+        String cacheName = "complex";
+
+        Person eprson = new Person(1, "John", "Doe", 300);
+
+        Complex complex = new Complex();
+
+        complex.setArray(new int[]{1,2,3});
+
+        List list = new ArrayList();
+
+        list.add(4);
+        list.add(5);
+        list.add(6);
+
+        complex.setList(list);
+        complex.setCol(new HashSet<>(list));
+        complex.setMap(new HashMap<>(F.asMap("key1", 1, "key2", 2)));
+        complex.setComplexId(1234567);
+        complex.setString("String value");
+        complex.setTimestamp(new Timestamp(Calendar.getInstance().getTime().getTime()));
+        complex.setPerson(eprson);
+        complex.setDate(Date.valueOf("1987-03-19"));
+
+        String dateStr = Date.valueOf("1987-03-19").toString();
+
+        String complexJson = JSON_MAPPER.writeValueAsString(complex);
+
+        info("Put: " + complexJson);
+
+        String ret = content(cacheName, GridRestCommand.CACHE_PUT,
+            "keyType", "int",
+            "key", "300",
+            "valueType", Complex.class.getName(),
+            "val", complexJson
+        );
+
+        assertResponseSucceeded(ret, false);
+
+        ret = content(cacheName, GridRestCommand.CACHE_GET,
+            "keyType", "int",
+            "key", "300"
+        );
+
+        info("Get command result: " + ret);
+
+        JsonNode jsonNode = JSON_MAPPER.readTree(ret).get("response");
+
+        assertEquals(complex, JSON_MAPPER.treeToValue(jsonNode, Complex.class));
     }
 
     /**
@@ -2753,6 +2845,12 @@ public abstract class JettyRestProcessorAbstractSelfTest extends JettyRestProces
         orgCache.put(1, o1);
         orgCache.put(2, o2);
 
+        CacheConfiguration<Integer, Complex> complexCacheCfg = new CacheConfiguration<>("complex");
+
+        complexCacheCfg.setIndexedTypes(Integer.class, Complex.class); // , Integer.class, Person.class
+
+        grid(0).getOrCreateCache(complexCacheCfg).clear();
+
         CacheConfiguration<Integer, Person> personCacheCfg = new CacheConfiguration<>("person");
 
         personCacheCfg.setIndexedTypes(Integer.class, Person.class);
@@ -2879,6 +2977,154 @@ public abstract class JettyRestProcessorAbstractSelfTest extends JettyRestProces
     }
 
     /**
+     * Complex entity.
+     */
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class Complex implements Serializable {
+        /** Person ID (indexed). */
+        @QuerySqlField(index = true)
+        private Integer complexId;
+
+        /** First name (not-indexed). */
+        @QuerySqlField
+        private String string;
+
+        @QuerySqlField
+        private Timestamp timestamp;
+
+        @QuerySqlField
+        private Date date;
+
+        private HashMap<String, Integer> map;
+
+        private int[] array;
+
+        private List<Integer> list;
+
+        private Set<Integer> col;
+
+        private Person person;
+
+        public HashMap<String, Integer> getMap() {
+            return map;
+        }
+
+        public void setMap(HashMap<String, Integer> map) {
+            this.map = map;
+        }
+
+        public int[] getArray() {
+            return array;
+        }
+
+        public void setArray(int[] array) {
+            this.array = array;
+        }
+
+        /**
+         * @return First name.
+         */
+        public String getString() {
+            return string;
+        }
+
+        /**
+         * @return Id.
+         */
+        public Integer getComplexId() {
+            return complexId;
+        }
+
+        public Timestamp getTimestamp() {
+            return timestamp;
+        }
+
+        public void setTimestamp(Timestamp timestamp) {
+            this.timestamp = timestamp;
+        }
+
+        public List getList() {
+            return list;
+        }
+
+        public void setList(List list) {
+            this.list = list;
+        }
+
+        public Set<Integer> getCol() {
+            return col;
+        }
+
+        public void setCol(Set<Integer> col) {
+            this.col = col;
+        }
+
+        public void setString(String string) {
+            this.string = string;
+        }
+
+        public void setComplexId(Integer complexId) {
+            this.complexId = complexId;
+        }
+
+        public Person getPerson() {
+            return person;
+        }
+
+        public void setPerson(Person person) {
+            this.person = person;
+        }
+
+        public void setDate(Date date) {
+            this.date = date;
+        }
+
+        public Date getDate() {
+            return date;
+        }
+
+        /** {@inheritDoc} */
+        @Override public boolean equals(Object o) {
+            if (this == o)
+                return true;
+            if (o == null || getClass() != o.getClass())
+                return false;
+            Complex complex = (Complex)o;
+            return Objects.equals(complexId, complex.complexId) &&
+                Objects.equals(string, complex.string) &&
+                Objects.equals(timestamp, complex.timestamp) &&
+                Objects.equals(date, complex.date) &&
+                Objects.equals(map, complex.map) &&
+                Arrays.equals(array, complex.array) &&
+                Objects.equals(list, complex.list) &&
+                Objects.equals(col, complex.col) &&
+                Objects.equals(person, complex.person);
+        }
+
+        /** {@inheritDoc} */
+        @Override public int hashCode() {
+            int result = Objects.hash(complexId, string, timestamp, date, map, list, col, person);
+            result = 31 * result + Arrays.hashCode(array);
+            return result;
+        }
+
+        /** {@inheritDoc} */
+        @Override public String toString() {
+            return "Complex{" +
+                "complexId=" + complexId +
+                ", string='" + string + '\'' +
+                ", timestamp=" + timestamp +
+                ", date=" + date +
+                ", map=" + map +
+                ", array=" + Arrays.toString(array) +
+                ", list=" + list +
+                ", col=" + col +
+                ", person=" + person +
+                '}';
+        }
+    }
+
+    /**
      * Person class.
      */
     public static class Person implements Serializable {
@@ -2891,7 +3137,7 @@ public abstract class JettyRestProcessorAbstractSelfTest extends JettyRestProces
 
         /** Organization id. */
         @QuerySqlField(index = true)
-        private Integer orgId;
+        private Integer organizationId;
 
         /** First name (not-indexed). */
         @QuerySqlField
@@ -2910,20 +3156,27 @@ public abstract class JettyRestProcessorAbstractSelfTest extends JettyRestProces
          * @param lastName Last name.
          * @param salary Salary.
          */
-        Person(Integer orgId, String firstName, String lastName, double salary) {
+        Person(Integer organizationId, String firstName, String lastName, double salary) {
             id = PERSON_ID++;
 
-            this.orgId = orgId;
+            this.organizationId = organizationId;
             this.firstName = firstName;
             this.lastName = lastName;
             this.salary = salary;
         }
 
         /**
+         * Default constructor to deserialize JSON..
+         */
+        Person() {
+            // No-op.
+        }
+
+        /**
          * @return Organization ID.
          */
         public Integer getOrganizationId() {
-            return orgId;
+            return organizationId;
         }
 
         /**
@@ -2953,6 +3206,36 @@ public abstract class JettyRestProcessorAbstractSelfTest extends JettyRestProces
          */
         public Integer getId() {
             return id;
+        }
+
+        /** {@inheritDoc} */
+        @Override public boolean equals(Object o) {
+            if (this == o)
+                return true;
+            if (o == null || getClass() != o.getClass())
+                return false;
+            Person person = (Person)o;
+            return Double.compare(person.salary, salary) == 0 &&
+                Objects.equals(id, person.id) &&
+                Objects.equals(organizationId, person.organizationId) &&
+                Objects.equals(firstName, person.firstName) &&
+                Objects.equals(lastName, person.lastName);
+        }
+
+        /** {@inheritDoc} */
+        @Override public int hashCode() {
+            return Objects.hash(id, organizationId, firstName, lastName, salary);
+        }
+
+        /** {@inheritDoc} */
+        @Override public String toString() {
+            return "Person{" +
+                "id=" + id +
+                ", organizationId=" + organizationId +
+                ", firstName='" + firstName + '\'' +
+                ", lastName='" + lastName + '\'' +
+                ", salary=" + salary +
+                '}';
         }
     }
 

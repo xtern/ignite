@@ -23,6 +23,8 @@ import java.io.InputStreamReader;
 import java.io.LineNumberReader;
 import java.net.URL;
 import java.net.URLConnection;
+import java.net.URLEncoder;
+import java.nio.charset.Charset;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -104,7 +106,7 @@ public abstract class JettyRestProcessorCommonSelfTest extends AbstractRestProce
         SB sb = new SB(restUrl());
 
         for (Map.Entry<String, String> e : params.entrySet())
-            sb.a(e.getKey()).a('=').a(e.getValue()).a('&');
+            sb.a(e.getKey()).a('=').a(URLEncoder.encode(e.getValue(), "utf-8")).a('&');
 
         URL url = new URL(sb.toString());
 

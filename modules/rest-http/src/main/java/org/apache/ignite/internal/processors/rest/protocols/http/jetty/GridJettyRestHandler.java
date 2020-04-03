@@ -18,6 +18,7 @@
 package org.apache.ignite.internal.processors.rest.protocols.http.jetty;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.BufferedInputStream;
 import java.io.ByteArrayOutputStream;
@@ -46,8 +47,14 @@ import javax.servlet.http.HttpServletResponse;
 import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.IgniteLogger;
 import org.apache.ignite.IgniteSystemProperties;
+import org.apache.ignite.binary.BinaryObject;
+import org.apache.ignite.binary.BinaryObjectBuilder;
 import org.apache.ignite.cache.CacheWriteSynchronizationMode;
 import org.apache.ignite.cluster.ClusterState;
+import org.apache.ignite.internal.GridKernalContext;
+import org.apache.ignite.internal.binary.BinaryClassDescriptor;
+import org.apache.ignite.internal.binary.BinaryFieldMetadata;
+import org.apache.ignite.internal.binary.BinaryTypeImpl;
 import org.apache.ignite.internal.processors.cache.CacheConfigurationOverride;
 import org.apache.ignite.internal.processors.rest.GridRestCommand;
 import org.apache.ignite.internal.processors.rest.GridRestProtocolHandler;
@@ -73,9 +80,28 @@ import org.apache.ignite.plugin.security.SecurityCredentials;
 import org.eclipse.jetty.server.Request;
 import org.eclipse.jetty.server.handler.AbstractHandler;
 import org.jetbrains.annotations.Nullable;
+import sun.reflect.generics.reflectiveObjects.NotImplementedException;
 
 import static java.lang.String.format;
 import static org.apache.ignite.IgniteSystemProperties.IGNITE_REST_GETALL_AS_ARRAY;
+import static org.apache.ignite.internal.binary.GridBinaryMarshaller.BOOLEAN_ARR;
+import static org.apache.ignite.internal.binary.GridBinaryMarshaller.BYTE_ARR;
+import static org.apache.ignite.internal.binary.GridBinaryMarshaller.CHAR_ARR;
+import static org.apache.ignite.internal.binary.GridBinaryMarshaller.COL;
+import static org.apache.ignite.internal.binary.GridBinaryMarshaller.DATE_ARR;
+import static org.apache.ignite.internal.binary.GridBinaryMarshaller.DECIMAL_ARR;
+import static org.apache.ignite.internal.binary.GridBinaryMarshaller.DOUBLE_ARR;
+import static org.apache.ignite.internal.binary.GridBinaryMarshaller.FLOAT_ARR;
+import static org.apache.ignite.internal.binary.GridBinaryMarshaller.INT_ARR;
+import static org.apache.ignite.internal.binary.GridBinaryMarshaller.LONG_ARR;
+import static org.apache.ignite.internal.binary.GridBinaryMarshaller.MAP;
+import static org.apache.ignite.internal.binary.GridBinaryMarshaller.OBJ;
+import static org.apache.ignite.internal.binary.GridBinaryMarshaller.OBJ_ARR;
+import static org.apache.ignite.internal.binary.GridBinaryMarshaller.SHORT_ARR;
+import static org.apache.ignite.internal.binary.GridBinaryMarshaller.STRING;
+import static org.apache.ignite.internal.binary.GridBinaryMarshaller.STRING_ARR;
+import static org.apache.ignite.internal.binary.GridBinaryMarshaller.UNREGISTERED_TYPE_ID;
+import static org.apache.ignite.internal.binary.GridBinaryMarshaller.UUID_ARR;
 import static org.apache.ignite.internal.client.GridClientCacheFlag.KEEP_BINARIES_MASK;
 import static org.apache.ignite.internal.processors.rest.GridRestCommand.CACHE_CONTAINS_KEYS;
 import static org.apache.ignite.internal.processors.rest.GridRestCommand.CACHE_GET_ALL;
@@ -152,6 +178,8 @@ public class GridJettyRestHandler extends AbstractHandler {
     /** */
     private final boolean getAllAsArray = IgniteSystemProperties.getBoolean(IGNITE_REST_GETALL_AS_ARRAY);
 
+    private final GridKernalContext ctx;
+
     /**
      * Creates new HTTP requests handler.
      *
@@ -159,10 +187,11 @@ public class GridJettyRestHandler extends AbstractHandler {
      * @param authChecker Authentication checking closure.
      * @param log Logger.
      */
-    GridJettyRestHandler(GridRestProtocolHandler hnd, IgniteClosure<String, Boolean> authChecker, IgniteLogger log) {
+    GridJettyRestHandler(GridKernalContext ctx, GridRestProtocolHandler hnd, IgniteClosure<String, Boolean> authChecker, IgniteLogger log) {
         assert hnd != null;
         assert log != null;
 
+        this.ctx = ctx;
         this.hnd = hnd;
         this.log = log;
         this.authChecker = authChecker;
@@ -556,15 +585,130 @@ public class GridJettyRestHandler extends AbstractHandler {
                     return IgniteUuid.fromString(s);
 
                 default:
-                    // No-op.
+                    if (ctx.cacheObjects().typeId(type) != UNREGISTERED_TYPE_ID)
+                        return convertToBinary(type, s);
             }
         }
         catch (Throwable e) {
             throw new IgniteCheckedException("Failed to convert value to specified type [type=" + type +
-                ", val=" + s + ", reason=" + e.getClass().getName() + ": " + e.getMessage() + "]");
+                ", val=" + s + ", reason=" + e.getClass().getName() + ": " + e.getMessage() + "]", e);
         }
 
         return obj;
+    }
+
+    /**
+     * Make binary object by JSON content.
+     *
+     * @param type Binary type name.
+     * @param json JSON content.
+     * @return Binary object.
+     * @throws IgniteCheckedException If failed.
+     * @throws IOException If jackson parser has failed.
+     */
+    private BinaryObject convertToBinary(String type, String json) throws IgniteCheckedException, IOException {
+        BinaryObjectBuilder builder = ctx.cacheObjects().builder(type);
+        BinaryTypeImpl binType = (BinaryTypeImpl)ctx.cacheObjects().binary().type(type);
+
+        assert binType != null : "type=" + type + ", json=" + json;
+
+        JsonNode tree = jsonMapper.readTree(json);
+
+        for (Map.Entry<String, BinaryFieldMetadata> e : binType.metadata().fieldsMap().entrySet()) {
+            String field = e.getKey();
+            JsonNode node = tree.get(field);
+
+            if (node == null)
+                continue;
+
+            Object val = extractJsonValue(node, field, e.getValue().typeId(), binType);
+
+            builder.setField(field, val);
+        }
+
+        return builder.build();
+    }
+
+    /**
+     * Extract and cast JSON node value into required object format.
+     *
+     * @param node JSON node.
+     * @param fieldName Field name.
+     * @param fieldType Field type.
+     * @param prntType Parent type.
+     * @return Extracted value.
+     * @throws JsonProcessingException if underlying input contains invalid content of type JsonParser supports.
+     * @throws IgniteCheckedException If failed.
+     */
+    private Object extractJsonValue(JsonNode node, String fieldName, int fieldType,
+        BinaryTypeImpl prntType) throws JsonProcessingException, IgniteCheckedException {
+
+        switch (fieldType) {
+            case STRING:
+                return node.asText();
+            case MAP:
+                return jsonMapper.treeToValue(node, Map.class);
+            case OBJ:
+            case BYTE_ARR:
+            case SHORT_ARR:
+            case INT_ARR:
+            case LONG_ARR:
+            case FLOAT_ARR:
+            case DOUBLE_ARR:
+            case CHAR_ARR:
+            case BOOLEAN_ARR:
+            case DECIMAL_ARR:
+            case DATE_ARR:
+            case UUID_ARR:
+            case STRING_ARR:
+            case OBJ_ARR:
+            case COL:
+                if (node.isArray())
+                    return toArray(jsonMapper.treeToValue(node, ArrayList.class), fieldType);
+
+                try {
+                    BinaryClassDescriptor binClsDesc = prntType.context().descriptorForTypeId(
+                        false,
+                        prntType.typeId(),
+                        null,
+                        false
+                    );
+
+                    String clsName = binClsDesc.describedClass().getDeclaredField(fieldName).getType().getName();
+
+                    return convert(clsName, node.isTextual() ? node.asText() : jsonMapper.writeValueAsString(node));
+                }
+                catch (NoSuchFieldException e) {
+                    throw new IgniteCheckedException(e);
+                }
+        }
+
+        return convert(prntType.fieldTypeName(fieldName), node.asText());
+    }
+
+    private Object toArray(ArrayList list, int typeId) {
+        switch (typeId) {
+            case INT_ARR:
+                return ((ArrayList<Integer>)list).stream().mapToInt(i -> i).toArray();
+            case LONG_ARR:
+                return ((ArrayList<Long>)list).stream().mapToLong(i -> i).toArray();
+            case DOUBLE_ARR:
+                return ((ArrayList<Double>)list).stream().mapToDouble(i -> i).toArray();
+            case STRING_ARR:
+            case OBJ_ARR:
+                return list.toArray();
+            case BYTE_ARR:
+            case SHORT_ARR:
+            case FLOAT_ARR:
+            case CHAR_ARR:
+            case BOOLEAN_ARR:
+            case DECIMAL_ARR:
+            case DATE_ARR:
+            case UUID_ARR:
+                throw new NotImplementedException();
+        }
+
+        return list;
     }
 
     /**
