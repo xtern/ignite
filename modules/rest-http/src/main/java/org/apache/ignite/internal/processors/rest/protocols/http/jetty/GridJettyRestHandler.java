@@ -585,8 +585,15 @@ public class GridJettyRestHandler extends AbstractHandler {
                     return IgniteUuid.fromString(s);
 
                 default:
-                    if (ctx.cacheObjects().typeId(type) != UNREGISTERED_TYPE_ID)
-                        return convertToBinary(type, s);
+                    if (ctx.cacheObjects().typeId(type) != UNREGISTERED_TYPE_ID) {
+                        BinaryTypeImpl binType = (BinaryTypeImpl)ctx.cacheObjects().binary().type(type);
+
+                        if (binType != null)
+                            return marshalByBinaryType(binType, s);
+                        else
+                            return marshalToBinary(type, jsonMapper.readTree(s));
+                    }
+
             }
         }
         catch (Throwable e) {
@@ -597,23 +604,65 @@ public class GridJettyRestHandler extends AbstractHandler {
         return obj;
     }
 
+    private Object marshalToBinary(String type, JsonNode tree) throws IOException {
+        BinaryObjectBuilder builder = ctx.cacheObjects().builder(type);
+
+        Iterator<Map.Entry<String, JsonNode>> itr = tree.fields();
+
+        while (itr.hasNext()) {
+            Map.Entry<String, JsonNode> e = itr.next();
+
+            String field = e.getKey();
+
+            builder.setField(field, extractJsonValue(type, field, e.getValue()));
+        }
+
+        return builder.build();
+    }
+
+    private Object extractJsonValue(String type, String field, JsonNode jsonNode) throws IOException {
+        switch (jsonNode.getNodeType()) {
+            case OBJECT:
+                return marshalToBinary(type + "." + field, jsonNode);
+            case ARRAY:
+                List<Object> list = new ArrayList<>(jsonNode.size());
+
+                Iterator<JsonNode> itr = jsonNode.elements();
+
+                while (itr.hasNext())
+                    list.add(extractJsonValue(type, field, itr.next()));
+
+                return list;
+            case BINARY:
+                return jsonNode.binaryValue();
+            case BOOLEAN:
+                return jsonNode.asBoolean();
+            case NUMBER:
+                return jsonNode.numberValue();
+            case STRING:
+                return jsonNode.asText();
+            default:
+                return null;
+        }
+    }
+
     /**
      * Make binary object by JSON content.
      *
-     * @param type Binary type name.
+     * @param binType Binary type.
      * @param json JSON content.
      * @return Binary object.
      * @throws IgniteCheckedException If failed.
      * @throws IOException If jackson parser has failed.
      */
-    private BinaryObject convertToBinary(String type, String json) throws IgniteCheckedException, IOException {
-        BinaryObjectBuilder builder = ctx.cacheObjects().builder(type);
-        BinaryTypeImpl binType = (BinaryTypeImpl)ctx.cacheObjects().binary().type(type);
+    private BinaryObject marshalByBinaryType(BinaryTypeImpl binType, String json) throws IgniteCheckedException, IOException {
+        assert binType != null;
 
-        assert binType != null : "type=" + type + ", json=" + json;
+        BinaryObjectBuilder builder = ctx.cacheObjects().builder(binType.typeName());
 
         JsonNode tree = jsonMapper.readTree(json);
 
+        // todo json fields length > metadata length
         for (Map.Entry<String, BinaryFieldMetadata> e : binType.metadata().fieldsMap().entrySet()) {
             String field = e.getKey();
             JsonNode node = tree.get(field);
@@ -621,7 +670,7 @@ public class GridJettyRestHandler extends AbstractHandler {
             if (node == null)
                 continue;
 
-            Object val = extractJsonValue(node, field, e.getValue().typeId(), binType);
+            Object val = extractJsonValueByType(node, field, e.getValue().typeId(), binType);
 
             builder.setField(field, val);
         }
@@ -640,7 +689,7 @@ public class GridJettyRestHandler extends AbstractHandler {
      * @throws JsonProcessingException if underlying input contains invalid content of type JsonParser supports.
      * @throws IgniteCheckedException If failed.
      */
-    private Object extractJsonValue(JsonNode node, String fieldName, int fieldType,
+    private Object extractJsonValueByType(JsonNode node, String fieldName, int fieldType,
         BinaryTypeImpl prntType) throws JsonProcessingException, IgniteCheckedException {
 
         switch (fieldType) {

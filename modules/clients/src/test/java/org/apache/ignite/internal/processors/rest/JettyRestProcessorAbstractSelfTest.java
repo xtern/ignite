@@ -17,7 +17,9 @@
 
 package org.apache.ignite.internal.processors.rest;
 
+import com.fasterxml.jackson.annotation.JsonAutoDetect;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.JsonNode;
 import java.io.IOException;
 import java.io.Serializable;
@@ -360,11 +362,15 @@ public abstract class JettyRestProcessorAbstractSelfTest extends JettyRestProces
 
         String cacheName = "person";
 
+        String simpleJson = JSON_MAPPER.writeValueAsString(simple);
+
+        info("Put: " + simpleJson);
+
         String ret = content(cacheName, GridRestCommand.CACHE_PUT,
             "keyType", "int",
             "key", "300",
             "valueType", Person.class.getName(),
-            "val", JSON_MAPPER.writeValueAsString(simple)
+            "val", simpleJson
         );
 
         assertResponseSucceeded(ret, false);
@@ -376,9 +382,133 @@ public abstract class JettyRestProcessorAbstractSelfTest extends JettyRestProces
 
         info("Get command result: " + ret);
 
-        JsonNode jsonNode = JSON_MAPPER.readTree(ret).get("response");
+        checkJson(ret, simple);
+    }
 
-        assertEquals(simple, JSON_MAPPER.treeToValue(jsonNode, Person.class));
+    /**
+     * @throws Exception If failed.
+     */
+    @Test
+    public void testPutUnregistered() throws Exception {
+        Outer unregistered = new Outer();
+
+        unregistered.setId(Long.MAX_VALUE);
+        unregistered.setName("unregistered");
+
+        doPutBinary(DEFAULT_CACHE_NAME, "300", unregistered);
+        Outer result = doGetBinary(DEFAULT_CACHE_NAME, "300", Outer.class);
+
+        assertEquals(unregistered, result);
+
+        Outer registered = new Outer();
+
+        registered.setId(1);
+        registered.setName("registered");
+        registered.setOptional(true);
+
+        doPutBinary(DEFAULT_CACHE_NAME, "301", registered);
+        result = doGetBinary(DEFAULT_CACHE_NAME, "301", Outer.class);
+
+        assertEquals(registered, result);
+    }
+
+    private Outer doGetBinary(String cacheName, String key, Class<Outer> cls) throws Exception {
+        String ret = content(cacheName, GridRestCommand.CACHE_GET,
+            "keyType", "int",
+            "key", key
+        );
+
+        info("Get command result: " + ret);
+
+        JsonNode res = assertResponseSucceeded(ret, false);
+
+        return JSON_MAPPER.treeToValue(res, Outer.class);
+    }
+
+    private void doPutBinary(String cacheName, String key, Object obj) throws Exception {
+        String json = JSON_MAPPER.writeValueAsString(obj);
+
+        info("Put: " + json);
+
+        String ret = content(cacheName, GridRestCommand.CACHE_PUT,
+            "keyType", "int",
+            "key", key,
+            "valueType", obj.getClass().getName(),
+            "val", json
+        );
+
+        info("Put command result: " + ret);
+
+        assertResponseSucceeded(ret, false);
+    }
+
+    @Test
+    public void testPutCircular() throws Exception {
+        // Test with circular reference.
+        CircularRef ref1 = new CircularRef(1, "Alex");
+        CircularRef ref2 = new CircularRef(2, "300");
+        CircularRef ref3 = new CircularRef(3, "220");
+
+        ref1.ref(ref2);
+
+        JSON_MAPPER.setVisibility(JSON_MAPPER.getSerializationConfig().getDefaultVisibilityChecker()
+            .withFieldVisibility(JsonAutoDetect.Visibility.ANY)
+            .withGetterVisibility(JsonAutoDetect.Visibility.NONE)
+            .withSetterVisibility(JsonAutoDetect.Visibility.NONE)
+            .withCreatorVisibility(JsonAutoDetect.Visibility.NONE));
+
+        String ref1Json = JSON_MAPPER.writeValueAsString(ref1);
+
+        info("Put: " + ref1Json);
+
+        assert ref1Json.length() > 10;
+
+        String ret = content(DEFAULT_CACHE_NAME, GridRestCommand.CACHE_PUT,
+            "keyType", "int",
+            "key", "220",
+            "valueType", CircularRef.class.getName(),
+            "val", ref1Json
+        );
+
+        assertResponseSucceeded(ret, false);
+
+        ret = content(DEFAULT_CACHE_NAME, GridRestCommand.CACHE_GET,
+            "keyType", "int",
+            "key", "220"
+        );
+
+        info("Get command result: " + ret);
+
+        JsonNode json = assertResponseSucceeded(ret, false);
+        assertEquals(ref1.name, json.get("name").asText());
+        assertEquals(ref1.ref.toString(), json.get("ref").toString());
+
+        ref2.ref(ref1);
+
+        jcache().put(222, ref1);
+
+        ret = content(DEFAULT_CACHE_NAME, GridRestCommand.CACHE_GET,
+            "keyType", "int",
+            "key", "222"
+        );
+
+        info("Get command result: " + ret);
+
+        assertResponseContainsError(ret, "Failed convert to JSON object for circular references");
+
+        ref1.ref(ref2);
+        ref2.ref(ref3);
+        ref3.ref(ref1);
+        jcache().put(223, ref1);
+
+        ret = content(DEFAULT_CACHE_NAME, GridRestCommand.CACHE_GET,
+            "keyType", "int",
+            "key", "223"
+        );
+
+        info("Get command result: " + ret);
+
+        assertResponseContainsError(ret, "Failed convert to JSON object for circular references");
     }
 
     /**
@@ -387,9 +517,6 @@ public abstract class JettyRestProcessorAbstractSelfTest extends JettyRestProces
     @Test
     public void testPutComplexBinary() throws Exception {
         String cacheName = "complex";
-
-        Person eprson = new Person(1, "John", "Doe", 300);
-
         Complex complex = new Complex();
 
         complex.setArray(new int[]{1,2,3});
@@ -403,13 +530,24 @@ public abstract class JettyRestProcessorAbstractSelfTest extends JettyRestProces
         complex.setList(list);
         complex.setCol(new HashSet<>(list));
         complex.setMap(new HashMap<>(F.asMap("key1", 1, "key2", 2)));
-        complex.setComplexId(1234567);
+        complex.setId(1234567);
         complex.setString("String value");
         complex.setTimestamp(new Timestamp(Calendar.getInstance().getTime().getTime()));
-        complex.setPerson(eprson);
-        complex.setDate(Date.valueOf("1987-03-19"));
 
-        String dateStr = Date.valueOf("1987-03-19").toString();
+        Outer outer = new Outer();
+        outer.setId(Long.MAX_VALUE);
+        outer.setName("outer");
+
+        Complex.Inner inner = complex.new Inner();
+        byte[] byteArr = {0, 1, 2};
+
+        inner.setData(byteArr);
+        inner.setId((short)12345);
+
+        complex.setOuter(outer);
+        complex.setInner(inner);
+
+        complex.setDate(Date.valueOf("1987-03-19"));
 
         String complexJson = JSON_MAPPER.writeValueAsString(complex);
 
@@ -2976,14 +3114,99 @@ public abstract class JettyRestProcessorAbstractSelfTest extends JettyRestProces
         }
     }
 
+    public static class Outer {
+        private long id;
+
+        private String name;
+
+        private Boolean optional;
+
+        public long getId() {
+            return id;
+        }
+
+        public void setId(long id) {
+            this.id = id;
+        }
+
+        public String getName() {
+            return name;
+        }
+
+        public void setName(String name) {
+            this.name = name;
+        }
+
+        public Boolean getOptional() {
+            return optional;
+        }
+
+        public void setOptional(Boolean optional) {
+            this.optional = optional;
+        }
+
+        @Override public boolean equals(Object o) {
+            if (this == o)
+                return true;
+            if (o == null || getClass() != o.getClass())
+                return false;
+            Outer outer = (Outer)o;
+            return id == outer.id &&
+                Objects.equals(name, outer.name) &&
+                Objects.equals(optional, outer.optional);
+        }
+
+        @Override public int hashCode() {
+            return Objects.hash(id, name, optional);
+        }
+    }
+
     /**
      * Complex entity.
      */
     @JsonIgnoreProperties(ignoreUnknown = true)
     public static class Complex implements Serializable {
+        public class Inner {
+            private short id;
+
+            private byte[] data;
+
+            public short getId() {
+                return id;
+            }
+
+            public void setId(short id) {
+                this.id = id;
+            }
+
+            public byte[] getData() {
+                return data;
+            }
+
+            public void setData(byte[] data) {
+                this.data = data;
+            }
+
+            @Override public boolean equals(Object o) {
+                if (this == o)
+                    return true;
+                if (o == null || getClass() != o.getClass())
+                    return false;
+                Inner inner = (Inner)o;
+                return id == inner.id &&
+                    Arrays.equals(data, inner.data);
+            }
+
+            @Override public int hashCode() {
+                int result = Objects.hash(id);
+                result = 31 * result + Arrays.hashCode(data);
+                return result;
+            }
+        }
+
         /** Person ID (indexed). */
         @QuerySqlField(index = true)
-        private Integer complexId;
+        private Integer id;
 
         /** First name (not-indexed). */
         @QuerySqlField
@@ -3003,7 +3226,9 @@ public abstract class JettyRestProcessorAbstractSelfTest extends JettyRestProces
 
         private Set<Integer> col;
 
-        private Person person;
+        private Outer outer;
+
+        private Inner inner;
 
         public HashMap<String, Integer> getMap() {
             return map;
@@ -3031,8 +3256,8 @@ public abstract class JettyRestProcessorAbstractSelfTest extends JettyRestProces
         /**
          * @return Id.
          */
-        public Integer getComplexId() {
-            return complexId;
+        public Integer getId() {
+            return id;
         }
 
         public Timestamp getTimestamp() {
@@ -3063,16 +3288,24 @@ public abstract class JettyRestProcessorAbstractSelfTest extends JettyRestProces
             this.string = string;
         }
 
-        public void setComplexId(Integer complexId) {
-            this.complexId = complexId;
+        public void setId(Integer id) {
+            this.id = id;
         }
 
-        public Person getPerson() {
-            return person;
+        public Outer getOuter() {
+            return outer;
         }
 
-        public void setPerson(Person person) {
-            this.person = person;
+        public void setOuter(Outer outer) {
+            this.outer = outer;
+        }
+
+        public Inner getInner() {
+            return inner;
+        }
+
+        public void setInner(Inner inner) {
+            this.inner = inner;
         }
 
         public void setDate(Date date) {
@@ -3090,7 +3323,7 @@ public abstract class JettyRestProcessorAbstractSelfTest extends JettyRestProces
             if (o == null || getClass() != o.getClass())
                 return false;
             Complex complex = (Complex)o;
-            return Objects.equals(complexId, complex.complexId) &&
+            return Objects.equals(id, complex.id) &&
                 Objects.equals(string, complex.string) &&
                 Objects.equals(timestamp, complex.timestamp) &&
                 Objects.equals(date, complex.date) &&
@@ -3098,12 +3331,13 @@ public abstract class JettyRestProcessorAbstractSelfTest extends JettyRestProces
                 Arrays.equals(array, complex.array) &&
                 Objects.equals(list, complex.list) &&
                 Objects.equals(col, complex.col) &&
-                Objects.equals(person, complex.person);
+                Objects.equals(outer, complex.outer) &&
+                Objects.equals(inner, complex.inner);
         }
 
         /** {@inheritDoc} */
         @Override public int hashCode() {
-            int result = Objects.hash(complexId, string, timestamp, date, map, list, col, person);
+            int result = Objects.hash(id, string, timestamp, date, map, list, col, outer, inner);
             result = 31 * result + Arrays.hashCode(array);
             return result;
         }
@@ -3111,7 +3345,7 @@ public abstract class JettyRestProcessorAbstractSelfTest extends JettyRestProces
         /** {@inheritDoc} */
         @Override public String toString() {
             return "Complex{" +
-                "complexId=" + complexId +
+                "complexId=" + id +
                 ", string='" + string + '\'' +
                 ", timestamp=" + timestamp +
                 ", date=" + date +
@@ -3119,7 +3353,8 @@ public abstract class JettyRestProcessorAbstractSelfTest extends JettyRestProces
                 ", array=" + Arrays.toString(array) +
                 ", list=" + list +
                 ", col=" + col +
-                ", person=" + person +
+                ", outer=" + outer +
+                ", inner=" + inner +
                 '}';
         }
     }
@@ -3137,7 +3372,8 @@ public abstract class JettyRestProcessorAbstractSelfTest extends JettyRestProces
 
         /** Organization id. */
         @QuerySqlField(index = true)
-        private Integer organizationId;
+        @JsonProperty("orgId")
+        private Integer orgId;
 
         /** First name (not-indexed). */
         @QuerySqlField
@@ -3156,27 +3392,20 @@ public abstract class JettyRestProcessorAbstractSelfTest extends JettyRestProces
          * @param lastName Last name.
          * @param salary Salary.
          */
-        Person(Integer organizationId, String firstName, String lastName, double salary) {
+        Person(Integer orgId, String firstName, String lastName, double salary) {
             id = PERSON_ID++;
 
-            this.organizationId = organizationId;
+            this.orgId = orgId;
             this.firstName = firstName;
             this.lastName = lastName;
             this.salary = salary;
         }
 
         /**
-         * Default constructor to deserialize JSON..
-         */
-        Person() {
-            // No-op.
-        }
-
-        /**
          * @return Organization ID.
          */
         public Integer getOrganizationId() {
-            return organizationId;
+            return orgId;
         }
 
         /**
@@ -3206,36 +3435,6 @@ public abstract class JettyRestProcessorAbstractSelfTest extends JettyRestProces
          */
         public Integer getId() {
             return id;
-        }
-
-        /** {@inheritDoc} */
-        @Override public boolean equals(Object o) {
-            if (this == o)
-                return true;
-            if (o == null || getClass() != o.getClass())
-                return false;
-            Person person = (Person)o;
-            return Double.compare(person.salary, salary) == 0 &&
-                Objects.equals(id, person.id) &&
-                Objects.equals(organizationId, person.organizationId) &&
-                Objects.equals(firstName, person.firstName) &&
-                Objects.equals(lastName, person.lastName);
-        }
-
-        /** {@inheritDoc} */
-        @Override public int hashCode() {
-            return Objects.hash(id, organizationId, firstName, lastName, salary);
-        }
-
-        /** {@inheritDoc} */
-        @Override public String toString() {
-            return "Person{" +
-                "id=" + id +
-                ", organizationId=" + organizationId +
-                ", firstName='" + firstName + '\'' +
-                ", lastName='" + lastName + '\'' +
-                ", salary=" + salary +
-                '}';
         }
     }
 
