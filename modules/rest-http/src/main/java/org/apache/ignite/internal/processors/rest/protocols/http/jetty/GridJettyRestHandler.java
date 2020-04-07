@@ -27,12 +27,14 @@ import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.LineNumberReader;
 import java.io.OutputStream;
+import java.lang.reflect.Array;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.security.cert.X509Certificate;
 import java.sql.Date;
 import java.sql.Time;
 import java.sql.Timestamp;
+import java.text.ParseException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Iterator;
@@ -40,6 +42,7 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.function.Function;
 import javax.servlet.ServletOutputStream;
 import javax.servlet.ServletRequest;
 import javax.servlet.http.HttpServletRequest;
@@ -55,6 +58,8 @@ import org.apache.ignite.internal.GridKernalContext;
 import org.apache.ignite.internal.binary.BinaryClassDescriptor;
 import org.apache.ignite.internal.binary.BinaryFieldMetadata;
 import org.apache.ignite.internal.binary.BinaryTypeImpl;
+import org.apache.ignite.internal.binary.BinaryUtils;
+import org.apache.ignite.internal.binary.GridBinaryMarshaller;
 import org.apache.ignite.internal.processors.cache.CacheConfigurationOverride;
 import org.apache.ignite.internal.processors.rest.GridRestCommand;
 import org.apache.ignite.internal.processors.rest.GridRestProtocolHandler;
@@ -80,28 +85,9 @@ import org.apache.ignite.plugin.security.SecurityCredentials;
 import org.eclipse.jetty.server.Request;
 import org.eclipse.jetty.server.handler.AbstractHandler;
 import org.jetbrains.annotations.Nullable;
-import sun.reflect.generics.reflectiveObjects.NotImplementedException;
 
 import static java.lang.String.format;
 import static org.apache.ignite.IgniteSystemProperties.IGNITE_REST_GETALL_AS_ARRAY;
-import static org.apache.ignite.internal.binary.GridBinaryMarshaller.BOOLEAN_ARR;
-import static org.apache.ignite.internal.binary.GridBinaryMarshaller.BYTE_ARR;
-import static org.apache.ignite.internal.binary.GridBinaryMarshaller.CHAR_ARR;
-import static org.apache.ignite.internal.binary.GridBinaryMarshaller.COL;
-import static org.apache.ignite.internal.binary.GridBinaryMarshaller.DATE_ARR;
-import static org.apache.ignite.internal.binary.GridBinaryMarshaller.DECIMAL_ARR;
-import static org.apache.ignite.internal.binary.GridBinaryMarshaller.DOUBLE_ARR;
-import static org.apache.ignite.internal.binary.GridBinaryMarshaller.FLOAT_ARR;
-import static org.apache.ignite.internal.binary.GridBinaryMarshaller.INT_ARR;
-import static org.apache.ignite.internal.binary.GridBinaryMarshaller.LONG_ARR;
-import static org.apache.ignite.internal.binary.GridBinaryMarshaller.MAP;
-import static org.apache.ignite.internal.binary.GridBinaryMarshaller.OBJ;
-import static org.apache.ignite.internal.binary.GridBinaryMarshaller.OBJ_ARR;
-import static org.apache.ignite.internal.binary.GridBinaryMarshaller.SHORT_ARR;
-import static org.apache.ignite.internal.binary.GridBinaryMarshaller.STRING;
-import static org.apache.ignite.internal.binary.GridBinaryMarshaller.STRING_ARR;
-import static org.apache.ignite.internal.binary.GridBinaryMarshaller.UNREGISTERED_TYPE_ID;
-import static org.apache.ignite.internal.binary.GridBinaryMarshaller.UUID_ARR;
 import static org.apache.ignite.internal.client.GridClientCacheFlag.KEEP_BINARIES_MASK;
 import static org.apache.ignite.internal.processors.rest.GridRestCommand.CACHE_CONTAINS_KEYS;
 import static org.apache.ignite.internal.processors.rest.GridRestCommand.CACHE_GET_ALL;
@@ -585,15 +571,12 @@ public class GridJettyRestHandler extends AbstractHandler {
                     return IgniteUuid.fromString(s);
 
                 default:
-                    if (ctx.cacheObjects().typeId(type) != UNREGISTERED_TYPE_ID) {
+                    if (ctx.cacheObjects().typeId(type) != GridBinaryMarshaller.UNREGISTERED_TYPE_ID) {
                         BinaryTypeImpl binType = (BinaryTypeImpl)ctx.cacheObjects().binary().type(type);
 
-                        if (binType != null)
-                            return marshalByBinaryType(binType, s);
-                        else
-                            return marshalToBinary(type, jsonMapper.readTree(s));
+                        return binType != null ?
+                            marshalByBinaryType(binType, s) : marshalToBinary(type, jsonMapper.readTree(s));
                     }
-
             }
         }
         catch (Throwable e) {
@@ -690,30 +673,57 @@ public class GridJettyRestHandler extends AbstractHandler {
      * @throws IgniteCheckedException If failed.
      */
     private Object extractJsonValueByType(JsonNode node, String fieldName, int fieldType,
-        BinaryTypeImpl prntType) throws JsonProcessingException, IgniteCheckedException {
+        BinaryTypeImpl prntType) throws IOException, IgniteCheckedException {
 
         switch (fieldType) {
-            case STRING:
+            case GridBinaryMarshaller.STRING:
                 return node.asText();
-            case MAP:
+            case GridBinaryMarshaller.MAP:
                 return jsonMapper.treeToValue(node, Map.class);
-            case OBJ:
-            case BYTE_ARR:
-            case SHORT_ARR:
-            case INT_ARR:
-            case LONG_ARR:
-            case FLOAT_ARR:
-            case DOUBLE_ARR:
-            case CHAR_ARR:
-            case BOOLEAN_ARR:
-            case DECIMAL_ARR:
-            case DATE_ARR:
-            case UUID_ARR:
-            case STRING_ARR:
-            case OBJ_ARR:
-            case COL:
+            case GridBinaryMarshaller.BYTE_ARR:
+                if (!node.isBinary()) {
+                    throw new IllegalArgumentException("Binary required [field=" + fieldName +
+                        ", type=" + node.getNodeType() + "]");
+                }
+
+                return node.binaryValue();
+            case GridBinaryMarshaller.SHORT_ARR:
+                return toArray(fieldType, node, JsonNode::shortValue);
+            case GridBinaryMarshaller.INT_ARR:
+                return toArray(fieldType, node, JsonNode::intValue);
+            case GridBinaryMarshaller.LONG_ARR:
+                return toArray(fieldType, node, JsonNode::longValue);
+            case GridBinaryMarshaller.FLOAT_ARR:
+                return toArray(fieldType, node, JsonNode::floatValue);
+            case GridBinaryMarshaller.DOUBLE_ARR:
+                return toArray(fieldType, node, JsonNode::doubleValue);
+            case GridBinaryMarshaller.DECIMAL_ARR:
+                return toArray(fieldType, node, JsonNode::decimalValue);
+            case GridBinaryMarshaller.BOOLEAN_ARR:
+                return toArray(fieldType, node, JsonNode::booleanValue);
+            case GridBinaryMarshaller.CHAR_ARR:
+                return node.asText().toCharArray();
+            case GridBinaryMarshaller.DATE_ARR:
+                return toArray(fieldType, node, n -> {
+                    String dateStr = n.asText();
+
+                    try {
+                        return jsonMapper.getDateFormat().parse(dateStr);
+                    }
+                    catch (ParseException e) {
+                        throw new IllegalArgumentException("Incompatible date format [format=" +
+                            jsonMapper.getDateFormat().toString() + ", value=" + dateStr + "]", e);
+                    }
+                });
+            case GridBinaryMarshaller.UUID_ARR:
+                return toArray(fieldType, node, n -> UUID.fromString(n.asText()));
+            case GridBinaryMarshaller.STRING_ARR:
+                return toArray(fieldType, node, JsonNode::asText);
+            case GridBinaryMarshaller.OBJ:
+            case GridBinaryMarshaller.OBJ_ARR:
+            case GridBinaryMarshaller.COL:
                 if (node.isArray())
-                    return toArray(jsonMapper.treeToValue(node, ArrayList.class), fieldType);
+                    return jsonMapper.treeToValue(node, ArrayList.class);
 
                 try {
                     BinaryClassDescriptor binClsDesc = prntType.context().descriptorForTypeId(
@@ -735,29 +745,17 @@ public class GridJettyRestHandler extends AbstractHandler {
         return convert(prntType.fieldTypeName(fieldName), node.asText());
     }
 
-    private Object toArray(ArrayList list, int typeId) {
-        switch (typeId) {
-            case INT_ARR:
-                return ((ArrayList<Integer>)list).stream().mapToInt(i -> i).toArray();
-            case LONG_ARR:
-                return ((ArrayList<Long>)list).stream().mapToLong(i -> i).toArray();
-            case DOUBLE_ARR:
-                return ((ArrayList<Double>)list).stream().mapToDouble(i -> i).toArray();
-            case STRING_ARR:
-            case OBJ_ARR:
-                return list.toArray();
-            case BYTE_ARR:
-            case SHORT_ARR:
-            case FLOAT_ARR:
-            case CHAR_ARR:
-            case BOOLEAN_ARR:
-            case DECIMAL_ARR:
-            case DATE_ARR:
-            case UUID_ARR:
-                throw new NotImplementedException();
-        }
+    private <T> Object toArray(int typeId, JsonNode jsonNode, Function<JsonNode, T> mapFunc) {
+        Class<?> arrCls = BinaryUtils.FLAG_TO_CLASS.get((byte)typeId);
 
-        return list;
+        assert arrCls != null : typeId;
+
+        Object arr = Array.newInstance(arrCls.getComponentType(), jsonNode.size());
+
+        for (int k = 0; k < jsonNode.size(); k++)
+            Array.set(arr, k, mapFunc.apply(jsonNode.get(k)));
+
+        return arr;
     }
 
     /**

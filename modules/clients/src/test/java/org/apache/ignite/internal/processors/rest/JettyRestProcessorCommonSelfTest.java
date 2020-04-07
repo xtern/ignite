@@ -25,6 +25,7 @@ import java.net.URL;
 import java.net.URLConnection;
 import java.net.URLEncoder;
 import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -40,6 +41,9 @@ import static org.apache.ignite.IgniteSystemProperties.IGNITE_JETTY_PORT;
  * Base class for testing Jetty REST protocol.
  */
 public abstract class JettyRestProcessorCommonSelfTest extends AbstractRestProcessorSelfTest {
+    /** Used to encode request parameters. */
+    protected static final String CHARSET = StandardCharsets.UTF_8.name();
+
     /** Grid count. */
     private static final int GRID_CNT = 3;
 
@@ -106,7 +110,7 @@ public abstract class JettyRestProcessorCommonSelfTest extends AbstractRestProce
         SB sb = new SB(restUrl());
 
         for (Map.Entry<String, String> e : params.entrySet())
-            sb.a(e.getKey()).a('=').a(URLEncoder.encode(e.getValue(), "utf-8")).a('&');
+            sb.a(e.getKey()).a('=').a(URLEncoder.encode(e.getValue(), CHARSET)).a('&');
 
         URL url = new URL(sb.toString());
 
