@@ -23,7 +23,6 @@ import com.fasterxml.jackson.databind.JsonNode;
 import java.io.IOException;
 import java.io.Serializable;
 import java.io.UnsupportedEncodingException;
-import java.net.URLEncoder;
 import java.sql.Date;
 import java.sql.Time;
 import java.sql.Timestamp;
@@ -364,6 +363,8 @@ public abstract class JettyRestProcessorAbstractSelfTest extends JettyRestProces
         info("Get command result: " + ret);
 
         checkJson(ret, simple);
+
+        initCache();
     }
 
     /**
@@ -622,13 +623,15 @@ public abstract class JettyRestProcessorAbstractSelfTest extends JettyRestProces
 
         assertCacheOperation(ret, sqlDate.toString());
 
-        jcache().put("timestampKey", new java.sql.Timestamp(utilDate.getTime()));
+        Timestamp ts = new Timestamp(utilDate.getTime());
+
+        jcache().put("timestampKey", ts);
 
         ret = content(DEFAULT_CACHE_NAME, GridRestCommand.CACHE_GET, "key", "timestampKey");
 
         info("Get timestamp: " + ret);
 
-        assertCacheOperation(ret, date);
+        assertCacheOperation(ret, ts.toString());
     }
 
     /**
@@ -1914,7 +1917,7 @@ public abstract class JettyRestProcessorAbstractSelfTest extends JettyRestProces
 
         ret = content(new VisorGatewayArgument(VisorQueryTask.class)
             .forNode(locNode)
-            .argument(VisorQueryTaskArg.class, "person", URLEncoder.encode("select * from Person", CHARSET),
+            .argument(VisorQueryTaskArg.class, "person", "select * from Person",
                 false, false, false, false, 1));
 
         info("VisorQueryTask result: " + ret);
@@ -2071,8 +2074,7 @@ public abstract class JettyRestProcessorAbstractSelfTest extends JettyRestProces
                 "</beans>";
 
         ret = content(new VisorGatewayArgument(VisorCacheStartTask.class)
-            .argument(VisorCacheStartTaskArg.class, false, "person2",
-                URLEncoder.encode(START_CACHE, CHARSET)));
+            .argument(VisorCacheStartTaskArg.class, false, "person2", START_CACHE));
 
         info("VisorCacheStartTask result: " + ret);
 
@@ -2600,10 +2602,10 @@ public abstract class JettyRestProcessorAbstractSelfTest extends JettyRestProces
         assertEquals(Time.valueOf("04:04:04"), cTime.get(Time.valueOf("03:03:03")));
 
         // Test timestamp type.
-        putTypedValue("Timestamp", "2018-02-18%2001:01:01", "2017-01-01%2002:02:02", STATUS_SUCCESS);
-        putTypedValue("java.sql.timestamp", "2018-01-01%2001:01:01", "2018-05-05%2005:05:05", STATUS_SUCCESS);
-        putTypedValue("timestamp", "error", "2018-03-18%2001:01:01", STATUS_FAILED);
-        putTypedValue("timestamp", "2018-03-18%2001:01:01", "error", STATUS_FAILED);
+        putTypedValue("Timestamp", "2018-02-18 01:01:01", "2017-01-01 02:02:02", STATUS_SUCCESS);
+        putTypedValue("java.sql.timestamp", "2018-01-01 01:01:01", "2018-05-05 05:05:05", STATUS_SUCCESS);
+        putTypedValue("timestamp", "error", "2018-03-18 01:01:01", STATUS_FAILED);
+        putTypedValue("timestamp", "2018-03-18 01:01:01", "error", STATUS_FAILED);
         putTypedValue("timestamp", "error", "error", STATUS_FAILED);
 
         IgniteCache<Timestamp, Timestamp> cTs = typedCache();
@@ -2758,8 +2760,8 @@ public abstract class JettyRestProcessorAbstractSelfTest extends JettyRestProces
         cTimestamp.put(Timestamp.valueOf("2018-02-18 01:01:01"), "test1");
         cTimestamp.put(Timestamp.valueOf("2018-01-01 01:01:01"), "test2");
 
-        getTypedValue("Timestamp", "2018-02-18%2001:01:01", "test1");
-        getTypedValue("java.sql.timestamp", "2018-01-01%2001:01:01", "test2");
+        getTypedValue("Timestamp", "2018-02-18 01:01:01", "test1");
+        getTypedValue("java.sql.timestamp", "2018-01-01 01:01:01", "test2");
 
         // Test UUID type.
         IgniteCache<UUID, UUID> cUUID = typedCache();
@@ -3533,7 +3535,7 @@ public abstract class JettyRestProcessorAbstractSelfTest extends JettyRestProces
                 first = false;
             }
 
-            put("p" + idx++, URLEncoder.encode(sb.toString(), CHARSET));
+            put("p" + idx++, sb.toString());
 
             return this;
         }

@@ -39,7 +39,7 @@ import static org.apache.ignite.IgniteSystemProperties.IGNITE_JETTY_PORT;
  */
 public abstract class JettyRestProcessorCommonSelfTest extends AbstractRestProcessorSelfTest {
     /** Used to encode request parameters. */
-    protected static final String CHARSET = StandardCharsets.UTF_8.name();
+    private static final String CHARSET = StandardCharsets.UTF_8.name();
 
     /** Grid count. */
     private static final int GRID_CNT = 3;
