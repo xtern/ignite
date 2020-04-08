@@ -34,7 +34,6 @@ import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
-import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
@@ -347,9 +346,14 @@ public abstract class JettyRestProcessorAbstractSelfTest extends JettyRestProces
         assertEquals(p.getSalary(), res.get("salary").asDouble());
     }
 
+    /**
+     * Test that after adding the object to the cache, it is available for query.
+     *
+     * @throws Exception If failed.
+     */
     @Test
-    public void testPutSimpleBinary() throws Exception {
-        Person simple = new Person(1, "John", "Doe", 300);
+    public void testPutJsonQueryEntity() throws Exception {
+        Person simple = new Person(100, "John", "Doe", 10000);
 
         String cacheName = "person";
 
@@ -364,10 +368,40 @@ public abstract class JettyRestProcessorAbstractSelfTest extends JettyRestProces
 
         checkJson(ret, simple);
 
+        String qry = "orgId = ?";
+
+        ret = content(cacheName, GridRestCommand.EXECUTE_SQL_QUERY,
+            "type", "Person",
+            "pageSize", "1",
+            "qry", qry,
+            "arg1", "100"
+        );
+
+        info("SQL command result: " + ret);
+
+        JsonNode items = validateJsonResponse(ret).get("items");
+
+        assertEquals(1, items.size());
+
+        assertFalse(queryCursorFound());
+
+        JsonNode pair = items.get(0);
+        assertNotNull(pair);
+
+        JsonNode val = pair.get("value");
+        assertNotNull(val);
+
+        assertEquals(simple.getOrganizationId().intValue(), val.get("orgId").intValue());
+        assertEquals(simple.getSalary(), val.get("salary").doubleValue());
+        assertEquals(simple.getFirstName(), val.get("firstName").textValue());
+        assertEquals(simple.getLastName(), val.get("lastName").textValue());
+
         initCache();
     }
 
     /**
+     * Test adding a new (unregistered) binary object.
+     *
      * @throws Exception If failed.
      */
     @Test
@@ -381,6 +415,7 @@ public abstract class JettyRestProcessorAbstractSelfTest extends JettyRestProces
         OuterClass result = getBinary(DEFAULT_CACHE_NAME, "300", OuterClass.class);
 
         assertEquals(unregistered, result);
+        assertEquals(unregistered, jcache().get(300));
 
         OuterClass registered = new OuterClass();
 
@@ -392,6 +427,7 @@ public abstract class JettyRestProcessorAbstractSelfTest extends JettyRestProces
         result = getBinary(DEFAULT_CACHE_NAME, "301", OuterClass.class);
 
         assertEquals(registered, result);
+        assertEquals(registered, jcache().get(301));
     }
 
     /**
@@ -405,7 +441,7 @@ public abstract class JettyRestProcessorAbstractSelfTest extends JettyRestProces
         complex.setArray(new int[] {1, 2, 3});
         complex.setLongArr(new long[] {Long.MIN_VALUE, 0, Long.MAX_VALUE});
 
-        List list = new ArrayList();
+        ArrayList list = new ArrayList();
 
         list.add(4);
         list.add(5);
@@ -421,13 +457,14 @@ public abstract class JettyRestProcessorAbstractSelfTest extends JettyRestProces
         OuterClass outer = new OuterClass();
         outer.setId(Long.MAX_VALUE);
         outer.setName("outer");
+//        outer.setMap(new HashMap<>(F.asMap("key1", 1, "key2", 2)));
 
         Complex.InnerClass inner = complex.new InnerClass();
         byte[] byteArr = {0, 1, 2};
 
-        inner.setData(byteArr);
-        inner.setId((short)12345);
-        inner.setChars(new char[] {'a', 'b', 'c'});
+        complex.setData(byteArr);
+        inner.setId(123.45d);
+        complex.setChars(new char[] {'a', 'b', 'c'});
 
         complex.setOuter(outer);
         complex.setInner(inner);
@@ -437,6 +474,30 @@ public abstract class JettyRestProcessorAbstractSelfTest extends JettyRestProces
         putBinary(cacheName, "300", complex);
 
         assertEquals(complex, getBinary(cacheName, "300", Complex.class));
+//        grid(0).cache(cacheName).put(300, complex);
+
+        String qry = "id = ?";
+
+        String ret = content(cacheName, GridRestCommand.EXECUTE_SQL_QUERY,
+            "type", "Complex",
+            "pageSize", "1",
+            "qry", qry,
+            "arg1", "1234567"
+        );
+
+        info("SQL command result: " + ret);
+
+        JsonNode res = validateJsonResponse(ret);
+
+        assertEquals(1, res.get("items").size());
+
+        assertFalse(queryCursorFound());
+
+        JsonNode pair = res.get("items").get(0);
+        assertNotNull(pair);
+
+        JsonNode val = pair.get("value");
+        assertNotNull(val);
     }
 
     /**
@@ -3017,6 +3078,8 @@ public abstract class JettyRestProcessorAbstractSelfTest extends JettyRestProces
 
         private Boolean optional;
 
+//        private HashMap<String, Integer> map;
+
         public long getId() {
             return id;
         }
@@ -3041,15 +3104,23 @@ public abstract class JettyRestProcessorAbstractSelfTest extends JettyRestProces
             this.optional = optional;
         }
 
+//        public HashMap<String, Integer> getMap() {
+//            return map;
+//        }
+//
+//        public void setMap(HashMap<String, Integer> map) {
+//            this.map = map;
+//        }
+
         @Override public boolean equals(Object o) {
             if (this == o)
                 return true;
             if (o == null || getClass() != o.getClass())
                 return false;
-            OuterClass outer = (OuterClass)o;
-            return id == outer.id &&
-                Objects.equals(name, outer.name) &&
-                Objects.equals(optional, outer.optional);
+            OuterClass aClass = (OuterClass)o;
+            return id == aClass.id &&
+                Objects.equals(name, aClass.name) &&
+                Objects.equals(optional, aClass.optional);
         }
 
         @Override public int hashCode() {
@@ -3071,35 +3142,35 @@ public abstract class JettyRestProcessorAbstractSelfTest extends JettyRestProces
             this.longArr = longArr;
         }
 
+        private byte[] data;
+
+        private char[] chars;
+
+        public void setData(byte[] data) {
+            this.data = data;
+        }
+
+        public byte[] getData() {
+            return data;
+        }
+
+        public char[] getChars() {
+            return chars;
+        }
+
+        public void setChars(char[] chars) {
+            this.chars = chars;
+        }
+
         public class InnerClass {
-            private short id;
+            private double id;
 
-            private byte[] data;
-
-            private char[] chars;
-
-            public short getId() {
+            public double getId() {
                 return id;
             }
 
-            public void setId(short id) {
+            public void setId(double id) {
                 this.id = id;
-            }
-
-            public byte[] getData() {
-                return data;
-            }
-
-            public void setData(byte[] data) {
-                this.data = data;
-            }
-
-            public char[] getChars() {
-                return chars;
-            }
-
-            public void setChars(char[] chars) {
-                this.chars = chars;
             }
 
             @Override public boolean equals(Object o) {
@@ -3108,16 +3179,11 @@ public abstract class JettyRestProcessorAbstractSelfTest extends JettyRestProces
                 if (o == null || getClass() != o.getClass())
                     return false;
                 InnerClass aClass = (InnerClass)o;
-                return id == aClass.id &&
-                    Arrays.equals(data, aClass.data) &&
-                    Arrays.equals(chars, aClass.chars);
+                return Double.compare(aClass.id, id) == 0;
             }
 
             @Override public int hashCode() {
-                int result = Objects.hash(id);
-                result = 31 * result + Arrays.hashCode(data);
-                result = 31 * result + Arrays.hashCode(chars);
-                return result;
+                return Objects.hash(id);
             }
         }
 
@@ -3141,9 +3207,9 @@ public abstract class JettyRestProcessorAbstractSelfTest extends JettyRestProces
 
         private long[] longArr;
 
-        private List<Integer> list;
+        private ArrayList<Integer> list;
 
-        private Set<Integer> col;
+        private HashSet<Integer> col;
 
         private OuterClass outer;
 
@@ -3187,19 +3253,19 @@ public abstract class JettyRestProcessorAbstractSelfTest extends JettyRestProces
             this.timestamp = timestamp;
         }
 
-        public List getList() {
+        public ArrayList getList() {
             return list;
         }
 
-        public void setList(List list) {
+        public void setList(ArrayList list) {
             this.list = list;
         }
 
-        public Set<Integer> getCol() {
+        public HashSet<Integer> getCol() {
             return col;
         }
 
-        public void setCol(Set<Integer> col) {
+        public void setCol(HashSet<Integer> col) {
             this.col = col;
         }
 

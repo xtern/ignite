@@ -165,11 +165,6 @@ public class IgniteBinaryObjectJsonDeserializer extends JsonDeserializer<BinaryO
                     return parser.getCodec().treeToValue(node, Map.class);
 
                 case GridBinaryMarshaller.BYTE_ARR:
-                    if (!node.isBinary()) {
-                        throw new IllegalArgumentException("Binary required [field=" + field +
-                            ", type=" + node.getNodeType() + "]");
-                    }
-
                     return node.binaryValue();
 
                 case GridBinaryMarshaller.SHORT_ARR:
@@ -218,20 +213,19 @@ public class IgniteBinaryObjectJsonDeserializer extends JsonDeserializer<BinaryO
                 case GridBinaryMarshaller.OBJ:
                 case GridBinaryMarshaller.OBJ_ARR:
                 case GridBinaryMarshaller.COL:
-                    if (node.isArray())
-                        return parser.getCodec().treeToValue(node, ArrayList.class);
+                    Class<?> cls = getFieldClass(parentType, field);
 
-                    try {
-                        BinaryClassDescriptor binClsDesc =
-                            parentType.context().descriptorForTypeId(false, parentType.typeId(),null,false);
+                    if (node.isArray()) {
+                        if (cls == null)
+                            cls = ArrayList.class;
 
-                        Class<?> cls = binClsDesc.describedClass().getDeclaredField(field).getType();
-
-                        return deserialize0(cls.getName(), node, parser);
+                        return parser.getCodec().treeToValue(node, cls);
                     }
-                    catch (NoSuchFieldException e) {
-                        throw new IOException(e);
-                    }
+
+                    if (cls == null)
+                        throw new IOException("Unable to deserialize field [name=" + field + ", type=" + type + "]");
+
+                    return deserialize0(cls.getName(), node, parser);
             }
 
             Class<?> sysCls = BinaryUtils.FLAG_TO_CLASS.get((byte)type);
@@ -239,6 +233,21 @@ public class IgniteBinaryObjectJsonDeserializer extends JsonDeserializer<BinaryO
             String typeName = sysCls == null ? parentType.fieldTypeName(field) : sysCls.getName();
 
             return deserialize0(typeName, node, parser);
+        }
+
+        private Class<?> getFieldClass(BinaryTypeImpl type, String field) {
+            try {
+                BinaryClassDescriptor binClsDesc =
+                    type.context().descriptorForTypeId(false, type.typeId(),null,false);
+
+                if (binClsDesc != null)
+                    return binClsDesc.describedClass().getDeclaredField(field).getType();
+            }
+            catch (NoSuchFieldException ignore) {
+                // No-op.
+            }
+
+            return null;
         }
 
         /**
@@ -298,8 +307,9 @@ public class IgniteBinaryObjectJsonDeserializer extends JsonDeserializer<BinaryO
                 Map.Entry<String, JsonNode> entry = itr.next();
 
                 String field = entry.getKey();
+                Object val = readValue(type, field, entry.getValue());
 
-                builder.setField(field, readValue(type, field, entry.getValue()));
+                builder.setField(field, val);
             }
 
             return builder.build();
