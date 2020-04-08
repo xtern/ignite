@@ -17,6 +17,8 @@
 
 package org.apache.ignite.internal.processors.rest;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
@@ -24,14 +26,9 @@ import java.io.LineNumberReader;
 import java.net.URL;
 import java.net.URLConnection;
 import java.net.URLEncoder;
-import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
 import java.util.Map;
-
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-
 import org.apache.ignite.internal.processors.rest.protocols.http.jetty.GridJettyObjectMapper;
 import org.apache.ignite.internal.util.typedef.internal.SB;
 
@@ -51,7 +48,7 @@ public abstract class JettyRestProcessorCommonSelfTest extends AbstractRestProce
     private static final int DFLT_REST_PORT = 8091;
 
     /** JSON to java mapper. */
-    protected static final ObjectMapper JSON_MAPPER = new GridJettyObjectMapper();
+    protected static final ObjectMapper JSON_MAPPER = new GridJettyObjectMapper(null);
 
     /** {@inheritDoc} */
     @Override protected void beforeTestsStarted() throws Exception {

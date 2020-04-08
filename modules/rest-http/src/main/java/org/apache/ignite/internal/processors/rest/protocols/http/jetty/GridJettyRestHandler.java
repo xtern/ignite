@@ -18,6 +18,7 @@
 package org.apache.ignite.internal.processors.rest.protocols.http.jetty;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.InjectableValues;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.BufferedInputStream;
@@ -27,14 +28,12 @@ import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.LineNumberReader;
 import java.io.OutputStream;
-import java.lang.reflect.Array;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.security.cert.X509Certificate;
 import java.sql.Date;
 import java.sql.Time;
 import java.sql.Timestamp;
-import java.text.ParseException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Iterator;
@@ -42,7 +41,6 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
-import java.util.function.Function;
 import javax.servlet.ServletOutputStream;
 import javax.servlet.ServletRequest;
 import javax.servlet.http.HttpServletRequest;
@@ -50,16 +48,10 @@ import javax.servlet.http.HttpServletResponse;
 import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.IgniteLogger;
 import org.apache.ignite.IgniteSystemProperties;
-import org.apache.ignite.binary.BinaryObject;
-import org.apache.ignite.binary.BinaryObjectBuilder;
 import org.apache.ignite.cache.CacheWriteSynchronizationMode;
 import org.apache.ignite.cluster.ClusterState;
 import org.apache.ignite.internal.GridKernalContext;
-import org.apache.ignite.internal.binary.BinaryClassDescriptor;
-import org.apache.ignite.internal.binary.BinaryFieldMetadata;
-import org.apache.ignite.internal.binary.BinaryTypeImpl;
-import org.apache.ignite.internal.binary.BinaryUtils;
-import org.apache.ignite.internal.binary.GridBinaryMarshaller;
+import org.apache.ignite.internal.binary.BinaryObjectImpl;
 import org.apache.ignite.internal.processors.cache.CacheConfigurationOverride;
 import org.apache.ignite.internal.processors.rest.GridRestCommand;
 import org.apache.ignite.internal.processors.rest.GridRestProtocolHandler;
@@ -181,7 +173,7 @@ public class GridJettyRestHandler extends AbstractHandler {
         this.hnd = hnd;
         this.log = log;
         this.authChecker = authChecker;
-        this.jsonMapper = new GridJettyObjectMapper();
+        this.jsonMapper = new GridJettyObjectMapper(ctx);
 
         // Init default page and favicon.
         try {
@@ -571,11 +563,18 @@ public class GridJettyRestHandler extends AbstractHandler {
                     return IgniteUuid.fromString(s);
 
                 default:
-                    if (ctx.cacheObjects().typeId(type) != GridBinaryMarshaller.UNREGISTERED_TYPE_ID) {
-                        BinaryTypeImpl binType = (BinaryTypeImpl)ctx.cacheObjects().binary().type(type);
+                    try {
+                        JsonNode tree = jsonMapper.readTree(s);
 
-                        return binType != null ?
-                            marshalByBinaryType(binType, s) : marshalToBinary(type, jsonMapper.readTree(s));
+                        if (tree.size() != 0) {
+                            InjectableValues.Std prop = new InjectableValues.Std()
+                                .addValue(IgniteBinaryObjectJsonDeserializer.BINARY_TYPE_PROPERTY, type);
+
+                            return jsonMapper.reader(prop).forType(BinaryObjectImpl.class).readValue(tree);
+                        }
+                    } catch (IOException e) {
+                        log.warning("Unable to parse JSON data, object will be stored as text [value=\"" + s +
+                            "\", reason=\"" + e.getMessage() + "\"]");
                     }
             }
         }
@@ -585,177 +584,6 @@ public class GridJettyRestHandler extends AbstractHandler {
         }
 
         return obj;
-    }
-
-    private Object marshalToBinary(String type, JsonNode tree) throws IOException {
-        BinaryObjectBuilder builder = ctx.cacheObjects().builder(type);
-
-        Iterator<Map.Entry<String, JsonNode>> itr = tree.fields();
-
-        while (itr.hasNext()) {
-            Map.Entry<String, JsonNode> e = itr.next();
-
-            String field = e.getKey();
-
-            builder.setField(field, extractJsonValue(type, field, e.getValue()));
-        }
-
-        return builder.build();
-    }
-
-    private Object extractJsonValue(String type, String field, JsonNode jsonNode) throws IOException {
-        switch (jsonNode.getNodeType()) {
-            case OBJECT:
-                return marshalToBinary(type + "." + field, jsonNode);
-            case ARRAY:
-                List<Object> list = new ArrayList<>(jsonNode.size());
-
-                Iterator<JsonNode> itr = jsonNode.elements();
-
-                while (itr.hasNext())
-                    list.add(extractJsonValue(type, field, itr.next()));
-
-                return list;
-            case BINARY:
-                return jsonNode.binaryValue();
-            case BOOLEAN:
-                return jsonNode.asBoolean();
-            case NUMBER:
-                return jsonNode.numberValue();
-            case STRING:
-                return jsonNode.asText();
-            default:
-                return null;
-        }
-    }
-
-    /**
-     * Make binary object by JSON content.
-     *
-     * @param binType Binary type.
-     * @param json JSON content.
-     * @return Binary object.
-     * @throws IgniteCheckedException If failed.
-     * @throws IOException If jackson parser has failed.
-     */
-    private BinaryObject marshalByBinaryType(BinaryTypeImpl binType, String json) throws IgniteCheckedException, IOException {
-        assert binType != null;
-
-        BinaryObjectBuilder builder = ctx.cacheObjects().builder(binType.typeName());
-
-        JsonNode tree = jsonMapper.readTree(json);
-
-        // todo json fields length > metadata length
-        for (Map.Entry<String, BinaryFieldMetadata> e : binType.metadata().fieldsMap().entrySet()) {
-            String field = e.getKey();
-            JsonNode node = tree.get(field);
-
-            if (node == null)
-                continue;
-
-            Object val = extractJsonValueByType(node, field, e.getValue().typeId(), binType);
-
-            builder.setField(field, val);
-        }
-
-        return builder.build();
-    }
-
-    /**
-     * Extract and cast JSON node value into required object format.
-     *
-     * @param node JSON node.
-     * @param fieldName Field name.
-     * @param fieldType Field type.
-     * @param prntType Parent type.
-     * @return Extracted value.
-     * @throws JsonProcessingException if underlying input contains invalid content of type JsonParser supports.
-     * @throws IgniteCheckedException If failed.
-     */
-    private Object extractJsonValueByType(JsonNode node, String fieldName, int fieldType,
-        BinaryTypeImpl prntType) throws IOException, IgniteCheckedException {
-
-        switch (fieldType) {
-            case GridBinaryMarshaller.STRING:
-                return node.asText();
-            case GridBinaryMarshaller.MAP:
-                return jsonMapper.treeToValue(node, Map.class);
-            case GridBinaryMarshaller.BYTE_ARR:
-                if (!node.isBinary()) {
-                    throw new IllegalArgumentException("Binary required [field=" + fieldName +
-                        ", type=" + node.getNodeType() + "]");
-                }
-
-                return node.binaryValue();
-            case GridBinaryMarshaller.SHORT_ARR:
-                return toArray(fieldType, node, JsonNode::shortValue);
-            case GridBinaryMarshaller.INT_ARR:
-                return toArray(fieldType, node, JsonNode::intValue);
-            case GridBinaryMarshaller.LONG_ARR:
-                return toArray(fieldType, node, JsonNode::longValue);
-            case GridBinaryMarshaller.FLOAT_ARR:
-                return toArray(fieldType, node, JsonNode::floatValue);
-            case GridBinaryMarshaller.DOUBLE_ARR:
-                return toArray(fieldType, node, JsonNode::doubleValue);
-            case GridBinaryMarshaller.DECIMAL_ARR:
-                return toArray(fieldType, node, JsonNode::decimalValue);
-            case GridBinaryMarshaller.BOOLEAN_ARR:
-                return toArray(fieldType, node, JsonNode::booleanValue);
-            case GridBinaryMarshaller.CHAR_ARR:
-                return node.asText().toCharArray();
-            case GridBinaryMarshaller.DATE_ARR:
-                return toArray(fieldType, node, n -> {
-                    String dateStr = n.asText();
-
-                    try {
-                        return jsonMapper.getDateFormat().parse(dateStr);
-                    }
-                    catch (ParseException e) {
-                        throw new IllegalArgumentException("Incompatible date format [format=" +
-                            jsonMapper.getDateFormat().toString() + ", value=" + dateStr + "]", e);
-                    }
-                });
-            case GridBinaryMarshaller.UUID_ARR:
-                return toArray(fieldType, node, n -> UUID.fromString(n.asText()));
-            case GridBinaryMarshaller.STRING_ARR:
-                return toArray(fieldType, node, JsonNode::asText);
-            case GridBinaryMarshaller.OBJ:
-            case GridBinaryMarshaller.OBJ_ARR:
-            case GridBinaryMarshaller.COL:
-                if (node.isArray())
-                    return jsonMapper.treeToValue(node, ArrayList.class);
-
-                try {
-                    BinaryClassDescriptor binClsDesc = prntType.context().descriptorForTypeId(
-                        false,
-                        prntType.typeId(),
-                        null,
-                        false
-                    );
-
-                    String clsName = binClsDesc.describedClass().getDeclaredField(fieldName).getType().getName();
-
-                    return convert(clsName, node.isTextual() ? node.asText() : jsonMapper.writeValueAsString(node));
-                }
-                catch (NoSuchFieldException e) {
-                    throw new IgniteCheckedException(e);
-                }
-        }
-
-        return convert(prntType.fieldTypeName(fieldName), node.asText());
-    }
-
-    private <T> Object toArray(int typeId, JsonNode jsonNode, Function<JsonNode, T> mapFunc) {
-        Class<?> arrCls = BinaryUtils.FLAG_TO_CLASS.get((byte)typeId);
-
-        assert arrCls != null : typeId;
-
-        Object arr = Array.newInstance(arrCls.getComponentType(), jsonNode.size());
-
-        for (int k = 0; k < jsonNode.size(); k++)
-            Array.set(arr, k, mapFunc.apply(jsonNode.get(k)));
-
-        return arr;
     }
 
     /**

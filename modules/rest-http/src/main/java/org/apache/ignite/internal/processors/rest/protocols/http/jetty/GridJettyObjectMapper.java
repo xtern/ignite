@@ -40,6 +40,7 @@ import java.text.DateFormat;
 import java.util.Locale;
 import org.apache.ignite.binary.BinaryObjectException;
 import org.apache.ignite.binary.BinaryType;
+import org.apache.ignite.internal.GridKernalContext;
 import org.apache.ignite.internal.binary.BinaryObjectImpl;
 import org.apache.ignite.internal.processors.cache.query.GridCacheSqlIndexMetadata;
 import org.apache.ignite.internal.processors.cache.query.GridCacheSqlMetadata;
@@ -55,7 +56,7 @@ public class GridJettyObjectMapper extends ObjectMapper {
     /**
      * Default constructor.
      */
-    public GridJettyObjectMapper() {
+    public GridJettyObjectMapper(GridKernalContext ctx) {
         super(null, new CustomSerializerProvider(), null);
 
         setDateFormat(DateFormat.getDateTimeInstance(DateFormat.DEFAULT, DateFormat.DEFAULT, Locale.US));
@@ -73,6 +74,7 @@ public class GridJettyObjectMapper extends ObjectMapper {
 
         module.addDeserializer(Timestamp.class, IGNITE_TIMESTAMP_DESERIALIZER);
         module.addDeserializer(Date.class, IGNITE_SQLDATE_DESERIALIZER);
+        module.addDeserializer(BinaryObjectImpl.class, new IgniteBinaryObjectJsonDeserializer(ctx));
 
         configure(SerializationFeature.FAIL_ON_EMPTY_BEANS, false);
 
