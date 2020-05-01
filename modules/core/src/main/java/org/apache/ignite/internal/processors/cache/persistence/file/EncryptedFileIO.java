@@ -264,7 +264,7 @@ public class EncryptedFileIO implements FileIO {
 
         encrypted.limit(encryptedDataSize());
 
-        encSpi.decryptNoPadding(encrypted, key(), destBuf);
+        encSpi.decryptNoPadding(encrypted, readKey(), destBuf);
 
         destBuf.put(zeroes); //Forcibly purge page buffer tail.
     }
@@ -338,10 +338,17 @@ public class EncryptedFileIO implements FileIO {
      * @return Encryption key.
      */
     private Serializable key() {
-        if (encKey == null)
-            return encKey = encMgr.groupKey(groupId);
+//        if (encKey == null)
+        return encMgr.groupKey(groupId);
 
-        return encKey;
+//        return encKey;
+    }
+
+    private Serializable readKey() {
+//        if (encKey == null)
+        return encMgr.groupReadKey(groupId);
+
+//        return encKey;
     }
 
     /** {@inheritDoc} */

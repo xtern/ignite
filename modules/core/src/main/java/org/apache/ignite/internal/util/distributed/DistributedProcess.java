@@ -417,6 +417,9 @@ public class DistributedProcess<I extends Serializable, R extends Serializable> 
          *
          * @see IgniteSnapshotManager
          */
-        END_SNAPSHOT
+        END_SNAPSHOT,
+
+
+        CACHE_KEY_CHANGE_PREPARE
     }
 }
