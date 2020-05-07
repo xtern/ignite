@@ -17,6 +17,7 @@
 
 package org.apache.ignite.internal.managers.encryption;
 
+import java.io.IOException;
 import java.io.Serializable;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
@@ -48,14 +49,19 @@ import org.apache.ignite.internal.IgniteInternalFuture;
 import org.apache.ignite.internal.managers.GridManagerAdapter;
 import org.apache.ignite.internal.managers.communication.GridMessageListener;
 import org.apache.ignite.internal.managers.eventstorage.DiscoveryEventListener;
+import org.apache.ignite.internal.pagemem.PageIdAllocator;
+import org.apache.ignite.internal.pagemem.PageIdUtils;
 import org.apache.ignite.internal.pagemem.PageMemory;
 import org.apache.ignite.internal.pagemem.store.PageStore;
 import org.apache.ignite.internal.pagemem.wal.WALPointer;
 import org.apache.ignite.internal.pagemem.wal.record.MasterKeyChangeRecord;
+import org.apache.ignite.internal.processors.affinity.GridAffinityAssignmentCache;
 import org.apache.ignite.internal.processors.cache.CacheGroupDescriptor;
+import org.apache.ignite.internal.processors.cache.DynamicCacheDescriptor;
 import org.apache.ignite.internal.processors.cache.IgniteInternalCache;
 import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtLocalPartition;
 import org.apache.ignite.internal.processors.cache.persistence.CacheDataRow;
+import org.apache.ignite.internal.processors.cache.persistence.file.FilePageStore;
 import org.apache.ignite.internal.processors.cache.persistence.file.FilePageStoreManager;
 import org.apache.ignite.internal.processors.cache.persistence.metastorage.MetastorageLifecycleListener;
 import org.apache.ignite.internal.processors.cache.persistence.metastorage.ReadOnlyMetastorage;
@@ -71,6 +77,7 @@ import org.apache.ignite.internal.util.lang.GridCursor;
 import org.apache.ignite.internal.util.lang.IgniteInClosure2X;
 import org.apache.ignite.internal.util.typedef.F;
 import org.apache.ignite.internal.util.typedef.T2;
+import org.apache.ignite.internal.util.typedef.internal.CU;
 import org.apache.ignite.internal.util.typedef.internal.S;
 import org.apache.ignite.internal.util.typedef.internal.U;
 import org.apache.ignite.lang.IgniteFuture;
@@ -1330,6 +1337,74 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
         return buf.toString();
     }
 
+    public void reencryptInactive(String name, byte[] newKey) throws IgniteCheckedException, IOException {
+        int cacheId = CU.cacheId(name);
+
+        // todo slow
+        DynamicCacheDescriptor desc = ctx.cache().cacheDescriptor(cacheId);
+
+        assert desc != null;
+
+        int parts = desc.cacheConfiguration().getAffinity().partitions();
+
+        int grpId = desc.groupId();
+
+        replaceKey(grpId, newKey);
+
+        // todo add index
+        for (int p = 0; p < parts; p++)
+            reencrypt0(grpId, p);
+
+        reencrypt0(grpId, INDEX_PARTITION);
+
+        grpReadKeys.remove(grpId);
+    }
+
+    private boolean reencrypt0(int grpId, int p) throws IgniteCheckedException, IOException {
+        FilePageStore pageStore = (FilePageStore)((FilePageStoreManager)ctx.cache().context().pageStore()).getStore(grpId, p);
+
+        if (!pageStore.exists())
+            return false;
+
+        pageStore.init();
+
+        System.out.println(">>> exists store: " + pageStore.size() +
+            " pageSize=" + pageStore.getPageSize() +
+            " p=" + pageStore.getFileAbsolutePath());
+
+        long metaPageId = PageIdUtils.pageId(p, PageIdAllocator.FLAG_DATA, 0);
+
+        IgniteInClosure2X<Long, ByteBuffer> closure = new IgniteInClosure2X<Long, ByteBuffer>() {
+            @Override public void applyx(Long pageId, ByteBuffer pageBuf) throws IgniteCheckedException {
+                pageBuf.position(0);
+
+                // todo how to get tag
+                pageStore.write(pageId, pageBuf, Integer.MAX_VALUE, true);
+            }
+        };
+
+        scanFileStore(pageStore, metaPageId, closure);
+
+        pageStore.close();
+
+        return true;
+    }
+
+    private void scanFileStore(PageStore pageStore, long startPageId, IgniteInClosure2X<Long, ByteBuffer> clo) throws IgniteCheckedException {
+        int pagesCnt = pageStore.pages();
+        int pageSize = pageStore.getPageSize();
+
+        for (int n = 0; n < pagesCnt; n++) {
+            long pageId = startPageId + n;
+
+            ByteBuffer pageBuf = ByteBuffer.allocate(pageSize).order(ByteOrder.LITTLE_ENDIAN);
+
+            pageStore.read(pageId, pageBuf, false);
+
+            clo.applyx(pageId, pageBuf);
+        }
+    }
+
     public void reencrypt(String name, byte[] newKey) throws IgniteCheckedException {
         IgniteInternalCache encCache = ctx.cache().cache(name);
 
@@ -1389,21 +1464,6 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
         }
 
         grpReadKeys.remove(grpId);
-    }
-
-    private void scanFileStore(PageStore pageStore, long startPageId, IgniteInClosure2X<Long, ByteBuffer> clo) throws IgniteCheckedException {
-        int pagesCnt = pageStore.pages();
-        int pageSize = pageStore.getPageSize();
-
-        for (int n = 0; n < pagesCnt; n++) {
-            long pageId = startPageId + n;
-
-            ByteBuffer pageBuf = ByteBuffer.allocate(pageSize).order(ByteOrder.LITTLE_ENDIAN);
-
-            pageStore.read(pageId, pageBuf, false);
-
-            clo.applyx(pageId, pageBuf);
-        }
     }
 
     static class DirectDataPageScanCursor implements GridCursor<Long> {

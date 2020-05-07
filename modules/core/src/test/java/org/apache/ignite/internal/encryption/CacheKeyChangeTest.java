@@ -62,10 +62,12 @@ public class CacheKeyChangeTest extends AbstractEncryptionTest {
         return cfg;
     }
 
+    /** {@inheritDoc} */
     @Override protected int partitions() {
         return 4;
     }
 
+    /** {@inheritDoc} */
     @Override protected CacheMode cacheMode() {
         return CacheMode.REPLICATED;
     }
@@ -103,6 +105,45 @@ public class CacheKeyChangeTest extends AbstractEncryptionTest {
 
         assert cache0 != null;
 
+        for (long i = 0; i < 104; i++)
+            assertEquals("" + i, cache0.get(i));
+    }
+
+    @Test
+    public void checkReencryptionInactive() throws Exception {
+        startTestGrids(true);
+
+        IgniteEx node1 = grid(GRID_0);
+        IgniteEx node2 = grid(GRID_1);
+
+        createEncryptedCache(node1, node2, cacheName(), null);
+
+        forceCheckpoint();
+
+        node1.cluster().state(ClusterState.INACTIVE);
+
+        EncryptionSpi spi = node1.context().config().getEncryptionSpi();
+
+        byte[] key = node1.context().config().getEncryptionSpi().encryptKey(spi.create());
+
+        node1.context().encryption().reencryptInactive(cacheName(), key);
+        node2.context().encryption().reencryptInactive(cacheName(), key);
+
+//        forceCheckpoint();
+
+        node1.cluster().state(ClusterState.ACTIVE);
+
+        //stopAllGrids(false);
+
+//        startTestGrids(false);
+//
+//        node1 = grid(GRID_0);
+//        node2 = grid(GRID_1);
+//
+        IgniteCache<Object, Object> cache0 = node1.cache(cacheName());
+//
+//        assert cache0 != null;
+//
         for (long i = 0; i < 104; i++)
             assertEquals("" + i, cache0.get(i));
     }
