@@ -55,7 +55,6 @@ import org.apache.ignite.internal.pagemem.PageMemory;
 import org.apache.ignite.internal.pagemem.store.PageStore;
 import org.apache.ignite.internal.pagemem.wal.WALPointer;
 import org.apache.ignite.internal.pagemem.wal.record.MasterKeyChangeRecord;
-import org.apache.ignite.internal.processors.affinity.GridAffinityAssignmentCache;
 import org.apache.ignite.internal.processors.cache.CacheGroupDescriptor;
 import org.apache.ignite.internal.processors.cache.DynamicCacheDescriptor;
 import org.apache.ignite.internal.processors.cache.IgniteInternalCache;
@@ -1461,6 +1460,85 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
             } finally {
                 ctx.cache().context().database().checkpointReadUnlock();
             }
+        }
+
+        grpReadKeys.remove(grpId);
+    }
+
+    /**
+     * Example of maring ditry ALL pages in pagestore.
+     * @param name
+     * @param newKey
+     * @throws IgniteCheckedException
+     */
+    public void rescan(String name, byte[] newKey) throws IgniteCheckedException {
+        IgniteInternalCache encCache = ctx.cache().cache(name);
+
+        int cacheId = encCache.context().cacheId();
+        int grpId = encCache.context().groupId();
+
+        // todo not all pages in memory
+        replaceKey(grpId, newKey);
+
+//        Serializable grpKey = groupKey(grpId);
+//
+//        assert grpKey instanceof KeystoreEncryptionKey : grpKey.getClass().getName();
+
+        PageMemoryEx pageMem = (PageMemoryEx)encCache.context().group().dataRegion().pageMemory();
+
+        Collection<Integer> parts = F.concat(false, INDEX_PARTITION, F.viewReadOnly(encCache.context().topology().localPartitions(), GridDhtLocalPartition::id));
+
+        for (int p : parts) {
+            long metaPageId = ((PageMemoryEx)pageMem).partitionMetaPageId(grpId, p);
+
+//            pageMem.acquirePage(grpId, pageId];
+
+            PageStore store =
+                ((FilePageStoreManager)encCache.context().shared().pageStore()).getStore(cacheId, p);
+
+            int pagesCnt = store.pages();
+            int pageSize = store.getPageSize();
+
+            ctx.cache().context().database().checkpointReadLock();
+
+            try {
+                System.out.println(">>> pages count=" + pagesCnt);
+
+                for (int n = 0; n < pagesCnt; n++) {
+                    long pageId = metaPageId + n;
+
+                    long page = pageMem.acquirePage(grpId, pageId);
+
+                    pageMem.writeLock(grpId, pageId, page, true);
+
+                    pageMem.writeUnlock(grpId, pageId, page, null, true, true);
+                }
+            } finally {
+                ctx.cache().context().database().checkpointReadUnlock();
+            }
+
+//            int pageSize = store.getPageSize();
+
+//            IgniteInClosure2X<Long, ByteBuffer> clo = new IgniteInClosure2X<Long, ByteBuffer>() {
+//                @Override public void applyx(Long pageId, ByteBuffer pageBuf) throws IgniteCheckedException {
+//                    //byte[] pageBytes = PageUtils.getBytes(pageAddr, 0, pageSize);
+//
+//                    //ByteBuffer pageBuf = ByteBuffer.wrap(pageBytes).order(ByteOrder.LITTLE_ENDIAN);
+//
+//                    pageBuf.position(0);
+//
+//                    // todo how to get tag
+//                    store.write(pageId, pageBuf, Integer.MAX_VALUE, true);
+//                }
+//            };
+//
+//            ctx.cache().context().database().checkpointReadLock();
+//
+//            try {
+//                scanFileStore(store, startPageId, clo);
+//            } finally {
+//                ctx.cache().context().database().checkpointReadUnlock();
+//            }
         }
 
         grpReadKeys.remove(grpId);
