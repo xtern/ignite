@@ -18,6 +18,8 @@
 package org.apache.ignite.internal;
 
 import java.util.BitSet;
+import java.util.Collection;
+import org.apache.ignite.IgniteEncryption;
 import org.apache.ignite.cluster.ClusterNode;
 import org.apache.ignite.cluster.ClusterState;
 import org.apache.ignite.internal.managers.encryption.GridEncryptionManager;
@@ -105,7 +107,10 @@ public enum IgniteFeatures {
     CHECK_INDEX_INLINE_SIZES(36),
 
     /** Distributed propagation of tx collisions dump interval. */
-    DISTRIBUTED_TX_COLLISIONS_DUMP(37);
+    DISTRIBUTED_TX_COLLISIONS_DUMP(37),
+
+    /** Master key change. See {@link IgniteEncryption#changeCacheKey(Collection)}. */
+    CACHE_KEY_CHANGE(31);
 
     /**
      * Unique feature identifier.

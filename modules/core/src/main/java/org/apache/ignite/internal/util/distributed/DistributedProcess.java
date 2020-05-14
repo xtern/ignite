@@ -153,6 +153,8 @@ public class DistributedProcess<I extends Serializable, R extends Serializable> 
                 else
                     p.resFut.onDone(f.result());
 
+                System.out.println("resFut -> onDOne");
+
                 if (!ctx.clientNode()) {
                     assert crd != null;
 
