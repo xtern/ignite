@@ -16,7 +16,6 @@ import org.apache.ignite.internal.IgniteInternalFuture;
 import org.apache.ignite.internal.util.distributed.DistributedProcess;
 import org.apache.ignite.internal.util.future.GridFutureAdapter;
 import org.apache.ignite.internal.util.typedef.T2;
-import org.apache.ignite.internal.util.typedef.internal.U;
 import org.apache.ignite.spi.encryption.EncryptionSpi;
 import org.junit.Test;
 
@@ -26,7 +25,7 @@ import static org.apache.ignite.spi.encryption.keystore.KeystoreEncryptionSpi.DE
 /**
  *
  */
-public class CacheKeyChangeTest extends AbstractEncryptionTest {
+public class GroupKeyChangeTest extends AbstractEncryptionTest {
     /** Non-persistent data region name. */
     private static final String NO_PERSISTENCE_REGION = "no-persistence-region";
 
@@ -75,6 +74,16 @@ public class CacheKeyChangeTest extends AbstractEncryptionTest {
     }
 
     @Test
+    public void checkCacheStart() throws Exception {
+        startTestGrids(true);
+
+        IgniteEx node1 = grid(GRID_0);
+        IgniteEx node2 = grid(GRID_1);
+
+        createEncryptedCache(node1, node2, cacheName(), null);
+    }
+
+    @Test
     public void checkDistribProcess() throws Exception {
         startTestGrids(true);
 
@@ -85,7 +94,7 @@ public class CacheKeyChangeTest extends AbstractEncryptionTest {
 
         int grpId = node1.cachex(cacheName()).context().groupId();
 
-        node1.encryption().changeCacheKey(Collections.singletonList(grpId));
+        node1.encryption().changeGroupKey(Collections.singletonList(grpId));
 
         System.out.println("change finished");
     }

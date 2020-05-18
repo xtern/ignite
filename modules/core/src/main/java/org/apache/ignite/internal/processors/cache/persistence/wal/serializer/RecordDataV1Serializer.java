@@ -190,7 +190,7 @@ public class RecordDataV1Serializer implements RecordDataSerializer {
         int clSz = plainSize(record);
 
         if (needEncryption(record))
-            return encSpi.encryptedSize(clSz) + 4 /* groupId */ + 4 /* data size */ + REC_TYPE_SIZE;
+            return encSpi.encryptedSize(clSz) + 4 /* groupId */ + 4 /* data size */ + REC_TYPE_SIZE + 1;
 
         return clSz;
     }
@@ -288,12 +288,20 @@ public class RecordDataV1Serializer implements RecordDataSerializer {
 
         in.readFully(encData);
 
-        Serializable key = encMgr.groupKey(grpId);
+        System.out.println(">>> remain " + in.buffer().remaining());
+
+        // todo binary comptibility
+        int keyId = in.readUnsignedByte();
+
+        // todo encMgr.groupKey(grpId, keyId);
+        Serializable key = encMgr.groupKey(grpId, keyId);
 
         if (key == null)
             return new T3<>(null, grpId, plainRecType);
 
         byte[] clData = encSpi.decrypt(encData, key);
+
+        System.out.println("read encrypted: " + clData.length);
 
         return new T3<>(new ByteBufferBackedDataInputImpl().buffer(ByteBuffer.wrap(clData)), grpId, plainRecType);
     }
@@ -333,17 +341,21 @@ public class RecordDataV1Serializer implements RecordDataSerializer {
     private void writeEncryptedData(int grpId, @Nullable RecordType plainRecType, ByteBuffer clData, ByteBuffer dst) {
         int dtSz = encSpi.encryptedSize(clData.capacity());
 
+//        System.out.println(">>> cap = " + clData.capacity());
+//        System.out.println(">>> dtSz = " + dtSz);
+
         dst.putInt(grpId);
         dst.putInt(dtSz);
 
         if (plainRecType != null)
             putRecordType(dst, plainRecType);
 
-        Serializable key = encMgr.groupKey(grpId);
+        T2<Serializable, Integer> pair = encMgr.groupKeyX(grpId);
 
-        assert key != null;
+        encSpi.encrypt(clData, pair.getKey(), dst);
 
-        encSpi.encrypt(clData, key, dst);
+        // todo put key identifier
+        dst.put((byte)pair.getValue().intValue());
     }
 
     /**
@@ -2136,7 +2148,7 @@ public class RecordDataV1Serializer implements RecordDataSerializer {
             int clSz = entrySize(entry);
 
             if (!encryptionDisabled && needEncryption(cctx.cacheContext(entry.cacheId()).groupId()))
-                sz += encSpi.encryptedSize(clSz) + 1 /* encrypted flag */ + 4 /* groupId */ + 4 /* data size */;
+                sz += encSpi.encryptedSize(clSz) + 1 /* encrypted flag */ + 4 /* groupId */ + 4 /* data size */ + 1 /* key identifier */;
             else {
                 sz += clSz;
 

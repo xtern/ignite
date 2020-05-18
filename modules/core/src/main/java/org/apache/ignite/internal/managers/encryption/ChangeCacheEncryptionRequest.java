@@ -17,15 +17,18 @@ public class ChangeCacheEncryptionRequest implements Serializable {
     /** Encryption keys. */
     private final byte[][] keys;
 
+    private final byte[] keyIds;
+
     /**
      * @param groups Groups.
      * @param keys Keys.
      */
-    public ChangeCacheEncryptionRequest(Collection<Integer> groups, byte[][] keys) {
+    public ChangeCacheEncryptionRequest(Collection<Integer> groups, byte[][] keys, byte[] keyIds) {
         reqId = UUID.randomUUID();
 
         this.groups = groups;
         this.keys = keys;
+        this.keyIds = keyIds;
     }
 
     public UUID requestId() {
@@ -39,4 +42,6 @@ public class ChangeCacheEncryptionRequest implements Serializable {
     public byte[][] keys() {
         return keys;
     }
+
+    public byte[] keyIdentifiers() { return keyIds; }
 }

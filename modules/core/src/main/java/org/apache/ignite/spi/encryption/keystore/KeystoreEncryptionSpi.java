@@ -254,8 +254,6 @@ public class KeystoreEncryptionSpi extends IgniteSpiAdapter implements Encryptio
 
             cipher.init(ENCRYPT_MODE, keySpec, new IvParameterSpec(iv));
 
-//            System.out.println(">> remain: " + res.remaining());
-
             cipher.doFinal(data, res);
         }
         catch (ShortBufferException | InvalidAlgorithmParameterException | InvalidKeyException |

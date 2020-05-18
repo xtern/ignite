@@ -109,7 +109,7 @@ public enum IgniteFeatures {
     /** Distributed propagation of tx collisions dump interval. */
     DISTRIBUTED_TX_COLLISIONS_DUMP(37),
 
-    /** Master key change. See {@link IgniteEncryption#changeCacheKey(Collection)}. */
+    /** Master key change. See {@link IgniteEncryption#changeGroupKey(Collection)}. */
     CACHE_KEY_CHANGE(31);
 
     /**
