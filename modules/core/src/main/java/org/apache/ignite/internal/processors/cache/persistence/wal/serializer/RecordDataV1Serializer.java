@@ -288,8 +288,6 @@ public class RecordDataV1Serializer implements RecordDataSerializer {
 
         in.readFully(encData);
 
-        System.out.println(">>> remain " + in.buffer().remaining());
-
         // todo binary comptibility
         int keyId = in.readUnsignedByte();
 

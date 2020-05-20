@@ -1,7 +1,7 @@
 package org.apache.ignite.internal.managers.encryption;
 
 import java.io.Serializable;
-import java.util.Collection;
+import java.util.Objects;
 import java.util.UUID;
 
 public class ChangeCacheEncryptionRequest implements Serializable {
@@ -12,7 +12,7 @@ public class ChangeCacheEncryptionRequest implements Serializable {
     private final UUID reqId;
 
     /** Encrypted master key name. */
-    private final Collection<Integer> groups;
+    private final int[] groups;
 
     /** Encryption keys. */
     private final byte[][] keys;
@@ -23,7 +23,7 @@ public class ChangeCacheEncryptionRequest implements Serializable {
      * @param groups Groups.
      * @param keys Keys.
      */
-    public ChangeCacheEncryptionRequest(Collection<Integer> groups, byte[][] keys, byte[] keyIds) {
+    public ChangeCacheEncryptionRequest(int[] groups, byte[][] keys, byte[] keyIds) {
         reqId = UUID.randomUUID();
 
         this.groups = groups;
@@ -35,7 +35,7 @@ public class ChangeCacheEncryptionRequest implements Serializable {
         return this.reqId;
     }
 
-    public Collection<Integer> groups() {
+    public int[] groups() {
         return groups;
     }
 
@@ -44,4 +44,18 @@ public class ChangeCacheEncryptionRequest implements Serializable {
     }
 
     public byte[] keyIdentifiers() { return keyIds; }
+
+    @Override public boolean equals(Object o) {
+        if (this == o)
+            return true;
+
+        if (o == null || getClass() != o.getClass())
+            return false;
+
+        return Objects.equals(reqId, ((ChangeCacheEncryptionRequest)o).reqId);
+    }
+
+    @Override public int hashCode() {
+        return Objects.hash(reqId);
+    }
 }

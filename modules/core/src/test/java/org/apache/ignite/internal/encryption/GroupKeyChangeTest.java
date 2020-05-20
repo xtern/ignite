@@ -13,13 +13,15 @@ import org.apache.ignite.configuration.DataStorageConfiguration;
 import org.apache.ignite.configuration.IgniteConfiguration;
 import org.apache.ignite.internal.IgniteEx;
 import org.apache.ignite.internal.IgniteInternalFuture;
+import org.apache.ignite.internal.processors.cache.IgniteInternalCache;
 import org.apache.ignite.internal.util.distributed.DistributedProcess;
 import org.apache.ignite.internal.util.future.GridFutureAdapter;
 import org.apache.ignite.internal.util.typedef.T2;
 import org.apache.ignite.spi.encryption.EncryptionSpi;
+import org.jetbrains.annotations.Nullable;
 import org.junit.Test;
 
-import static org.apache.ignite.internal.util.distributed.DistributedProcess.DistributedProcessType.CACHE_KEY_CHANGE_PREPARE;
+import static org.apache.ignite.internal.util.distributed.DistributedProcess.DistributedProcessType.GROUP_KEY_CHANGE_PREPARE;
 import static org.apache.ignite.spi.encryption.keystore.KeystoreEncryptionSpi.DEFAULT_MASTER_KEY_NAME;
 
 /**
@@ -92,11 +94,35 @@ public class GroupKeyChangeTest extends AbstractEncryptionTest {
 
         createEncryptedCache(node1, node2, cacheName(), null);
 
-        int grpId = node1.cachex(cacheName()).context().groupId();
+        forceCheckpoint();
+
+        IgniteInternalCache<Object, Object> cache = node1.cachex(cacheName());
+
+        int grpId = cache.context().groupId();
 
         node1.encryption().changeGroupKey(Collections.singletonList(grpId));
 
         System.out.println("change finished");
+
+        cache.put(-1000, "-1000");
+
+        forceCheckpoint();
+
+        stopAllGrids();
+
+        node1 = startGrid(GRID_0);
+        startGrid(GRID_1);
+
+        node1.cluster().state(ClusterState.ACTIVE);
+
+        checkData(node1);
+
+        cache = node1.cachex(cacheName());
+
+        cache.put(-2000, "-2000");
+
+        assertEquals("-1000", cache.get(-1000));
+        assertEquals("-2000", cache.get(-2000));
     }
 
     @Test
@@ -210,90 +236,5 @@ public class GroupKeyChangeTest extends AbstractEncryptionTest {
 //
         for (long i = 0; i < 104; i++)
             assertEquals("" + i, cache0.get(i));
-    }
-
-    @Test
-    public void distributedKeyChange() throws Exception {
-        T2<IgniteEx, IgniteEx> grids = startTestGrids(true);
-
-        IgniteEx node1 = grids.get1();
-
-        IgniteEx node2 = grids.get2();
-
-        createEncryptedCache(node1, node2, cacheName(), null);
-
-        assertTrue(checkMasterKeyName(DEFAULT_MASTER_KEY_NAME));
-
-        CacheKeyChangeRequest req1 = new CacheKeyChangeRequest(node1.cluster().localNode().id());
-
-        CacheKeyChangeRequest req2 = new CacheKeyChangeRequest(node2.cluster().localNode().id());
-
-        Function<CacheKeyChangeRequest, IgniteInternalFuture<CacheKeyChangeResponse>> nodeFunc = (rq) -> {
-            GridFutureAdapter<CacheKeyChangeResponse> fut = new GridFutureAdapter<>();
-
-            log.info("Create response: " + rq.reqId);
-
-            CacheKeyChangeResponse res = new CacheKeyChangeResponse(rq.reqId());
-
-            fut.onDone(res);
-
-            return fut;
-        };
-
-        DistributedProcess<CacheKeyChangeRequest, CacheKeyChangeResponse> ps1 =
-            new DistributedProcess<>(node1.context(), CACHE_KEY_CHANGE_PREPARE, nodeFunc, this::finishPrepareCacheKeyChange);
-
-        DistributedProcess<CacheKeyChangeRequest, CacheKeyChangeResponse> ps2 =
-            new DistributedProcess<>(node2.context(), CACHE_KEY_CHANGE_PREPARE, nodeFunc, this::finishPrepareCacheKeyChange);
-
-        ps1.start(req1.reqId(), req1);
-
-//        ps2.start(req2.reqId(), req2);
-
-    }
-
-    private void finishPrepareCacheKeyChange(UUID id, Map<UUID, CacheKeyChangeResponse> res, Map<UUID, Exception> err) {
-//        if (!err.isEmpty()) {
-//            if (masterKeyChangeRequest != null && masterKeyChangeRequest.requestId().equals(id))
-//                masterKeyChangeRequest = null;
-//
-//            completeMasterKeyChangeFuture(id, err);
-//        }
-//        else if (isCoordinator())
-//            performMKChangeProc.start(id, masterKeyChangeRequest);
-
-        log.info(">xxx> finish prep [id=" + id + ", res=" + res + "]");
-    }
-
-    static class CacheKeyChangeRequest implements Serializable {
-        /** Serial version uid. */
-        private static final long serialVersionUID = 0L;
-
-        /** Request id. */
-        private final UUID reqId;
-
-        CacheKeyChangeRequest(UUID reqId) {
-            this.reqId = reqId;
-        }
-
-        public UUID reqId() {
-            return reqId;
-        }
-    }
-
-    static class CacheKeyChangeResponse implements Serializable {
-        /** Serial version uid. */
-        private static final long serialVersionUID = 0L;
-
-        /** Request id. */
-        private final UUID resId;
-
-        CacheKeyChangeResponse(UUID resId) {
-            this.resId = resId;
-        }
-
-        public UUID getResId() {
-            return resId;
-        }
     }
 }

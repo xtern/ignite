@@ -103,7 +103,8 @@ import static org.apache.ignite.internal.IgniteFeatures.CACHE_KEY_CHANGE;
 import static org.apache.ignite.internal.IgniteFeatures.MASTER_KEY_CHANGE;
 import static org.apache.ignite.internal.managers.communication.GridIoPolicy.SYSTEM_POOL;
 import static org.apache.ignite.internal.pagemem.PageIdAllocator.INDEX_PARTITION;
-import static org.apache.ignite.internal.util.distributed.DistributedProcess.DistributedProcessType.CACHE_KEY_CHANGE_PREPARE;
+import static org.apache.ignite.internal.util.distributed.DistributedProcess.DistributedProcessType.GROUP_KEY_CHANGE_FINISH;
+import static org.apache.ignite.internal.util.distributed.DistributedProcess.DistributedProcessType.GROUP_KEY_CHANGE_PREPARE;
 import static org.apache.ignite.internal.util.distributed.DistributedProcess.DistributedProcessType.MASTER_KEY_CHANGE_FINISH;
 import static org.apache.ignite.internal.util.distributed.DistributedProcess.DistributedProcessType.MASTER_KEY_CHANGE_PREPARE;
 
@@ -218,9 +219,6 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
     /** Pending master key request or {@code null} if there is no ongoing master key change process. */
     private volatile MasterKeyChangeRequest masterKeyChangeRequest;
 
-    /** */
-    private volatile ChangeCacheEncryptionRequest cacheKeyChangeRequest;
-
     /** Digest of last changed master key or {@code null} if master key was not changed. */
     private volatile byte[] masterKeyDigest;
 
@@ -233,9 +231,7 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
     /** Process to perform the master key change. Changes master key and reencrypt group keys. */
     private DistributedProcess<MasterKeyChangeRequest, EmptyResult> performMKChangeProc;
 
-    private DistributedProcess<ChangeCacheEncryptionRequest, EmptyResult> prepareCKChangeProc;
-
-    private GridFutureAdapter prepareCacheKeyChangeFut;
+    private GroupKeyChangeProcess groupKeyChangeProcess;
 
     /**
      * @param ctx Kernel context.
@@ -322,10 +318,159 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
         performMKChangeProc = new DistributedProcess<>(ctx, MASTER_KEY_CHANGE_FINISH, this::performMasterKeyChange,
             this::finishPerformMasterKeyChange);
 
-        prepareCacheKeyChangeFut = new GridFutureAdapter<>();
+        groupKeyChangeProcess = new GroupKeyChangeProcess();
+    }
 
-        prepareCKChangeProc = new DistributedProcess<>(ctx, CACHE_KEY_CHANGE_PREPARE, this::prepareCacheKeyChange,
-            this::finishPrepareCacheKeyChange);
+    /**
+     * Two phase distributed process, that performs encryption group key change.
+     */
+    private class GroupKeyChangeProcess {
+        private MasterKeyChangeFuture prepareGroupKeyChangeFut;
+
+        /** */
+        private volatile ChangeCacheEncryptionRequest groupKeyChangeRequest;
+
+        DistributedProcess<ChangeCacheEncryptionRequest, EmptyResult> prepareGKChangeProc =
+            new DistributedProcess<>(ctx, GROUP_KEY_CHANGE_PREPARE, this::prepare, this::finishPrepare);
+
+        DistributedProcess<ChangeCacheEncryptionRequest, EmptyResult> performGKChangeProc =
+            new DistributedProcess<>(ctx, GROUP_KEY_CHANGE_FINISH, this::perform, this::finishPerform);
+
+        private void doChangeGroupKeys(int[] groups, byte[][] keys, byte[] keyIds) {
+            for (int i = 0; i < groups.length; i++) {
+                int grpId = groups[i];
+
+                replaceKey(grpId, keys[i], keyIds[i] & 0xff);
+            }
+        }
+
+        public IgniteInternalFuture<Void> start(ChangeCacheEncryptionRequest req) {
+            //            if (disconnected) {
+//                return new IgniteFinishedFutureImpl<>(new IgniteClientDisconnectedException(
+//                    ctx.cluster().clientReconnectFuture(),
+//                    "Master key change was rejected. Client node disconnected."));
+//            }
+//
+            if (stopped) {
+                return new GridFinishedFuture<>(new IgniteException("Group key change was rejected. " +
+                    "Node is stopping."));
+            }
+//
+//            if (masterKeyChangeFut != null && !masterKeyChangeFut.isDone()) {
+//                return new IgniteFinishedFutureImpl<>(new IgniteException("Master key change was rejected. " +
+//                    "The previous change was not completed."));
+//            }
+            prepareGroupKeyChangeFut = new MasterKeyChangeFuture(req.requestId());
+
+            // todo
+            prepareGKChangeProc.start(req.requestId(), req);
+
+            return prepareGroupKeyChangeFut;
+        }
+
+        /**
+         * Prepares master key change. Checks master key consistency.
+         *
+         * @param req Request.
+         * @return Result future.
+         */
+        private IgniteInternalFuture<EmptyResult> prepare(ChangeCacheEncryptionRequest req) {
+            if (groupKeyChangeRequest != null) {
+                return new GridFinishedFuture<>(new IgniteException("Group key change was rejected. " +
+                    "The previous change was not completed."));
+            }
+
+            groupKeyChangeRequest = req;
+
+            if (ctx.clientNode())
+                return new GridFinishedFuture<>();
+
+            try {
+                int n = 0;
+
+                for (int grpId : req.groups()) {
+                    if (!encryptionState(grpId).isDone())
+                        return new GridFinishedFuture<>(new IgniteException("Encryption in progress [grpId=" + grpId + "]"));
+
+                    // todo max key
+
+                    int newKeyId = req.keyIdentifiers()[n] & 0xff;
+
+                    if (grpEncKeysX.get(grpId).containsKey(newKeyId))
+                        throw new IgniteException("Incorrect new key identifer [grpId=" + grpId + ", keyId=" + newKeyId + "]");
+
+                    ++n;
+                }
+
+//            String masterKeyName = decryptKeyName(req.encKeyName());
+//
+//            if (masterKeyName.equals(getMasterKeyName()))
+//                throw new IgniteException("Master key change was rejected. New name equal to the current.");
+//
+//            byte[] digest = masterKeyDigest(masterKeyName);
+//
+//            if (!Arrays.equals(req.digest, digest)) {
+//                return new GridFinishedFuture<>(new IgniteException("Master key change was rejected. Master " +
+//                    "key digest consistency check failed. Make sure that the new master key is the same at " +
+//                    "all server nodes [nodeId=" + ctx.localNodeId() + ']'));
+//            }
+            }
+            catch (Exception e) {
+                return new GridFinishedFuture<>(new IgniteException("Master key change was rejected [nodeId=" +
+                    ctx.localNodeId() + ']', e));
+            }
+
+            return new GridFinishedFuture<>(new EmptyResult());
+        }
+
+        /**
+         * Starts master key change process if there are no errors.
+         *
+         * @param id Request id.
+         * @param res Results.
+         * @param err Errors.
+         */
+        private void finishPrepare(UUID id, Map<UUID, EmptyResult> res, Map<UUID, Exception> err) {
+            if (!err.isEmpty()) {
+                if (groupKeyChangeRequest != null && groupKeyChangeRequest.requestId().equals(id))
+                    groupKeyChangeRequest = null;
+
+                synchronized (opsMux) {
+                    completeKeyChangeFuture(groupKeyChangeRequest.requestId(), err, prepareGroupKeyChangeFut);
+
+                    prepareGroupKeyChangeFut = null;
+                }
+            }
+            else if (isCoordinator())
+                performGKChangeProc.start(id, groupKeyChangeRequest);
+        }
+
+        private IgniteInternalFuture<EmptyResult> perform(ChangeCacheEncryptionRequest req) {
+            if (groupKeyChangeRequest == null || !groupKeyChangeRequest.equals(req))
+                return new GridFinishedFuture<>(new IgniteException("Unknown group key change was rejected."));
+
+            if (!ctx.state().clusterState().active()) {
+                groupKeyChangeRequest = null;
+
+                return new GridFinishedFuture<>(new IgniteException("Group key change was rejected. " +
+                    "The cluster is inactive."));
+            }
+
+            if (!ctx.clientNode())
+                doChangeGroupKeys(req.groups(), req.keys(), req.keyIdentifiers());
+
+            groupKeyChangeRequest = null;
+
+            return new GridFinishedFuture<>(new EmptyResult());
+        }
+
+        private void finishPerform(UUID id, Map<UUID, EmptyResult> res, Map<UUID, Exception> err) {
+            synchronized (opsMux) {
+                completeKeyChangeFuture(id, err, prepareGroupKeyChangeFut);
+
+                prepareGroupKeyChangeFut = null;
+            }
+        }
     }
 
     /** {@inheritDoc} */
@@ -731,51 +876,31 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
         if (!ctx.state().clusterState().active())
             throw new IgniteException("Operation was rejected. The cluster is inactive.");
 
-        byte[][] keys = new byte[groups.size()][];
+        int[] groups0 = groups.stream().mapToInt(i -> i).toArray();
+        byte[][] keys = new byte[groups0.length][];
+        byte[] keyIds = new byte[groups0.length];
 
-        byte[] keyIds = new byte[groups.size()];
+        for (int n = 0; n < groups0.length; n++) {
+            int grpId = groups0[n];
 
-        int n = 0;
-
-        for (Integer grpId : groups) {
-//            if ()
             if (!encryptionState(grpId).isDone())
                 throw new IgniteCheckedException("Encryption in progress [grp=" + grpId + "]");
 
             Serializable key = getSpi().create();
 
-            keys[n++] = getSpi().encryptKey(key);
+            keys[n] = getSpi().encryptKey(key);
 
             // todo key identifier can be not max in case of reverting encryption
-            keyIds[n++] = (byte)(grpEncActiveKeys.get(grpId) + 1);
+            keyIds[n] = (byte)(grpEncActiveKeys.get(grpId) + 1);
         }
 
-        ChangeCacheEncryptionRequest req = new ChangeCacheEncryptionRequest(groups, keys, keyIds);
+        IgniteInternalFuture fut;
 
         synchronized (opsMux) {
-//            if (disconnected) {
-//                return new IgniteFinishedFutureImpl<>(new IgniteClientDisconnectedException(
-//                    ctx.cluster().clientReconnectFuture(),
-//                    "Master key change was rejected. Client node disconnected."));
-//            }
-//
-//            if (stopped) {
-//                return new IgniteFinishedFutureImpl<>(new IgniteException("Master key change was rejected. " +
-//                    "Node is stopping."));
-//            }
-//
-//            if (masterKeyChangeFut != null && !masterKeyChangeFut.isDone()) {
-//                return new IgniteFinishedFutureImpl<>(new IgniteException("Master key change was rejected. " +
-//                    "The previous change was not completed."));
-//            }
-
-            //masterKeyChangeFut = new MasterKeyChangeFuture(request.requestId());
-
-            prepareCKChangeProc.start(req.requestId(), req);
-
-            prepareCacheKeyChangeFut.get();
-            //return new IgniteFutureImpl<>(masterKeyChangeFut);
+            fut = groupKeyChangeProcess.start(new ChangeCacheEncryptionRequest(groups0, keys, keyIds));
         }
+
+        fut.get();
     }
 
     /**
@@ -1264,50 +1389,6 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
     }
 
     /**
-     * Prepares master key change. Checks master key consistency.
-     *
-     * @param req Request.
-     * @return Result future.
-     */
-    private IgniteInternalFuture<EmptyResult> prepareCacheKeyChange(ChangeCacheEncryptionRequest req) {
-        if (cacheKeyChangeRequest != null) {
-            return new GridFinishedFuture<>(new IgniteException("Master key change was rejected. " +
-                "The previous change was not completed."));
-        }
-
-        cacheKeyChangeRequest = req;
-
-        if (ctx.clientNode())
-            return new GridFinishedFuture<>();
-
-        try {
-            for (int grpId : req.groups()) {
-                if (!encryptionState(grpId).isDone())
-                    return new GridFinishedFuture<>(new IgniteException("Encryption in progress [grpId=" + grpId + "]"));
-            }
-
-//            String masterKeyName = decryptKeyName(req.encKeyName());
-//
-//            if (masterKeyName.equals(getMasterKeyName()))
-//                throw new IgniteException("Master key change was rejected. New name equal to the current.");
-//
-//            byte[] digest = masterKeyDigest(masterKeyName);
-//
-//            if (!Arrays.equals(req.digest, digest)) {
-//                return new GridFinishedFuture<>(new IgniteException("Master key change was rejected. Master " +
-//                    "key digest consistency check failed. Make sure that the new master key is the same at " +
-//                    "all server nodes [nodeId=" + ctx.localNodeId() + ']'));
-//            }
-        }
-        catch (Exception e) {
-            return new GridFinishedFuture<>(new IgniteException("Master key change was rejected [nodeId=" +
-                ctx.localNodeId() + ']', e));
-        }
-
-        return new GridFinishedFuture<>(new EmptyResult());
-    }
-
-    /**
      * Starts master key change process if there are no errors.
      *
      * @param id Request id.
@@ -1323,28 +1404,6 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
         }
         else if (isCoordinator())
             performMKChangeProc.start(id, masterKeyChangeRequest);
-    }
-
-    /**
-     * Starts master key change process if there are no errors.
-     *
-     * @param id Request id.
-     * @param res Results.
-     * @param err Errors.
-     */
-    private void finishPrepareCacheKeyChange(UUID id, Map<UUID, EmptyResult> res, Map<UUID, Exception> err) {
-        if (!err.isEmpty()) {
-            if (cacheKeyChangeRequest != null && cacheKeyChangeRequest.requestId().equals(id))
-                cacheKeyChangeRequest = null;
-
-//            completeMasterKeyChangeFuture(id, err);
-        }
-
-        prepareCacheKeyChangeFut.onDone();
-
-        System.out.println(">>> encryption cache key prep finished");
-//        else if (isCoordinator())
-//            performMKChangeProc.start(id, masterKeyChangeRequest);
     }
 
     /**
@@ -1391,21 +1450,26 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
      */
     private void completeMasterKeyChangeFuture(UUID reqId, Map<UUID, Exception> err) {
         synchronized (opsMux) {
-            boolean isInitiator = masterKeyChangeFut != null && masterKeyChangeFut.id().equals(reqId);
-
-            if (!isInitiator || masterKeyChangeFut.isDone())
-                return;
-
-            if (!F.isEmpty(err)) {
-                Exception e = err.values().stream().findFirst().get();
-
-                masterKeyChangeFut.onDone(e);
-            }
-            else
-                masterKeyChangeFut.onDone();
+            completeKeyChangeFuture(reqId, err, masterKeyChangeFut);
 
             masterKeyChangeFut = null;
         }
+    }
+
+    private void completeKeyChangeFuture(UUID reqId, Map<UUID, Exception> err, MasterKeyChangeFuture fut) {
+//        synchronized (opsMux) {
+        boolean isInitiator = fut != null && fut.id().equals(reqId);
+
+        if (!isInitiator || fut.isDone())
+            return;
+
+        if (!F.isEmpty(err)) {
+            Exception e = err.values().stream().findFirst().get();
+
+            fut.onDone(e);
+        }
+        else
+            fut.onDone();
     }
 
     /**

@@ -253,6 +253,8 @@ public class EncryptedFileIO implements FileIO {
 
         res.put((byte)pair.getValue().intValue());
 
+//        System.out.println(">> write >> key identifier: " + pair.getValue());
+
         srcBuf.limit(srcLimit);
         srcBuf.position(srcBuf.position() + encryptionOverhead);
     }
@@ -266,6 +268,8 @@ public class EncryptedFileIO implements FileIO {
         assert encrypted.limit() >= pageSize;
 
         int keyId = checkCRC(encrypted);
+
+//        System.out.println(">> read >> key identifier: " + keyId);
 
         encrypted.limit(encryptedDataSize());
 
