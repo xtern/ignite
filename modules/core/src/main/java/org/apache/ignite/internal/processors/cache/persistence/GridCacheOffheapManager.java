@@ -44,6 +44,7 @@ import org.apache.ignite.internal.pagemem.PageIdUtils;
 import org.apache.ignite.internal.pagemem.PageMemory;
 import org.apache.ignite.internal.pagemem.PageSupport;
 import org.apache.ignite.internal.pagemem.store.IgnitePageStoreManager;
+import org.apache.ignite.internal.pagemem.store.PageStore;
 import org.apache.ignite.internal.pagemem.wal.IgniteWriteAheadLogManager;
 import org.apache.ignite.internal.pagemem.wal.WALIterator;
 import org.apache.ignite.internal.pagemem.wal.WALPointer;
@@ -73,6 +74,7 @@ import org.apache.ignite.internal.processors.cache.distributed.dht.topology.Grid
 import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtPartitionState;
 import org.apache.ignite.internal.processors.cache.mvcc.MvccSnapshot;
 import org.apache.ignite.internal.processors.cache.mvcc.MvccVersion;
+import org.apache.ignite.internal.processors.cache.persistence.file.FilePageStoreManager;
 import org.apache.ignite.internal.processors.cache.persistence.freelist.AbstractFreeList;
 import org.apache.ignite.internal.processors.cache.persistence.freelist.CacheFreeList;
 import org.apache.ignite.internal.processors.cache.persistence.freelist.SimpleDataRow;
@@ -109,6 +111,7 @@ import org.apache.ignite.internal.util.typedef.internal.CU;
 import org.apache.ignite.internal.util.typedef.internal.S;
 import org.apache.ignite.internal.util.typedef.internal.U;
 import org.apache.ignite.lang.IgniteBiTuple;
+import org.apache.ignite.spi.encryption.noop.NoopEncryptionSpi;
 import org.jetbrains.annotations.Nullable;
 
 import static org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtPartitionState.EVICTED;
@@ -138,6 +141,9 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
 
     /** Flag indicates that all group partitions have restored their state from page memory / disk. */
     private volatile boolean partitionStatesRestored;
+
+    /** */
+    private boolean encryptionDisabled;
 
     /** {@inheritDoc} */
     @Override protected void initPendingTree(GridCacheContext cctx) throws IgniteCheckedException {
@@ -187,6 +193,8 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
             ctx.kernalContext().failure(),
             diagnosticMgr.pageLockTracker().createPageLockTracker(indexStorageTreeName)
         );
+
+        encryptionDisabled = ctx.gridConfig().getEncryptionSpi() instanceof NoopEncryptionSpi;
 
         ((GridCacheDatabaseSharedManager)ctx.database()).addCheckpointListener(this);
     }
@@ -399,6 +407,18 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
                         changed |= io.setUpdateCounter(partMetaPageAddr, updCntr);
                         changed |= io.setGlobalRemoveId(partMetaPageAddr, rmvId);
                         changed |= io.setSize(partMetaPageAddr, size);
+
+                        if (!encryptionDisabled && grp.persistenceEnabled()) {
+
+                            PageStore pageStore = ((FilePageStoreManager)this.ctx.pageStore()).getStore(grpId, part.id());
+
+                            if (pageStore.encryptedPagesCount() != 0) {
+                                int off = this.ctx.kernalContext().encryption().encryptionOffset(grpId, part.id());
+                                changed |= io.setEncryptionPageIdx(partMetaPageAddr, off);
+                                // todo first time should save current pages count
+                                changed |= io.setEncryptionPagesCount(partMetaPageAddr, pageStore.encryptedPagesCount());
+                            }
+                        }
 
                         if (state != null)
                             changed |= io.setPartitionState(partMetaPageAddr, (byte)state.ordinal());
@@ -1862,6 +1882,15 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
                                 byte[] data = link == 0 ? null : partStorage.readRow(link);
 
                                 delegate0.restoreState(io.getSize(pageAddr), io.getUpdateCounter(pageAddr), cacheSizes, data);
+
+                                int encrPageCnt = io.getEncryptionPagesCount(pageAddr);
+
+                                if (encrPageCnt > 0) {
+                                    PageStore pageStore = ((FilePageStoreManager)ctx.pageStore()).getStore(grpId, partId);
+
+                                    pageStore.encryptedPagesCount(encrPageCnt);
+                                    pageStore.encryptedPagesOffset(io.getEncryptionPageIdx(pageAddr));
+                                }
 
                                 globalRemoveId().setIfGreater(io.getGlobalRemoveId(pageAddr));
                             }

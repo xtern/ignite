@@ -125,42 +125,42 @@ public class GroupKeyChangeTest extends AbstractEncryptionTest {
         assertEquals("-2000", cache.get(-2000));
     }
 
-    @Test
-    public void checkReencryption2() throws Exception {
-        startTestGrids(true);
-
-        IgniteEx node1 = grid(GRID_0);
-        IgniteEx node2 = grid(GRID_1);
-
-        createEncryptedCache(node1, node2, cacheName(), null);
-
-        forceCheckpoint();
-
-        node1.cluster().state(ClusterState.ACTIVE_READ_ONLY);
-
-        EncryptionSpi spi = node1.context().config().getEncryptionSpi();
-
-        byte[] key = node1.context().config().getEncryptionSpi().encryptKey(spi.create());
-
-        node1.context().encryption().rescan(cacheName(), key);
-        node2.context().encryption().rescan(cacheName(), key);
-
-        forceCheckpoint();
-
-        stopAllGrids(false);
-
-        startTestGrids(false);
-
-        node1 = grid(GRID_0);
-        node2 = grid(GRID_1);
-
-        IgniteCache<Object, Object> cache0 = node1.cache(ENCRYPTED_CACHE);
-
-        assert cache0 != null;
-
-        for (long i = 0; i < 104; i++)
-            assertEquals("" + i, cache0.get(i));
-    }
+//    @Test
+//    public void checkReencryption2() throws Exception {
+//        startTestGrids(true);
+//
+//        IgniteEx node1 = grid(GRID_0);
+//        IgniteEx node2 = grid(GRID_1);
+//
+//        createEncryptedCache(node1, node2, cacheName(), null);
+//
+//        forceCheckpoint();
+//
+//        node1.cluster().state(ClusterState.ACTIVE_READ_ONLY);
+//
+//        EncryptionSpi spi = node1.context().config().getEncryptionSpi();
+//
+//        byte[] key = node1.context().config().getEncryptionSpi().encryptKey(spi.create());
+//
+//        node1.context().encryption().rescan(cacheName(), key);
+//        node2.context().encryption().rescan(cacheName(), key);
+//
+//        forceCheckpoint();
+//
+//        stopAllGrids(false);
+//
+//        startTestGrids(false);
+//
+//        node1 = grid(GRID_0);
+//        node2 = grid(GRID_1);
+//
+//        IgniteCache<Object, Object> cache0 = node1.cache(ENCRYPTED_CACHE);
+//
+//        assert cache0 != null;
+//
+//        for (long i = 0; i < 104; i++)
+//            assertEquals("" + i, cache0.get(i));
+//    }
 
     @Test
     public void checkReencryption() throws Exception {

@@ -111,6 +111,12 @@ public class FilePageStore implements PageStore {
     /** */
     private final ReadWriteLock lock = new ReentrantReadWriteLock();
 
+    /** Count of pages for re-encryption. */
+    private volatile int encPagesCnt;
+
+    /** Count of pages for re-encryption. */
+    private volatile int encPagesOff;
+
     /** */
     public FilePageStore(
         byte type,
@@ -882,5 +888,25 @@ public class FilePageStore implements PageStore {
                 reinit(fileIO);
             }
         }
+    }
+
+    /** {@inheritDoc} */
+    @Override public int encryptedPagesCount() {
+        return encPagesCnt;
+    }
+
+    /** {@inheritDoc} */
+    @Override public void encryptedPagesCount(int encPagesCnt) {
+        this.encPagesCnt = encPagesCnt;
+    }
+
+    /** {@inheritDoc} */
+    @Override public int encryptedPagesOffset() {
+        return encPagesOff;
+    }
+
+    /** {@inheritDoc} */
+    @Override public void encryptedPagesOffset(int encPagesOff) {
+        this.encPagesOff = encPagesOff;
     }
 }

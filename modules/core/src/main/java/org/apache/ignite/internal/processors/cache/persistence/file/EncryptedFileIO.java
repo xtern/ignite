@@ -23,6 +23,7 @@ import java.nio.ByteBuffer;
 import java.nio.MappedByteBuffer;
 import org.apache.ignite.internal.processors.cache.persistence.wal.crc.FastCrc;
 import org.apache.ignite.internal.util.typedef.T2;
+import org.apache.ignite.internal.util.typedef.internal.U;
 import org.apache.ignite.spi.encryption.EncryptionSpi;
 import org.apache.ignite.internal.managers.encryption.GridEncryptionManager;
 import org.apache.ignite.internal.processors.cache.persistence.tree.io.PageIO;
@@ -269,7 +270,8 @@ public class EncryptedFileIO implements FileIO {
 
         int keyId = checkCRC(encrypted);
 
-//        System.out.println(">> read >> key identifier: " + keyId);
+        if (keyId == 0)
+            U.dumpStack(">> read >> key identifier: " + keyId);
 
         encrypted.limit(encryptedDataSize());
 

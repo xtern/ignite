@@ -37,6 +37,12 @@ public class PagePartitionMetaIOV2 extends PagePartitionMetaIO {
     /** */
     private static final int GAPS_LINK = PART_META_REUSE_LIST_ROOT_OFF + 8;
 
+    /** */
+    private static final int ENCRYPT_PAGE_IDX_OFF = GAPS_LINK + 8;
+
+    /** */
+    private static final int ENCRYPT_PAGE_MAX_OFF = ENCRYPT_PAGE_IDX_OFF + 4;
+
     /**
      * @param ver Version.
      */
@@ -82,7 +88,7 @@ public class PagePartitionMetaIOV2 extends PagePartitionMetaIO {
      * @param pageAddr Page address.
      * @return Partition size.
      */
-    public long getGapsLink(long pageAddr) {
+    @Override public long getGapsLink(long pageAddr) {
         return PageUtils.getLong(pageAddr, GAPS_LINK);
     }
 
@@ -92,11 +98,57 @@ public class PagePartitionMetaIOV2 extends PagePartitionMetaIO {
      *
      * @return {@code true} if value has changed as a result of this method's invocation.
      */
-    public boolean setGapsLink(long pageAddr, long link) {
+    @Override public boolean setGapsLink(long pageAddr, long link) {
         if (getGapsLink(pageAddr) == link)
             return false;
 
         PageUtils.putLong(pageAddr, GAPS_LINK, link);
+
+        return true;
+    }
+
+    /**
+     * @param pageAddr Page address.
+     * @return Current encryption page index.
+     */
+    @Override public int getEncryptionPageIdx(long pageAddr) {
+        return PageUtils.getInt(pageAddr, ENCRYPT_PAGE_IDX_OFF);
+    }
+
+    /**
+     * @param pageAddr Page address.
+     * @param pageIdx Encryption page index..
+     *
+     * @return {@code true} if value has changed as a result of this method's invocation.
+     */
+    @Override public boolean setEncryptionPageIdx(long pageAddr, int pageIdx) {
+        if (getEncryptionPageIdx(pageAddr) == pageIdx)
+            return false;
+
+        PageUtils.putLong(pageAddr, ENCRYPT_PAGE_IDX_OFF, pageIdx);
+
+        return true;
+    }
+
+    /**
+     * @param pageAddr Page address.
+     * @return Encryption pages count.
+     */
+    @Override public int getEncryptionPagesCount(long pageAddr) {
+        return PageUtils.getInt(pageAddr, ENCRYPT_PAGE_MAX_OFF);
+    }
+
+    /**
+     * @param pageAddr Page address.
+     * @param pagesCnt Encryption pages count.
+     *
+     * @return {@code true} if value has changed as a result of this method's invocation.
+     */
+    @Override public boolean setEncryptionPagesCount(long pageAddr, int pagesCnt) {
+        if (getEncryptionPagesCount(pageAddr) == pagesCnt)
+            return false;
+
+        PageUtils.putInt(pageAddr, ENCRYPT_PAGE_MAX_OFF, pagesCnt);
 
         return true;
     }

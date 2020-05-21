@@ -1077,6 +1077,11 @@ public class FileWriteAheadLogManager extends GridCacheSharedManagerAdapter impl
     }
 
     /** {@inheritDoc} */
+    @Override public long currentSegment() {
+        return segmentAware.curAbsWalIdx();
+    }
+
+    /** {@inheritDoc} */
     @Override public int walArchiveSegments() {
         long lastTruncated = segmentAware.lastTruncatedArchiveIdx();
 
