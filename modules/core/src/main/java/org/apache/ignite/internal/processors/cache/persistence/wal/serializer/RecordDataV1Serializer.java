@@ -299,7 +299,7 @@ public class RecordDataV1Serializer implements RecordDataSerializer {
 
         byte[] clData = encSpi.decrypt(encData, key);
 
-        System.out.println("read encrypted: " + clData.length);
+//        System.out.println("read encrypted: " + clData.length);
 
         return new T3<>(new ByteBufferBackedDataInputImpl().buffer(ByteBuffer.wrap(clData)), grpId, plainRecType);
     }

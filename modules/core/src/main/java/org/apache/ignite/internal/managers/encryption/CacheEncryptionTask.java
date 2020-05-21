@@ -24,7 +24,9 @@ import java.util.concurrent.atomic.AtomicIntegerArray;
 import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.internal.GridKernalContext;
 import org.apache.ignite.internal.IgniteInternalFuture;
+import org.apache.ignite.internal.pagemem.PageUtils;
 import org.apache.ignite.internal.pagemem.store.PageStore;
+import org.apache.ignite.internal.pagemem.wal.record.delta.DataPageInsertRecord;
 import org.apache.ignite.internal.processors.cache.CacheGroupContext;
 import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtLocalPartition;
 import org.apache.ignite.internal.processors.cache.persistence.file.FilePageStoreManager;
@@ -163,29 +165,44 @@ public class CacheEncryptionTask {
 
             long metaPageId = pageMem.partitionMetaPageId(grpId, partId);
 
-            ctx.cache().context().database().checkpointReadLock();
+            int pageNum = off;
 
-            try {
-                for (int pageNum = off; pageNum < cnt; pageNum++) {
-                    if (fut.isDone())
-                        break;
+            while (pageNum < cnt) {
+                if (fut.isDone())
+                    break;
 
-                    long pageId = metaPageId + pageNum;
+                ctx.cache().context().database().checkpointReadLock();
 
-                    long page = pageMem.acquirePage(grpId, pageId);
+                try {
+                    int end = Math.min(pageNum + BATCH_SIZE, cnt);
 
-                    pageMem.writeLock(grpId, pageId, page, true);
+                    do {
+                        long pageId = metaPageId + pageNum;
 
-                    pageMem.writeUnlock(grpId, pageId, page, null, true, true);
+                        long page = pageMem.acquirePage(grpId, pageId);
 
-                    updateOffset(partId, pageNum);
+                        long pageAddr = pageMem.writeLock(grpId, pageId, page, true);
+
+                        try {
+                            byte[] payload = PageUtils.getBytes(pageAddr, 0, pageMem.realPageSize(grpId));
+
+                            ctx.cache().context().wal().log(new DataPageInsertRecord(grpId, pageId, payload));
+                        }
+                        finally {
+                            pageMem.writeUnlock(grpId, pageId, page, null, true, true);
+                        }
+
+                        updateOffset(partId, pageNum);
+
+                        pageNum++;
+                    } while (pageNum < end);
                 }
-            }
-            catch (Throwable t) {
-                fut.onDone(t);
-            }
-            finally {
-                ctx.cache().context().database().checkpointReadUnlock();
+                catch (Throwable t) {
+                    fut.onDone(t);
+                }
+                finally {
+                    ctx.cache().context().database().checkpointReadUnlock();
+                }
             }
 
             if (!fut.isDone())

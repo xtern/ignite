@@ -1051,6 +1051,9 @@ public class FileWriteAheadLogManager extends GridCacheSharedManagerAdapter impl
                 // Bump up the oldest archive segment index.
                 if (segmentAware.lastTruncatedArchiveIdx() < desc.idx)
                     segmentAware.lastTruncatedArchiveIdx(desc.idx);
+
+                // todo check that encryption enabled?
+                cctx.kernalContext().encryption().onWalSegmentRemoved(desc.idx);
             }
         }
 

@@ -1,28 +1,18 @@
 package org.apache.ignite.internal.encryption;
 
-import java.io.Serializable;
 import java.util.Collections;
-import java.util.Map;
-import java.util.UUID;
-import java.util.function.Function;
+import java.util.Iterator;
+import javax.cache.Cache;
 import org.apache.ignite.IgniteCache;
+import org.apache.ignite.IgniteDataStreamer;
 import org.apache.ignite.cache.CacheMode;
 import org.apache.ignite.cluster.ClusterState;
 import org.apache.ignite.configuration.DataRegionConfiguration;
 import org.apache.ignite.configuration.DataStorageConfiguration;
 import org.apache.ignite.configuration.IgniteConfiguration;
 import org.apache.ignite.internal.IgniteEx;
-import org.apache.ignite.internal.IgniteInternalFuture;
 import org.apache.ignite.internal.processors.cache.IgniteInternalCache;
-import org.apache.ignite.internal.util.distributed.DistributedProcess;
-import org.apache.ignite.internal.util.future.GridFutureAdapter;
-import org.apache.ignite.internal.util.typedef.T2;
-import org.apache.ignite.spi.encryption.EncryptionSpi;
-import org.jetbrains.annotations.Nullable;
 import org.junit.Test;
-
-import static org.apache.ignite.internal.util.distributed.DistributedProcess.DistributedProcessType.GROUP_KEY_CHANGE_PREPARE;
-import static org.apache.ignite.spi.encryption.keystore.KeystoreEncryptionSpi.DEFAULT_MASTER_KEY_NAME;
 
 /**
  *
@@ -123,118 +113,43 @@ public class GroupKeyChangeTest extends AbstractEncryptionTest {
 
         assertEquals("-1000", cache.get(-1000));
         assertEquals("-2000", cache.get(-2000));
-    }
 
-//    @Test
-//    public void checkReencryption2() throws Exception {
-//        startTestGrids(true);
-//
-//        IgniteEx node1 = grid(GRID_0);
-//        IgniteEx node2 = grid(GRID_1);
-//
-//        createEncryptedCache(node1, node2, cacheName(), null);
-//
-//        forceCheckpoint();
-//
-//        node1.cluster().state(ClusterState.ACTIVE_READ_ONLY);
-//
-//        EncryptionSpi spi = node1.context().config().getEncryptionSpi();
-//
-//        byte[] key = node1.context().config().getEncryptionSpi().encryptKey(spi.create());
-//
-//        node1.context().encryption().rescan(cacheName(), key);
-//        node2.context().encryption().rescan(cacheName(), key);
-//
-//        forceCheckpoint();
-//
-//        stopAllGrids(false);
-//
-//        startTestGrids(false);
-//
-//        node1 = grid(GRID_0);
-//        node2 = grid(GRID_1);
-//
-//        IgniteCache<Object, Object> cache0 = node1.cache(ENCRYPTED_CACHE);
-//
-//        assert cache0 != null;
-//
-//        for (long i = 0; i < 104; i++)
-//            assertEquals("" + i, cache0.get(i));
-//    }
+        try (IgniteDataStreamer streamer = node1.dataStreamer(cacheName())) {
+            for (int i = 1000; i < 50_000; i++)
+                streamer.addData(i, "" + i);
+        }
 
-    @Test
-    public void checkReencryption() throws Exception {
-        startTestGrids(true);
+        stopAllGrids();
 
-        IgniteEx node1 = grid(GRID_0);
-        IgniteEx node2 = grid(GRID_1);
-
-        createEncryptedCache(node1, node2, cacheName(), null);
-
-        forceCheckpoint();
-
-        node1.cluster().state(ClusterState.ACTIVE_READ_ONLY);
-
-        EncryptionSpi spi = node1.context().config().getEncryptionSpi();
-
-        byte[] key = node1.context().config().getEncryptionSpi().encryptKey(spi.create());
-
-        node1.context().encryption().reencrypt(cacheName(), key);
-        node2.context().encryption().reencrypt(cacheName(), key);
-
-        forceCheckpoint();
-
-        stopAllGrids(false);
-
-        startTestGrids(false);
-
-        node1 = grid(GRID_0);
-        node2 = grid(GRID_1);
-
-        IgniteCache<Object, Object> cache0 = node1.cache(ENCRYPTED_CACHE);
-
-        assert cache0 != null;
-
-        for (long i = 0; i < 104; i++)
-            assertEquals("" + i, cache0.get(i));
-    }
-
-    @Test
-    public void checkReencryptionInactive() throws Exception {
-        startTestGrids(true);
-
-        IgniteEx node1 = grid(GRID_0);
-        IgniteEx node2 = grid(GRID_1);
-
-        createEncryptedCache(node1, node2, cacheName(), null);
-
-        forceCheckpoint();
-
-        node1.cluster().state(ClusterState.INACTIVE);
-
-        EncryptionSpi spi = node1.context().config().getEncryptionSpi();
-
-        byte[] key = node1.context().config().getEncryptionSpi().encryptKey(spi.create());
-
-        node1.context().encryption().reencryptInactive(cacheName(), key);
-        node2.context().encryption().reencryptInactive(cacheName(), key);
-
-//        forceCheckpoint();
+        node1 = startGrid(GRID_0);
+        node2 = startGrid(GRID_1);
 
         node1.cluster().state(ClusterState.ACTIVE);
 
-        //stopAllGrids(false);
+        awaitPartitionMapExchange();
 
-//        startTestGrids(false);
-//
-//        node1 = grid(GRID_0);
-//        node2 = grid(GRID_1);
-//
-        IgniteCache<Object, Object> cache0 = node1.cache(cacheName());
-//
-//        assert cache0 != null;
-//
-        for (long i = 0; i < 104; i++)
-            assertEquals("" + i, cache0.get(i));
+        IgniteCache<Integer, String> cache0 = node1.cache(cacheName());
+
+        assert cache0 != null;
+
+        System.out.println("cache size = " + cache0.size());
+
+        Iterator<Cache.Entry<Integer, String>> itr = cache0.iterator();
+
+        assert itr.hasNext();
+
+        int cntr = 0;
+
+        while (itr.hasNext()) {
+            Cache.Entry<Integer, String> e = itr.next();
+
+            assertEquals("" + e.getKey(), e.getValue());
+
+            cntr++;
+        }
+
+        assertEquals(cache0.size(), cntr);
+//        for (int i = 1000; i < 50_000; i++)
+//            cache.put(i, UUID.randomUUID());
     }
 }

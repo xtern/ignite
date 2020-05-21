@@ -17,15 +17,14 @@
 
 package org.apache.ignite.internal.managers.encryption;
 
-import java.io.IOException;
 import java.io.Serializable;
 import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
@@ -49,23 +48,16 @@ import org.apache.ignite.internal.IgniteInternalFuture;
 import org.apache.ignite.internal.managers.GridManagerAdapter;
 import org.apache.ignite.internal.managers.communication.GridMessageListener;
 import org.apache.ignite.internal.managers.eventstorage.DiscoveryEventListener;
-import org.apache.ignite.internal.pagemem.PageIdAllocator;
-import org.apache.ignite.internal.pagemem.PageIdUtils;
-import org.apache.ignite.internal.pagemem.PageMemory;
 import org.apache.ignite.internal.pagemem.store.PageStore;
 import org.apache.ignite.internal.pagemem.wal.WALPointer;
 import org.apache.ignite.internal.pagemem.wal.record.MasterKeyChangeRecord;
 import org.apache.ignite.internal.processors.cache.CacheGroupContext;
 import org.apache.ignite.internal.processors.cache.CacheGroupDescriptor;
-import org.apache.ignite.internal.processors.cache.DynamicCacheDescriptor;
-import org.apache.ignite.internal.processors.cache.IgniteInternalCache;
 import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtLocalPartition;
-import org.apache.ignite.internal.processors.cache.persistence.file.FilePageStore;
 import org.apache.ignite.internal.processors.cache.persistence.file.FilePageStoreManager;
 import org.apache.ignite.internal.processors.cache.persistence.metastorage.MetastorageLifecycleListener;
 import org.apache.ignite.internal.processors.cache.persistence.metastorage.ReadOnlyMetastorage;
 import org.apache.ignite.internal.processors.cache.persistence.metastorage.ReadWriteMetastorage;
-import org.apache.ignite.internal.processors.cache.persistence.pagemem.PageMemoryEx;
 import org.apache.ignite.internal.processors.cluster.IgniteChangeGlobalStateSupport;
 import org.apache.ignite.internal.util.GridConcurrentHashSet;
 import org.apache.ignite.internal.util.distributed.DistributedProcess;
@@ -73,10 +65,8 @@ import org.apache.ignite.internal.util.future.GridFinishedFuture;
 import org.apache.ignite.internal.util.future.GridFutureAdapter;
 import org.apache.ignite.internal.util.future.IgniteFinishedFutureImpl;
 import org.apache.ignite.internal.util.future.IgniteFutureImpl;
-import org.apache.ignite.internal.util.lang.IgniteInClosure2X;
 import org.apache.ignite.internal.util.typedef.F;
 import org.apache.ignite.internal.util.typedef.T2;
-import org.apache.ignite.internal.util.typedef.internal.CU;
 import org.apache.ignite.internal.util.typedef.internal.S;
 import org.apache.ignite.internal.util.typedef.internal.U;
 import org.apache.ignite.lang.IgniteFuture;
@@ -102,7 +92,6 @@ import static org.apache.ignite.internal.GridTopic.TOPIC_GEN_ENC_KEY;
 import static org.apache.ignite.internal.IgniteFeatures.CACHE_KEY_CHANGE;
 import static org.apache.ignite.internal.IgniteFeatures.MASTER_KEY_CHANGE;
 import static org.apache.ignite.internal.managers.communication.GridIoPolicy.SYSTEM_POOL;
-import static org.apache.ignite.internal.pagemem.PageIdAllocator.INDEX_PARTITION;
 import static org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtPartitionState.MOVING;
 import static org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtPartitionState.OWNING;
 import static org.apache.ignite.internal.util.distributed.DistributedProcess.DistributedProcessType.GROUP_KEY_CHANGE_FINISH;
@@ -168,6 +157,8 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
 
     private static final String REENCRYPTED_GROUPS = "reencrypted-groups";
 
+    private static final String REENCRYPTED_WAL_SEGMENTS = "reencrypted-wal-segments";
+
     /** Prefix for a master key name. */
     private static final String MASTER_KEY_NAME_PREFIX = "encryption-master-key-name";
 
@@ -195,9 +186,7 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
     private final ConcurrentHashMap<Integer, Integer> grpEncActiveKeys = new ConcurrentHashMap<>();
 
     // todo submap can be a simple array
-    private final ConcurrentHashMap<Integer, Map<Integer, Serializable>> grpEncKeysX = new ConcurrentHashMap<>();
-
-    private final ConcurrentHashMap<Integer, Serializable> grpReadKeys = new ConcurrentHashMap<>();
+    private final Map<Integer, Map<Integer, Serializable>> grpEncKeysX = new ConcurrentHashMap<>();
 
     /** Pending generate encryption key futures. */
     private ConcurrentMap<IgniteUuid, GenerateEncryptionKeyFuture> genEncKeyFuts = new ConcurrentHashMap<>();
@@ -241,8 +230,8 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
 
     private final Set<Integer> encryptedGroups = new GridConcurrentHashSet<>();
 
-    // todo walidx -> <grp -> keyId>
-    private final Map<Long, Map<Integer, Integer>> walSegments = new ConcurrentHashMap<>();
+    // todo walidx -> <grp -> keyIds>
+    private final ConcurrentHashMap<Long, Map<Integer, Set<Integer>>> walSegments = new ConcurrentHashMap<>();
 
     /**
      * @param ctx Kernel context.
@@ -335,6 +324,42 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
         encryptTask = new CacheEncryptionTask(ctx);
     }
 
+    public void onWalSegmentRemoved(long segmentIdx) {
+        System.out.println(">>> remove " + segmentIdx + ", await=" + walSegments.keySet());
+
+        Map<Integer, Set<Integer>> grpKeys = walSegments.remove(segmentIdx);
+
+        synchronized (metaStorageMux) {
+            if (grpKeys != null) {
+                for (Map.Entry<Integer, Set<Integer>> entry : grpKeys.entrySet()) {
+                    int grpId = entry.getKey();
+                    Set<Integer> keyIds = entry.getValue();
+
+                    if (encryptedGroups.contains(grpId))
+                        continue;
+
+                    boolean rmv = grpEncKeysX.get(grpId).keySet().removeAll(keyIds);
+
+                    assert rmv;
+
+                    ctx.cache().context().database().checkpointReadLock();
+
+                    try {
+                        metaStorage.write(ENCRYPTION_KEYS_PREFIX + grpId, keysMap(grpId));
+
+                        log.info("Previous encryption keys were removed");
+                    }
+                    catch (IgniteCheckedException e) {
+                        log.error("Unable to remove encryption keys from metastore.", e);
+                    }
+                    finally {
+                        ctx.cache().context().database().checkpointReadUnlock();
+                    }
+                }
+            }
+        }
+    }
+
     /**
      * Two phase distributed process, that performs encryption group key change.
      */
@@ -385,12 +410,30 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
                         try {
                             f.get();
 
-                            // todo
+                            // todo cleanup keys if walsegment removed
+                            boolean changed = false;
+
+                            for (Map<Integer, ?> map : walSegments.values()) {
+                                if (!map.containsKey(grpId)) {
+                                    int activeKey = grpEncActiveKeys.get(grpId);
+
+                                    changed |= grpEncKeysX.get(grpId).keySet().removeIf(v -> v != activeKey);
+                                }
+                            }
+
                             ctx.cache().context().database().checkpointReadLock();
+
                             try {
                                 encryptedGroups.remove(grpId);
 
                                 metaStorage.write(REENCRYPTED_GROUPS, encryptedGroups.stream().mapToInt(n -> n).toArray());
+
+                                if (changed) {
+                                    metaStorage.write(ENCRYPTION_KEYS_PREFIX + grpId, keysMap(grpId));
+
+                                    log.info("Previous encryption keys were removed");
+                                }
+
                             } finally {
                                 ctx.cache().context().database().checkpointReadUnlock();
                             }
@@ -848,13 +891,7 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
             if (log.isDebugEnabled())
                 log.debug("Key added. [grp=" + grpId + "]");
 
-            Serializable old = grpEncKeys.put(grpId, encKey);
-
-            if (old != null) {
-                System.out.println("add previous key");
-
-                grpReadKeys.put(grpId, old);
-            }
+            grpEncKeys.put(grpId, encKey);
 
             Map<Integer, Serializable> keys = grpEncKeysX.get(grpId);
 
@@ -872,7 +909,8 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
             if (prevKeyId != null) {
                 long walIdx = ctx.cache().context().wal().currentSegment();
 
-                walSegments.computeIfAbsent(walIdx, v -> new ConcurrentHashMap<>()).put(grpId, prevKeyId);
+                walSegments.computeIfAbsent(walIdx, v -> new HashMap<>())
+                    .computeIfAbsent(grpId, v -> new HashSet<>()).add(prevKeyId);
             }
 
             writeToMetaStore(grpId, encGrpKey);
@@ -1110,6 +1148,11 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
                 }
             }, true);
 
+            Map<Long, Map<Integer, Set<Integer>>> map = (Map<Long, Map<Integer, Set<Integer>>>)metastorage.read(REENCRYPTED_WAL_SEGMENTS);
+
+            if (map != null)
+                walSegments.putAll(map);
+
             int[] grps = (int[])metastorage.read(REENCRYPTED_GROUPS);
 
             if (grps != null) {
@@ -1292,24 +1335,28 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
         try {
             metaStorage.write(ENCRYPTION_KEY_PREFIX + grpId, encGrpKey);
 
-            HashMap<Integer, byte[]> keysMap = new HashMap<>();
-
-            //F.viewReadOnly(grpEncKeysX.get(grpId), v -> getSpi().encryptKey(v));
-
-            for (Map.Entry<Integer, Serializable> entry : grpEncKeysX.get(grpId).entrySet())
-                keysMap.put(entry.getKey(), getSpi().encryptKey(entry.getValue()));
-
-            metaStorage.write(ENCRYPTION_KEYS_PREFIX + grpId, keysMap);
+            metaStorage.write(ENCRYPTION_KEYS_PREFIX + grpId, keysMap(grpId));
 
             metaStorage.write(ENCRYPTION_ACTIVE_KEY_PREFIX + grpId, (byte)grpEncActiveKeys.get(grpId).intValue());
 
             // todo should call only once for multiple groups
             if (encryptedGroups.add(grpId))
                 metaStorage.write(REENCRYPTED_GROUPS, encryptedGroups.stream().mapToInt(i -> i).toArray());
+
+            metaStorage.write(REENCRYPTED_WAL_SEGMENTS, walSegments);
         }
         finally {
             ctx.cache().context().database().checkpointReadUnlock();
         }
+    }
+
+    private HashMap<Integer, byte[]> keysMap(int grpId) {
+        HashMap<Integer, byte[]> keysMap = new HashMap<>();
+
+        for (Map.Entry<Integer, Serializable> entry : grpEncKeysX.get(grpId).entrySet())
+            keysMap.put(entry.getKey(), getSpi().encryptKey(entry.getValue()));
+
+        return keysMap;
     }
 
     /**
@@ -1705,162 +1752,6 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
 
             return U.fromBytes(serKeyName);
         });
-    }
-
-    private static final char[] HEX_ARRAY = "0123456789ABCDEF".toCharArray();
-
-    public static String bytesToHex(byte[] bytes) {
-        char[] hexChars = new char[bytes.length * 2];
-        for (int j = 0; j < bytes.length; j++) {
-            int v = bytes[j] & 0xFF;
-            hexChars[j * 2] = HEX_ARRAY[v >>> 4];
-            hexChars[j * 2 + 1] = HEX_ARRAY[v & 0x0F];
-        }
-
-        StringBuilder buf = new StringBuilder();
-
-        for (int j = 0; j < bytes.length; j++) {
-            if (j != 0 && j % 4 == 0)
-                buf.append(" | ");
-
-            if (j != 0 && j % 16 == 0)
-                buf.append('\n');
-
-            buf.append(hexChars[j * 2]);
-            buf.append(hexChars[j * 2 + 1]);
-            buf.append(' ');
-        }
-
-        return buf.toString();
-    }
-
-    public void reencryptInactive(String name, byte[] newKey) throws IgniteCheckedException, IOException {
-        int cacheId = CU.cacheId(name);
-
-        // todo slow
-        DynamicCacheDescriptor desc = ctx.cache().cacheDescriptor(cacheId);
-
-        assert desc != null;
-
-        int parts = desc.cacheConfiguration().getAffinity().partitions();
-
-        int grpId = desc.groupId();
-
-        replaceKey(grpId, newKey, 0);
-
-        // todo add index
-        for (int p = 0; p < parts; p++)
-            reencrypt0(grpId, p);
-
-        reencrypt0(grpId, INDEX_PARTITION);
-
-        grpReadKeys.remove(grpId);
-    }
-
-    private boolean reencrypt0(int grpId, int p) throws IgniteCheckedException, IOException {
-        FilePageStore pageStore = (FilePageStore)((FilePageStoreManager)ctx.cache().context().pageStore()).getStore(grpId, p);
-
-        if (!pageStore.exists())
-            return false;
-
-        pageStore.init();
-
-        System.out.println(">>> exists store: " + pageStore.size() +
-            " pageSize=" + pageStore.getPageSize() +
-            " p=" + pageStore.getFileAbsolutePath());
-
-        long metaPageId = PageIdUtils.pageId(p, PageIdAllocator.FLAG_DATA, 0);
-
-        IgniteInClosure2X<Long, ByteBuffer> closure = new IgniteInClosure2X<Long, ByteBuffer>() {
-            @Override public void applyx(Long pageId, ByteBuffer pageBuf) throws IgniteCheckedException {
-                pageBuf.position(0);
-
-                // todo how to get tag
-                pageStore.write(pageId, pageBuf, Integer.MAX_VALUE, true);
-            }
-        };
-
-        scanFileStore(pageStore, metaPageId, closure);
-
-        pageStore.close();
-
-        return true;
-    }
-
-    private void scanFileStore(PageStore pageStore, long startPageId, IgniteInClosure2X<Long, ByteBuffer> clo) throws IgniteCheckedException {
-        int pagesCnt = pageStore.pages();
-        int pageSize = pageStore.getPageSize();
-
-        for (int n = 0; n < pagesCnt; n++) {
-            long pageId = startPageId + n;
-
-            ByteBuffer pageBuf = ByteBuffer.allocate(pageSize).order(ByteOrder.LITTLE_ENDIAN);
-
-            pageStore.read(pageId, pageBuf, false);
-
-            clo.applyx(pageId, pageBuf);
-        }
-    }
-
-    public void reencrypt(String name, byte[] newKey) throws IgniteCheckedException {
-        IgniteInternalCache encCache = ctx.cache().cache(name);
-
-        int cacheId = encCache.context().cacheId();
-        int grpId = encCache.context().groupId();
-
-        // todo not all pages in memory
-        replaceKey(grpId, newKey, 0);
-
-//        Serializable grpKey = groupKey(grpId);
-//
-//        assert grpKey instanceof KeystoreEncryptionKey : grpKey.getClass().getName();
-
-        PageMemory pageMem = encCache.context().group().dataRegion().pageMemory();
-
-        Collection<Integer> parts = F.concat(false, INDEX_PARTITION, F.viewReadOnly(encCache.context().topology().localPartitions(), GridDhtLocalPartition::id));
-
-        for (int p : parts) {
-            long startPageId = ((PageMemoryEx)pageMem).partitionMetaPageId(grpId, p);
-
-            PageStore store =
-                    ((FilePageStoreManager)encCache.context().shared().pageStore()).getStore(cacheId, p);
-
-            int pageSize = store.getPageSize();
-
-//            IgniteInClosure2X<Long, Long> clo = new IgniteInClosure2X<Long, Long>() {
-//                @Override public void applyx(Long pageId, Long pageAddr) throws IgniteCheckedException {
-//                    byte[] pageBytes = PageUtils.getBytes(pageAddr, 0, pageSize);
-//
-//                    ByteBuffer pageBuf = ByteBuffer.wrap(pageBytes).order(ByteOrder.LITTLE_ENDIAN);
-//
-//                    // todo how to get tag
-//                    store.write(pageId, pageBuf, Integer.MAX_VALUE, true);
-//                }
-//            };
-
-            IgniteInClosure2X<Long, ByteBuffer> clo = new IgniteInClosure2X<Long, ByteBuffer>() {
-                @Override public void applyx(Long pageId, ByteBuffer pageBuf) throws IgniteCheckedException {
-                    //byte[] pageBytes = PageUtils.getBytes(pageAddr, 0, pageSize);
-
-                    //ByteBuffer pageBuf = ByteBuffer.wrap(pageBytes).order(ByteOrder.LITTLE_ENDIAN);
-
-                    pageBuf.position(0);
-
-                    // todo how to get tag
-                    store.write(pageId, pageBuf, Integer.MAX_VALUE, true);
-                }
-            };
-
-            ctx.cache().context().database().checkpointReadLock();
-
-            try {
-                scanFileStore(store, startPageId, clo);
-            } finally {
-                ctx.cache().context().database().checkpointReadUnlock();
-            }
-        }
-
-        grpReadKeys.remove(grpId);
     }
 
     /** Master key change request. */
