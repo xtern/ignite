@@ -77,6 +77,7 @@ public interface IgniteEncryption {
      *
      * @param groups cache groups.
      * @throws IgniteCheckedException if re-encryption already in progress.
+     * @return Future for this operation.
      */
-    public void changeGroupKey(Collection<Integer> groups) throws IgniteCheckedException;
+    public IgniteFuture<Void> changeGroupKey(Collection<Integer> groups) throws IgniteCheckedException;
 }

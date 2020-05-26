@@ -24,14 +24,16 @@ import java.util.concurrent.atomic.AtomicIntegerArray;
 import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.internal.GridKernalContext;
 import org.apache.ignite.internal.IgniteInternalFuture;
+import org.apache.ignite.internal.pagemem.FullPageId;
 import org.apache.ignite.internal.pagemem.PageUtils;
 import org.apache.ignite.internal.pagemem.store.PageStore;
-import org.apache.ignite.internal.pagemem.wal.record.delta.DataPageInsertRecord;
+import org.apache.ignite.internal.pagemem.wal.record.PageSnapshot;
 import org.apache.ignite.internal.processors.cache.CacheGroupContext;
 import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtLocalPartition;
 import org.apache.ignite.internal.processors.cache.persistence.file.FilePageStoreManager;
 import org.apache.ignite.internal.processors.cache.persistence.pagemem.PageMemoryEx;
 import org.apache.ignite.internal.util.future.GridCompoundFuture;
+import org.apache.ignite.internal.util.future.GridFinishedFuture;
 import org.apache.ignite.internal.util.future.GridFutureAdapter;
 
 import static org.apache.ignite.internal.pagemem.PageIdAllocator.INDEX_PARTITION;
@@ -49,6 +51,8 @@ public class CacheEncryptionTask {
 
     private Map<Integer, ReencryptionState> statesMap = new ConcurrentHashMap<>();
 
+    private Map<Integer, IgniteInternalFuture> futMap = new ConcurrentHashMap<>();
+
     public IgniteInternalFuture schedule(int grpId) throws IgniteCheckedException {
         ReencryptionState state = new ReencryptionState(grpId);
 
@@ -57,7 +61,7 @@ public class CacheEncryptionTask {
         assert grp != null;
 
         for (GridDhtLocalPartition part : grp.topology().currentLocalPartitions()) {
-            if (part.state() != OWNING && part.state() != MOVING)
+            if ((part.state() != OWNING && part.state() != MOVING) || part.isClearing())
                 continue;
 
             schedule(grpId, part.id(), state);
@@ -68,6 +72,7 @@ public class CacheEncryptionTask {
         state.fut.markInitialized();
 
         statesMap.put(grpId, state);
+        futMap.put(grpId, state.fut);
 
         return state.fut;
     }
@@ -85,6 +90,12 @@ public class CacheEncryptionTask {
         state.fut.add(fut);
 
         ctx.getSystemExecutorService().submit(scan);
+    }
+
+    public IgniteInternalFuture encryptionFuture(int grpId) {
+        IgniteInternalFuture fut = futMap.get(grpId);
+
+        return fut == null ? new GridFinishedFuture() : fut;
     }
 
     public int pageOffset(int grpId, int partId) {
@@ -165,6 +176,8 @@ public class CacheEncryptionTask {
 
             long metaPageId = pageMem.partitionMetaPageId(grpId, partId);
 
+            int pageSize = pageMem.realPageSize(grpId);
+
             int pageNum = off;
 
             while (pageNum < cnt) {
@@ -184,9 +197,11 @@ public class CacheEncryptionTask {
                         long pageAddr = pageMem.writeLock(grpId, pageId, page, true);
 
                         try {
-                            byte[] payload = PageUtils.getBytes(pageAddr, 0, pageMem.realPageSize(grpId));
+                            byte[] payload = PageUtils.getBytes(pageAddr, 0, pageSize);
 
-                            ctx.cache().context().wal().log(new DataPageInsertRecord(grpId, pageId, payload));
+                            FullPageId fullPageId = new FullPageId(pageId, grpId);
+
+                            ctx.cache().context().wal().log(new PageSnapshot(fullPageId, payload, pageSize));
                         }
                         finally {
                             pageMem.writeUnlock(grpId, pageId, page, null, true, true);

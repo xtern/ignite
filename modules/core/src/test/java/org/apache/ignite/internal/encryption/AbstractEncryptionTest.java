@@ -101,8 +101,8 @@ public abstract class AbstractEncryptionTest extends GridCommonAbstractTest {
                     .setPersistenceEnabled(true))
             .setPageSize(4 * 1024)
             .setWalSegmentSize(1024 * 1024)
-            .setWalSegments(2)
-            .setMaxWalArchiveSize(2 * 1024 * 1024)
+            .setWalSegments(4)
+            .setMaxWalArchiveSize(10 * 1024 * 1024)
             .setWalMode(FSYNC);
 
         cfg.setDataStorageConfiguration(memCfg);

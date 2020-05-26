@@ -110,7 +110,7 @@ public enum IgniteFeatures {
     DISTRIBUTED_TX_COLLISIONS_DUMP(37),
 
     /** Master key change. See {@link IgniteEncryption#changeGroupKey(Collection)}. */
-    CACHE_KEY_CHANGE(31);
+    GROUP_KEY_CHANGE(31);
 
     /**
      * Unique feature identifier.
