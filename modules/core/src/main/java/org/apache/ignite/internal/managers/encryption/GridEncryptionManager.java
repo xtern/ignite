@@ -1185,6 +1185,18 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
                 }
             }, true);
 
+            // compatibiliy - convert existing keys.
+            if (!grpEncKeys.isEmpty() && grpEncKeysX.isEmpty()) {
+                for (Map.Entry<Integer, Serializable> entry : grpEncKeys.entrySet()) {
+                    Map<Integer, Serializable> keysMap = new ConcurrentHashMap<>(1);
+                    keysMap.put(0, entry.getValue());
+
+                    grpEncKeysX.put(entry.getKey(), keysMap);
+
+                    grpEncActiveKeys.put(entry.getKey(), 0);
+                }
+            }
+
             Map<Long, Map<Integer, Set<Integer>>> map = (Map<Long, Map<Integer, Set<Integer>>>)metastorage.read(REENCRYPTED_WAL_SEGMENTS);
 
             if (map != null)

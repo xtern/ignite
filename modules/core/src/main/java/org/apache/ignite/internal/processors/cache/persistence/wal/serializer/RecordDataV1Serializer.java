@@ -118,7 +118,9 @@ import org.jetbrains.annotations.Nullable;
 
 import static org.apache.ignite.internal.pagemem.wal.record.WALRecord.RecordType.DATA_RECORD;
 import static org.apache.ignite.internal.pagemem.wal.record.WALRecord.RecordType.ENCRYPTED_DATA_RECORD;
+import static org.apache.ignite.internal.pagemem.wal.record.WALRecord.RecordType.ENCRYPTED_DATA_RECORD_V2;
 import static org.apache.ignite.internal.pagemem.wal.record.WALRecord.RecordType.ENCRYPTED_RECORD;
+import static org.apache.ignite.internal.pagemem.wal.record.WALRecord.RecordType.ENCRYPTED_RECORD_V2;
 import static org.apache.ignite.internal.processors.cache.GridCacheOperation.READ;
 import static org.apache.ignite.internal.processors.cache.persistence.wal.serializer.RecordV1Serializer.REC_TYPE_SIZE;
 import static org.apache.ignite.internal.processors.cache.persistence.wal.serializer.RecordV1Serializer.putRecordType;
@@ -198,7 +200,7 @@ public class RecordDataV1Serializer implements RecordDataSerializer {
     /** {@inheritDoc} */
     @Override public WALRecord readRecord(RecordType type, ByteBufferBackedDataInput in, int size)
         throws IOException, IgniteCheckedException {
-        if (type == ENCRYPTED_RECORD) {
+        if (type == ENCRYPTED_RECORD || type == ENCRYPTED_RECORD_V2) {
             if (encSpi == null) {
                 T2<Integer, RecordType> knownData = skipEncryptedRecord(in, true);
 
@@ -206,7 +208,8 @@ public class RecordDataV1Serializer implements RecordDataSerializer {
                 return new EncryptedRecord(knownData.get1(), knownData.get2());
             }
 
-            T3<ByteBufferBackedDataInput, Integer, RecordType> clData = readEncryptedData(in, true);
+            T3<ByteBufferBackedDataInput, Integer, RecordType> clData =
+                readEncryptedData(in, true, type == ENCRYPTED_RECORD_V2);
 
             //This happen during startup. On first WAL iteration we restore only metastore.
             //So, no encryption keys available. See GridCacheDatabaseSharedManager#readMetastore
@@ -270,28 +273,28 @@ public class RecordDataV1Serializer implements RecordDataSerializer {
      *
      * @param in Input stream.
      * @param readType If {@code true} plain record type will be read from {@code in}.
+     * @param readKeyId If {@code true} encryption key identifier will be read from {@code in}.
      * @return Plain data stream, group id, plain record type,
      * @throws IOException If failed.
      * @throws IgniteCheckedException If failed.
      */
     private T3<ByteBufferBackedDataInput, Integer, RecordType> readEncryptedData(ByteBufferBackedDataInput in,
-        boolean readType)
+        boolean readType, boolean readKeyId)
         throws IOException, IgniteCheckedException {
         int grpId = in.readInt();
         int encRecSz = in.readInt();
+
         RecordType plainRecType = null;
 
         if (readType)
             plainRecType = RecordV1Serializer.readRecordType(in);
 
+        int keyId = readKeyId ? in.readUnsignedByte() : 0;
+
         byte[] encData = new byte[encRecSz];
 
         in.readFully(encData);
 
-        // todo binary comptibility
-        int keyId = in.readUnsignedByte();
-
-        // todo encMgr.groupKey(grpId, keyId);
         Serializable key = encMgr.groupKey(grpId, keyId);
 
         if (key == null)
@@ -350,10 +353,9 @@ public class RecordDataV1Serializer implements RecordDataSerializer {
 
         T2<Serializable, Integer> pair = encMgr.groupKeyX(grpId);
 
-        encSpi.encrypt(clData, pair.getKey(), dst);
-
-        // todo put key identifier
         dst.put((byte)pair.getValue().intValue());
+
+        encSpi.encrypt(clData, pair.getKey(), dst);
     }
 
     /**
@@ -660,12 +662,14 @@ public class RecordDataV1Serializer implements RecordDataSerializer {
                 break;
 
             case ENCRYPTED_DATA_RECORD:
+            case ENCRYPTED_DATA_RECORD_V2:
                 entryCnt = in.readInt();
 
                 entries = new ArrayList<>(entryCnt);
 
+                // todo
                 for (int i = 0; i < entryCnt; i++)
-                    entries.add(readEncryptedDataEntry(in));
+                    entries.add(readEncryptedDataEntry(in, type == ENCRYPTED_DATA_RECORD_V2));
 
                 res = new DataRecord(entries, 0L);
 
@@ -1944,11 +1948,12 @@ public class RecordDataV1Serializer implements RecordDataSerializer {
 
     /**
      * @param in Input to read from.
+     * @param readKeyId If {@code true} encryption key identifier will be read from {@code in}.
      * @return Read entry.
      * @throws IOException If failed.
      * @throws IgniteCheckedException If failed.
      */
-    DataEntry readEncryptedDataEntry(ByteBufferBackedDataInput in) throws IOException, IgniteCheckedException {
+    DataEntry readEncryptedDataEntry(ByteBufferBackedDataInput in, boolean readKeyId) throws IOException, IgniteCheckedException {
         boolean needDecryption = in.readByte() == ENCRYPTED;
 
         if (needDecryption) {
@@ -1958,7 +1963,7 @@ public class RecordDataV1Serializer implements RecordDataSerializer {
                 return new EncryptedDataEntry();
             }
 
-            T3<ByteBufferBackedDataInput, Integer, RecordType> clData = readEncryptedData(in, false);
+            T3<ByteBufferBackedDataInput, Integer, RecordType> clData = readEncryptedData(in, false, readKeyId);
 
             if (clData.get1() == null)
                 return null;
@@ -2052,12 +2057,12 @@ public class RecordDataV1Serializer implements RecordDataSerializer {
             return rec.type();
 
         if (needEncryption(rec))
-            return ENCRYPTED_RECORD;
+            return ENCRYPTED_RECORD_V2;
 
         if (rec.type() != DATA_RECORD)
             return rec.type();
 
-        return isDataRecordEncrypted((DataRecord)rec) ? ENCRYPTED_DATA_RECORD : DATA_RECORD;
+        return isDataRecordEncrypted((DataRecord)rec) ? ENCRYPTED_DATA_RECORD_V2 : DATA_RECORD;
     }
 
     /**
