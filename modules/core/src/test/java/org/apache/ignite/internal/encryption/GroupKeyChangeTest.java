@@ -5,17 +5,20 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.file.StandardOpenOption;
-import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
+import org.apache.ignite.Ignite;
 import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.IgniteDataStreamer;
-import org.apache.ignite.cache.CacheMode;
+import org.apache.ignite.cache.affinity.rendezvous.RendezvousAffinityFunction;
 import org.apache.ignite.cluster.ClusterState;
+import org.apache.ignite.configuration.CacheConfiguration;
 import org.apache.ignite.configuration.DataRegionConfiguration;
 import org.apache.ignite.configuration.DataStorageConfiguration;
 import org.apache.ignite.configuration.IgniteConfiguration;
@@ -32,15 +35,13 @@ import org.apache.ignite.internal.util.typedef.internal.U;
 import org.apache.ignite.testframework.GridTestUtils;
 import org.junit.Test;
 
+import static org.apache.ignite.configuration.WALMode.LOG_ONLY;
 import static org.apache.ignite.internal.pagemem.PageIdAllocator.INDEX_PARTITION;
 
 /**
  *
  */
 public class GroupKeyChangeTest extends AbstractEncryptionTest {
-    /** Non-persistent data region name. */
-    private static final String NO_PERSISTENCE_REGION = "no-persistence-region";
-
     private static final long MAX_AWAIT_MILLIS = 15_000;
 
     /** {@inheritDoc} */
@@ -50,58 +51,40 @@ public class GroupKeyChangeTest extends AbstractEncryptionTest {
         cleanPersistenceDir();
     }
 
-//    /** {@inheritDoc} */
-//    @Override protected void beforeTest() throws Exception {
-//        cleanPersistenceDir();
-//
-//        IgniteEx igniteEx = startGrid(0);
-//
-//        startGrid(1);
-//
-//        igniteEx.cluster().active(true);
-//
-//        awaitPartitionMapExchange();
-//    }
-
     /** {@inheritDoc} */
     @Override protected IgniteConfiguration getConfiguration(String name) throws Exception {
         IgniteConfiguration cfg = super.getConfiguration(name);
 
-        DataStorageConfiguration memCfg = cfg.getDataStorageConfiguration();
+        cfg.setConsistentId(name);
 
-        memCfg.setDataRegionConfigurations(new DataRegionConfiguration()
-            .setMaxSize(10L * 1024 * 1024)
-            .setName(NO_PERSISTENCE_REGION)
-            .setPersistenceEnabled(false));
+        DataStorageConfiguration memCfg = new DataStorageConfiguration()
+            .setDefaultDataRegionConfiguration(
+                new DataRegionConfiguration()
+                    .setMaxSize(10L * 1024 * 1024)
+                    .setPersistenceEnabled(true))
+            .setPageSize(4 * 1024)
+            .setWalSegmentSize(1024 * 1024)
+            .setWalSegments(4)
+            .setMaxWalArchiveSize(10 * 1024 * 1024)
+            .setWalMode(LOG_ONLY);
+
+        cfg.setDataStorageConfiguration(memCfg);
 
         return cfg;
     }
 
     /** {@inheritDoc} */
-    @Override protected int partitions() {
-        return 4;
-    }
+    @Override protected <K, V> CacheConfiguration<K, V> cacheConfiguration(String name, String grp) {
+        CacheConfiguration<K, V> cfg = super.cacheConfiguration(name, grp);
 
-    /** {@inheritDoc} */
-    @Override protected CacheMode cacheMode() {
-        return CacheMode.REPLICATED;
-    }
-
-    @Test
-    public void checkCacheStart() throws Exception {
-        startTestGrids(true);
-
-        IgniteEx node1 = grid(GRID_0);
-        IgniteEx node2 = grid(GRID_1);
-
-        createEncryptedCache(node1, node2, cacheName(), null);
+        return cfg.setAffinity(new RendezvousAffinityFunction(false, 8));
     }
 
     @Test
     public void testBasicChangeUnderLoad() throws Exception {
         startTestGrids(true);
 
-        final IgniteEx node1 = grid(GRID_0);
+        IgniteEx node1 = grid(GRID_0);
         IgniteEx node2 = grid(GRID_1);
 
         createEncryptedCache(node1, node2, cacheName(), null);
@@ -112,19 +95,24 @@ public class GroupKeyChangeTest extends AbstractEncryptionTest {
 
         AtomicInteger cntr = new AtomicInteger(cache.size());
 
+        CountDownLatch startLatch = new CountDownLatch(1);
+
+        final Ignite somenode = node1;
+
         IgniteInternalFuture loadFut = GridTestUtils.runAsync(() -> {
-            try (IgniteDataStreamer<Integer, String> streamer = node1.dataStreamer(cacheName())) {
+            try (IgniteDataStreamer<Integer, String> streamer = somenode.dataStreamer(cacheName())) {
                 while (!Thread.currentThread().isInterrupted()) {
                     int n = cntr.getAndIncrement();
 
                     streamer.addData(n, String.valueOf(n));
+
+                    if (n == 5000)
+                        startLatch.countDown();
                 }
             }
         });
 
-        U.sleep(500);
-
-
+        startLatch.await(MAX_AWAIT_MILLIS, TimeUnit.MILLISECONDS);
 
         int grpId = cache.context().groupId();
 
@@ -155,15 +143,15 @@ public class GroupKeyChangeTest extends AbstractEncryptionTest {
 
         stopAllGrids();
 
-        IgniteEx node = startGrid(GRID_0);
+        node1 = startGrid(GRID_0);
         node2 = startGrid(GRID_1);
 
-        node.cluster().state(ClusterState.ACTIVE);
+        node1.cluster().state(ClusterState.ACTIVE);
 
-        GridEncryptionManager encMgr1 = node.context().encryption();
+        GridEncryptionManager encMgr1 = node1.context().encryption();
         GridEncryptionManager encMgr2 = node2.context().encryption();
 
-        try (IgniteDataStreamer<Integer, String> streamer = node.dataStreamer(cacheName())) {
+        try (IgniteDataStreamer<Integer, String> streamer = node1.dataStreamer(cacheName())) {
             for (; ; ) {
                 int n = cntr.getAndIncrement();
 
@@ -173,11 +161,11 @@ public class GroupKeyChangeTest extends AbstractEncryptionTest {
                     break;
 
                 if (n > 10_000_000)
-                    fail("Keys not cleared");
+                    break;
             }
         }
 
-        assertEquals(1, node.context().encryption().groupKeysInfo(grpId).size());
+        assertEquals(1, node1.context().encryption().groupKeysInfo(grpId).size());
         assertEquals(1, node2.context().encryption().groupKeysInfo(grpId).size());
     }
 

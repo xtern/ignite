@@ -1,13 +1,9 @@
 package org.apache.ignite.internal.encryption;
 
-import java.util.List;
-import java.util.concurrent.atomic.AtomicInteger;
-import org.apache.ignite.Ignite;
 import org.apache.ignite.IgniteCache;
 import org.apache.ignite.cluster.ClusterState;
 import org.apache.ignite.internal.IgniteEx;
 import org.apache.ignite.internal.processors.cache.persistence.GridCacheDatabaseSharedManager;
-import org.apache.ignite.internal.util.typedef.T2;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -17,11 +13,6 @@ public class EncryptedCacheRecoveryTest extends AbstractEncryptionTest {
         stopAllGrids();
 
         cleanPersistenceDir();
-    }
-
-    /** {@inheritDoc} */
-    @Override protected int partitions() {
-        return 4;
     }
 
     @Test
@@ -54,7 +45,7 @@ public class EncryptedCacheRecoveryTest extends AbstractEncryptionTest {
 
         IgniteCache<Long, Object> cache = ignite.cache(cacheName());
 
-        for (long i = 0; i < 104; i++)
+        for (long i = 0; i < 100; i++)
             assertEquals("" + i, cache.get(i));
 
 //            if (pages != null) {

@@ -27,8 +27,6 @@ import javax.crypto.KeyGenerator;
 import javax.crypto.SecretKey;
 import org.apache.ignite.Ignite;
 import org.apache.ignite.IgniteCache;
-import org.apache.ignite.cache.CacheMode;
-import org.apache.ignite.cache.affinity.rendezvous.RendezvousAffinityFunction;
 import org.apache.ignite.configuration.CacheConfiguration;
 import org.apache.ignite.configuration.DataRegionConfiguration;
 import org.apache.ignite.configuration.DataStorageConfiguration;
@@ -92,17 +90,12 @@ public abstract class AbstractEncryptionTest extends GridCommonAbstractTest {
 
         cfg.setEncryptionSpi(encSpi);
 
-        cfg.setConsistentId(name);
-
         DataStorageConfiguration memCfg = new DataStorageConfiguration()
             .setDefaultDataRegionConfiguration(
                 new DataRegionConfiguration()
                     .setMaxSize(10L * 1024 * 1024)
                     .setPersistenceEnabled(true))
             .setPageSize(4 * 1024)
-            .setWalSegmentSize(1024 * 1024)
-            .setWalSegments(4)
-            .setMaxWalArchiveSize(10 * 1024 * 1024)
             .setWalMode(FSYNC);
 
         cfg.setDataStorageConfiguration(memCfg);
@@ -118,6 +111,18 @@ public abstract class AbstractEncryptionTest extends GridCommonAbstractTest {
     /** */
     protected String keystorePath() {
         return KEYSTORE_PATH;
+    }
+
+    /**
+     * @param name Cache name.
+     * @param grp Cache group name.
+     */
+    protected <K, V> CacheConfiguration<K, V> cacheConfiguration(String name, String grp) {
+        CacheConfiguration<K, V> cfg = new CacheConfiguration<>(name);
+
+        return cfg.setWriteSynchronizationMode(FULL_SYNC)
+            .setGroupName(grp)
+            .setEncryptionEnabled(true);
     }
 
     /** */
@@ -180,36 +185,21 @@ public abstract class AbstractEncryptionTest extends GridCommonAbstractTest {
         createEncryptedCache(grid0, grid1, cacheName, cacheGroup, true);
     }
 
-    protected int partitions() {
-        return 1024;
-    }
-
     /** */
     protected void createEncryptedCache(IgniteEx grid0, @Nullable IgniteEx grid1, String cacheName, String cacheGroup,
         boolean putData) throws IgniteInterruptedCheckedException {
-        CacheConfiguration<Long, String> ccfg = new CacheConfiguration<Long, String>(cacheName)
-            .setWriteSynchronizationMode(FULL_SYNC)
-            .setGroupName(cacheGroup)
-            .setEncryptionEnabled(true)
-            .setCacheMode(cacheMode())
-            .setAffinity(new RendezvousAffinityFunction(false, partitions()));
-
-        IgniteCache<Long, String> cache = grid0.createCache(ccfg);
+        IgniteCache<Long, String> cache = grid0.createCache(cacheConfiguration(cacheName, cacheGroup));
 
         if (grid1 != null)
             GridTestUtils.waitForCondition(() -> grid1.cachex(cacheName()) != null, 2_000L);
 
         if (putData) {
-            for (long i = 0; i < 104; i++)
+            for (long i = 0; i < 100; i++)
                 cache.put(i, "" + i);
 
-            for (long i = 0; i < 104; i++)
+            for (long i = 0; i < 100; i++)
                 assertEquals("" + i, cache.get(i));
         }
-    }
-
-    protected CacheMode cacheMode() {
-        return CacheMode.PARTITIONED;
     }
 
     /**
