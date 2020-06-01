@@ -32,6 +32,7 @@ import java.util.UUID;
 import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.IgniteLogger;
 import org.apache.ignite.internal.managers.encryption.GridEncryptionManager;
+import org.apache.ignite.internal.managers.encryption.GroupKey;
 import org.apache.ignite.internal.pagemem.FullPageId;
 import org.apache.ignite.internal.pagemem.wal.record.CacheState;
 import org.apache.ignite.internal.pagemem.wal.record.CheckpointRecord;
@@ -117,7 +118,6 @@ import org.apache.ignite.spi.encryption.noop.NoopEncryptionSpi;
 import org.jetbrains.annotations.Nullable;
 
 import static org.apache.ignite.internal.pagemem.wal.record.WALRecord.RecordType.DATA_RECORD;
-import static org.apache.ignite.internal.pagemem.wal.record.WALRecord.RecordType.ENCRYPTED_DATA_RECORD;
 import static org.apache.ignite.internal.pagemem.wal.record.WALRecord.RecordType.ENCRYPTED_DATA_RECORD_V2;
 import static org.apache.ignite.internal.pagemem.wal.record.WALRecord.RecordType.ENCRYPTED_RECORD;
 import static org.apache.ignite.internal.pagemem.wal.record.WALRecord.RecordType.ENCRYPTED_RECORD_V2;
@@ -351,11 +351,11 @@ public class RecordDataV1Serializer implements RecordDataSerializer {
         if (plainRecType != null)
             putRecordType(dst, plainRecType);
 
-        T2<Serializable, Integer> pair = encMgr.groupKeyX(grpId);
+        GroupKey grpKey = encMgr.groupKey(grpId);
 
-        dst.put((byte)pair.getValue().intValue());
+        dst.put(grpKey.id());
 
-        encSpi.encrypt(clData, pair.getKey(), dst);
+        encSpi.encrypt(clData, grpKey.key(), dst);
     }
 
     /**
@@ -1211,10 +1211,11 @@ public class RecordDataV1Serializer implements RecordDataSerializer {
 
                 int keysCnt = in.readInt();
 
-                HashMap<Integer, byte[]> grpKeys = new HashMap<>(keysCnt);
+                List<T3<Integer, Byte, byte[]>> grpKeys = new ArrayList<>(keysCnt);
 
                 for (int i = 0; i < keysCnt; i++) {
                     int grpId = in.readInt();
+                    byte keyId = in.readByte();
 
                     int grpKeySize = in.readInt();
 
@@ -1222,7 +1223,9 @@ public class RecordDataV1Serializer implements RecordDataSerializer {
 
                     in.readFully(grpKey);
 
-                    grpKeys.put(grpId, grpKey);
+                    System.out.println(">>> read wal grp=" + grpId + " id=" + keyId);
+
+                    grpKeys.add(new T3<>(grpId, keyId, grpKey));
                 }
 
                 res = new MasterKeyChangeRecord(masterKeyName, grpKeys);
@@ -1824,15 +1827,18 @@ public class RecordDataV1Serializer implements RecordDataSerializer {
                 buf.putInt(keyIdBytes.length);
                 buf.put(keyIdBytes);
 
-                Map<Integer, byte[]> grpKeys = mkChangeRec.getGrpKeys();
+                List<T3<Integer, Byte, byte[]>> grpKeys = mkChangeRec.getGrpKeys();
 
                 buf.putInt(grpKeys.size());
 
-                for (Entry<Integer, byte[]> entry : grpKeys.entrySet()) {
-                    buf.putInt(entry.getKey());
+                for (T3<Integer, Byte, byte[]> entry : grpKeys) {
+                    System.out.println(">>> write wal " + entry.get1() + " " + entry.get2());
 
-                    buf.putInt(entry.getValue().length);
-                    buf.put(entry.getValue());
+                    buf.putInt(entry.get1());
+                    buf.put(entry.get2());
+
+                    buf.putInt(entry.get3().length);
+                    buf.put(entry.get3());
                 }
 
                 break;

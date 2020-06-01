@@ -22,9 +22,9 @@ import java.io.Serializable;
 import java.nio.ByteBuffer;
 import java.nio.MappedByteBuffer;
 import org.apache.ignite.internal.managers.encryption.GridEncryptionManager;
+import org.apache.ignite.internal.managers.encryption.GroupKey;
 import org.apache.ignite.internal.processors.cache.persistence.tree.io.PageIO;
 import org.apache.ignite.internal.processors.cache.persistence.wal.crc.FastCrc;
-import org.apache.ignite.internal.util.typedef.T2;
 import org.apache.ignite.internal.util.typedef.internal.CU;
 import org.apache.ignite.spi.encryption.EncryptionSpi;
 
@@ -243,15 +243,15 @@ public class EncryptedFileIO implements FileIO {
 
         srcBuf.limit(srcBuf.position() + plainDataSize());
 
-        T2<Serializable, Integer> pair = key();
+        GroupKey grpKey = key();
 
-        encSpi.encryptNoPadding(srcBuf, pair.getKey(), res);
+        encSpi.encryptNoPadding(srcBuf, grpKey.key(), res);
 
         res.rewind();
 
         storeCRC(res);
 
-        res.put((byte)pair.getValue().intValue());
+        res.put(grpKey.id());
 
 //        System.out.println(">> write >> key identifier: " + pair.getValue());
 
@@ -350,9 +350,9 @@ public class EncryptedFileIO implements FileIO {
     /**
      * @return Encryption key.
      */
-    private T2<Serializable, Integer> key() {
+    private GroupKey key() {
 //        if (encKey == null)
-        return encMgr.groupKeyX(groupId);
+        return encMgr.groupKey(groupId);
 
 //        return encKey;
     }

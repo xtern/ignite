@@ -69,6 +69,8 @@ import org.apache.ignite.internal.util.future.IgniteFinishedFutureImpl;
 import org.apache.ignite.internal.util.future.IgniteFutureImpl;
 import org.apache.ignite.internal.util.typedef.F;
 import org.apache.ignite.internal.util.typedef.T2;
+import org.apache.ignite.internal.util.typedef.T3;
+import org.apache.ignite.internal.util.typedef.internal.CU;
 import org.apache.ignite.internal.util.typedef.internal.S;
 import org.apache.ignite.internal.util.typedef.internal.U;
 import org.apache.ignite.lang.IgniteFuture;
@@ -151,10 +153,7 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
     private static final IgniteProductVersion CACHE_ENCRYPTION_SINCE = IgniteProductVersion.fromString("2.7.0");
 
     /** Prefix for a encryption group key in meta store. */
-    public static final String ENCRYPTION_KEY_PREFIX = "grp-encryption-key-";
-
-    /** */
-    private static final String ENCRYPTION_KEYS_PREFIX = "grp-encryption-keys-";
+    public static final String ENCRYPTION_KEYS_PREFIX = "grp-encryption-keys-";
 
     private static final String ENCRYPTION_ACTIVE_KEY_PREFIX = "grp-encryption-active-key-";
 
@@ -164,6 +163,10 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
 
     /** Prefix for a master key name. */
     private static final String MASTER_KEY_NAME_PREFIX = "encryption-master-key-name";
+
+    /** Prefix for a encryption group key in meta store. */
+    @Deprecated
+    private static final String ENCRYPTION_KEY_PREFIX = "grp-encryption-key-";
 
     /** Synchronization mutex. */
     private final Object metaStorageMux = new Object();
@@ -184,12 +187,11 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
     private volatile boolean writeToMetaStoreEnabled;
 
     /** Group encryption keys. */
-    private final ConcurrentHashMap<Integer, Serializable> grpEncKeys = new ConcurrentHashMap<>();
+    // todo submap can be a simple byte-len array
+    private final Map<Integer, Map<Integer, Serializable>> grpEncKeys = new ConcurrentHashMap<>();
 
+    /** Key identifiers that are used for writing. */
     private final ConcurrentHashMap<Integer, Integer> grpEncActiveKeys = new ConcurrentHashMap<>();
-
-    // todo submap can be a simple array
-    private final Map<Integer, Map<Integer, Serializable>> grpEncKeysX = new ConcurrentHashMap<>();
 
     /** Pending generate encryption key futures. */
     private ConcurrentMap<IgniteUuid, GenerateEncryptionKeyFuture> genEncKeyFuts = new ConcurrentHashMap<>();
@@ -234,7 +236,7 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
     private final Set<Integer> encryptedGroups = new GridConcurrentHashSet<>();
 
     // todo walidx -> <grp -> keyIds>
-    private final ConcurrentHashMap<Long, Map<Integer, Set<Integer>>> walSegments = new ConcurrentHashMap<>();
+    private final Map<Long, Map<Integer, Set<Integer>>> walSegments = new ConcurrentHashMap<>();
 
     /**
      * @param ctx Kernel context.
@@ -341,12 +343,12 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
                     ctx.cache().context().database().checkpointReadLock();
 
                     try {
-                        metaStorage.write(REENCRYPTED_WAL_SEGMENTS, walSegments);
+                        metaStorage.write(REENCRYPTED_WAL_SEGMENTS, (Serializable)walSegments);
 
                         if (encryptedGroups.contains(grpId))
                             continue;
 
-                        boolean rmv = grpEncKeysX.get(grpId).keySet().removeAll(keyIds);
+                        boolean rmv = grpEncKeys.get(grpId).keySet().removeAll(keyIds);
 
                         assert rmv;
 
@@ -414,23 +416,19 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
                     PageStore pageStore = mgr.getStore(grpId, INDEX_PARTITION);
                     pageStore.encryptedPagesCount(pageStore.pages());
 
-//                    for (PageStore pageStore : mgr.getStores(grpId))
-//                        pageStore.encryptedPagesCount(pageStore.pages());
-
                     IgniteInternalFuture<?> fut = encryptTask.schedule(grpId);
 
                     fut.listen(f -> {
                         try {
                             f.get();
 
-                            // todo cleanup keys if walsegment removed
                             boolean changed = false;
 
                             for (Map<Integer, ?> map : walSegments.values()) {
                                 if (!map.containsKey(grpId)) {
                                     int activeKey = grpEncActiveKeys.get(grpId);
 
-                                    changed |= grpEncKeysX.get(grpId).keySet().removeIf(v -> v != activeKey);
+                                    changed |= grpEncKeys.get(grpId).keySet().removeIf(v -> v != activeKey);
                                 }
                             }
 
@@ -472,16 +470,17 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
                     ctx.cluster().clientReconnectFuture(),
                     "Group key change was rejected. Client node disconnected."));
             }
-//
+
             if (stopped) {
                 return new IgniteFinishedFutureImpl<>(new IgniteException("Group key change was rejected. " +
                     "Node is stopping."));
             }
-//
-//            if (masterKeyChangeFut != null && !masterKeyChangeFut.isDone()) {
-//                return new IgniteFinishedFutureImpl<>(new IgniteException("Master key change was rejected. " +
-//                    "The previous change was not completed."));
-//            }
+
+            if (prepareGroupKeyChangeFut != null && !prepareGroupKeyChangeFut.isDone()) {
+                return new IgniteFinishedFutureImpl<>(new IgniteException("Group key change was rejected. " +
+                    "The previous change was not completed."));
+            }
+
             prepareGroupKeyChangeFut = new KeyChangeFuture(req.requestId());
 
             // todo
@@ -517,7 +516,7 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
                     // todo max key
                     int newKeyId = req.keyIdentifiers()[n] & 0xff;
 
-                    if (grpEncKeysX.get(grpId).containsKey(newKeyId))
+                    if (grpEncKeys.get(grpId).containsKey(newKeyId))
                         return new GridFinishedFuture<>(new IgniteException("Incorrect new key identifer [grpId=" + grpId + ", keyId=" + newKeyId + "]"));
 
                     DiscoCache discoCache = ctx.discovery().discoCache();
@@ -530,19 +529,6 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
 
                     ++n;
                 }
-
-//            String masterKeyName = decryptKeyName(req.encKeyName());
-//
-//            if (masterKeyName.equals(getMasterKeyName()))
-//                throw new IgniteException("Master key change was rejected. New name equal to the current.");
-//
-//            byte[] digest = masterKeyDigest(masterKeyName);
-//
-//            if (!Arrays.equals(req.digest, digest)) {
-//                return new GridFinishedFuture<>(new IgniteException("Master key change was rejected. Master " +
-//                    "key digest consistency check failed. Make sure that the new master key is the same at " +
-//                    "all server nodes [nodeId=" + ctx.localNodeId() + ']'));
-//            }
             }
             catch (Exception e) {
                 return new GridFinishedFuture<>(new IgniteException("Master key change was rejected [nodeId=" +
@@ -734,14 +720,14 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
         }
 
         for (Map.Entry<Integer, byte[]> entry : nodeEncKeys.knownKeys.entrySet()) {
-            Serializable locEncKey = grpEncKeys.get(entry.getKey());
+            GroupKey locEncKey = groupKey(entry.getKey());
 
             if (locEncKey == null)
-                continue;
+                continue; // todo should we continue if we don't have a key
 
             Serializable rmtKey = getSpi().decryptKey(entry.getValue());
 
-            if (F.eq(locEncKey, rmtKey))
+            if (F.eq(locEncKey.key(), rmtKey))
                 continue;
 
             return new IgniteNodeValidationResult(ctx.localNodeId(),
@@ -851,28 +837,44 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
      * @param grpId Group id.
      * @return Group encryption key.
      */
-    @Nullable public Serializable groupKey(int grpId) {
+    @Nullable public GroupKey groupKey(int grpId) {
         if (grpEncKeys.isEmpty())
             return null;
 
-        return grpEncKeys.get(grpId);
+        Map<Integer, Serializable> keyMap = grpEncKeys.get(grpId);
+
+        if (F.isEmpty(keyMap))
+            return null;
+
+        int keyId = grpEncActiveKeys.get(grpId);
+
+        return new GroupKey(keyMap.get(keyId), keyId);
     }
 
-    @Nullable public T2<Serializable, Integer> groupKeyX(int grpId) {
-        if (grpEncKeys.isEmpty())
+    /**
+     * Returns group encryption key.
+     *
+     * @param grpId Group id.
+     * @param keyId Key identifier.
+     * @return Group encryption key.
+     */
+    @Nullable public Serializable groupKey(int grpId, int keyId) {
+        Map<Integer, Serializable> keys = grpEncKeys.get(grpId);
+
+        if (keys == null)
             return null;
 
-        // todo active key
-        return new T2<>(grpEncKeys.get(grpId), grpEncActiveKeys.get(grpId));
+        return keys.get(keyId);
     }
 
     @Nullable public Map<Integer, Integer> groupKeysInfo(int grpId) {
-        Map<Integer, Serializable> map = grpEncKeysX.get(grpId);
+        Map<Integer, Serializable> map = grpEncKeys.get(grpId);
 
         if (map == null)
             return null;
 
         Map<Integer, Integer> keysInfo = new TreeMap<>();
+
         for (Map.Entry<Integer, Serializable> entry : map.entrySet()) {
             byte[] bytes = U.toBytes(entry.getValue());
 
@@ -883,38 +885,12 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
     }
 
     /**
-     * Returns group encryption key.
-     *
-     * @param grpId Group id.
-     * @return Group encryption key.
-     */
-    @Nullable public Serializable groupKey(int grpId, int keyId) {
-        Map<Integer, Serializable> keys = grpEncKeysX.get(grpId);
-
-        if (keys == null)
-            return null;
-
-        return keys.get(keyId);
-    }
-
-//    @Nullable public Serializable groupReadKey(int grpId) {
-//        Serializable key = grpReadKeys.get(grpId);
-//
-//        if (key != null)
-//            System.out.println("Found old key (decrypt)");
-//
-//        return key != null ? key : groupKey(grpId);
-//    }
-
-    /**
      * Store group encryption key.
      *
      * @param grpId Group id.
      * @param encGrpKey Encrypted group key.
      */
-    public void groupKey(int grpId, byte[] encGrpKey) {
-        assert !grpEncKeys.containsKey(grpId);
-
+    private void groupKey(int grpId, byte[] encGrpKey) {
         try {
             replaceKey(grpId, encGrpKey, 0);
         } catch (IgniteCheckedException e) {
@@ -930,14 +906,12 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
             if (log.isDebugEnabled())
                 log.debug("Key added. [grp=" + grpId + "]");
 
-            grpEncKeys.put(grpId, encKey);
-
-            Map<Integer, Serializable> keys = grpEncKeysX.get(grpId);
+            Map<Integer, Serializable> keys = grpEncKeys.get(grpId);
 
             if (keys == null) {
                 keys = new ConcurrentHashMap<>();
 
-                grpEncKeysX.put(grpId, keys);
+                grpEncKeys.put(grpId, keys);
             }
 
             // todo key identifier
@@ -952,7 +926,7 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
                     .computeIfAbsent(grpId, v -> new HashSet<>()).add(prevKeyId);
             }
 
-            writeToMetaStore(grpId, encGrpKey);
+            writeToMetaStore(grpId, encGrpKey, keyId);
         }
     }
 
@@ -1092,10 +1066,6 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
             try {
                 grpEncKeys.remove(grpId);
 
-                metaStorage.remove(ENCRYPTION_KEY_PREFIX + grpId);
-
-                grpEncKeysX.remove(grpId);
-
                 metaStorage.remove(ENCRYPTION_KEYS_PREFIX + grpId);
 
                 metaStorage.remove(ENCRYPTION_ACTIVE_KEY_PREFIX + grpId);
@@ -1149,27 +1119,18 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
                 }
             }
 
-            // todo remove
-            metastorage.iterate(ENCRYPTION_KEY_PREFIX, (key, val) -> {
-                Integer grpId = Integer.valueOf(key.replace(ENCRYPTION_KEY_PREFIX, ""));
-
-                byte[] encGrpKey = (byte[])val;
-
-                grpEncKeys.computeIfAbsent(grpId, k -> getSpi().decryptKey(encGrpKey));
-            }, true);
-
             metastorage.iterate(ENCRYPTION_KEYS_PREFIX, (key, val) -> {
                 try {
                     Integer grpId = Integer.valueOf(key.replace(ENCRYPTION_KEYS_PREFIX, ""));
 
-                    if (!grpEncKeysX.containsKey(grpId)) {
-                        Byte activeKey = (Byte)metastorage.read(ENCRYPTION_ACTIVE_KEY_PREFIX + grpId);
+                    Byte activeKey = (Byte)metastorage.read(ENCRYPTION_ACTIVE_KEY_PREFIX + grpId);
 
-                        if (activeKey == null)
-                            activeKey = 0;
+                    if (activeKey == null)
+                        activeKey = 0;
 
-                        grpEncActiveKeys.put(grpId, activeKey & 0xff);
+                    grpEncActiveKeys.put(grpId, activeKey & 0xff);
 
+                    if (!grpEncKeys.containsKey(grpId)) {
                         Map<Integer, byte[]> encGrpKey = (Map<Integer, byte[]>)val;
 
                         Map<Integer, Serializable> keyMap = new ConcurrentHashMap<>(encGrpKey.size());
@@ -1177,7 +1138,7 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
                         for (Map.Entry<Integer, byte[]> e : encGrpKey.entrySet())
                             keyMap.put(e.getKey(), getSpi().decryptKey(e.getValue()));
 
-                        grpEncKeysX.put(grpId, keyMap);
+                        grpEncKeys.put(grpId, keyMap);
                     }
                 }
                 catch (IgniteCheckedException e) {
@@ -1185,19 +1146,30 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
                 }
             }, true);
 
-            // compatibiliy - convert existing keys.
-            if (!grpEncKeys.isEmpty() && grpEncKeysX.isEmpty()) {
-                for (Map.Entry<Integer, Serializable> entry : grpEncKeys.entrySet()) {
+            // Try to read keys in previous format.
+            if (grpEncKeys.isEmpty()) {
+                final Map<Integer, Serializable> singleGrpEncKeys = new HashMap<>();
+
+                metastorage.iterate(ENCRYPTION_KEY_PREFIX, (key, val) -> {
+                    Integer grpId = Integer.valueOf(key.replace(ENCRYPTION_KEY_PREFIX, ""));
+
+                    byte[] encGrpKey = (byte[])val;
+
+                    singleGrpEncKeys.computeIfAbsent(grpId, k -> getSpi().decryptKey(encGrpKey));
+                }, true);
+
+                for (Map.Entry<Integer, Serializable> entry : singleGrpEncKeys.entrySet()) {
                     Map<Integer, Serializable> keysMap = new ConcurrentHashMap<>(1);
                     keysMap.put(0, entry.getValue());
 
-                    grpEncKeysX.put(entry.getKey(), keysMap);
+                    grpEncKeys.put(entry.getKey(), keysMap);
 
                     grpEncActiveKeys.put(entry.getKey(), 0);
                 }
             }
 
-            Map<Long, Map<Integer, Set<Integer>>> map = (Map<Long, Map<Integer, Set<Integer>>>)metastorage.read(REENCRYPTED_WAL_SEGMENTS);
+            Map<Long, Map<Integer, Set<Integer>>> map =
+                (Map<Long, Map<Integer, Set<Integer>>>)metastorage.read(REENCRYPTED_WAL_SEGMENTS);
 
             if (map != null)
                 walSegments.putAll(map);
@@ -1340,11 +1312,12 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
         if (writeAll)
             metaStorage.write(MASTER_KEY_NAME_PREFIX, getSpi().getMasterKeyName());
 
-        for (Map.Entry<Integer, Serializable> entry : grpEncKeys.entrySet()) {
-            if (!writeAll && metaStorage.read(ENCRYPTION_KEY_PREFIX + entry.getKey()) != null)
+        for (Map.Entry<Integer, Map<Integer, Serializable>> entry : grpEncKeys.entrySet()) {
+            if (!writeAll && metaStorage.read(ENCRYPTION_KEYS_PREFIX + entry.getKey()) != null)
                 continue;
 
-            writeToMetaStore(entry.getKey(), getSpi().encryptKey(entry.getValue()));
+            // todo
+            writeToMetaStore(entry.getKey(), getSpi().encryptKey(entry.getValue().get(0)), 0);
         }
     }
 
@@ -1375,24 +1348,22 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
      * @param grpId Group id.
      * @param encGrpKey Group encryption key.
      */
-    private void writeToMetaStore(int grpId, byte[] encGrpKey) throws IgniteCheckedException {
+    private void writeToMetaStore(int grpId, byte[] encGrpKey, /* todo */ int keyId) throws IgniteCheckedException {
         if (metaStorage == null || !writeToMetaStoreEnabled)
             return;
 
         ctx.cache().context().database().checkpointReadLock();
 
         try {
-            metaStorage.write(ENCRYPTION_KEY_PREFIX + grpId, encGrpKey);
-
             metaStorage.write(ENCRYPTION_KEYS_PREFIX + grpId, keysMap(grpId));
 
             metaStorage.write(ENCRYPTION_ACTIVE_KEY_PREFIX + grpId, (byte)grpEncActiveKeys.get(grpId).intValue());
 
-            // todo should call only once for multiple groups
-            if (encryptedGroups.add(grpId))
+            // todo should call only once for multiple groups, should not be here!
+            if (keyId != 0 && encryptedGroups.add(grpId))
                 metaStorage.write(REENCRYPTED_GROUPS, encryptedGroups.stream().mapToInt(i -> i).toArray());
 
-            metaStorage.write(REENCRYPTED_WAL_SEGMENTS, walSegments);
+            metaStorage.write(REENCRYPTED_WAL_SEGMENTS, (Serializable)walSegments);
         }
         finally {
             ctx.cache().context().database().checkpointReadUnlock();
@@ -1402,7 +1373,9 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
     private HashMap<Integer, byte[]> keysMap(int grpId) {
         HashMap<Integer, byte[]> keysMap = new HashMap<>();
 
-        for (Map.Entry<Integer, Serializable> entry : grpEncKeysX.get(grpId).entrySet())
+        assert grpEncKeys.get(grpId) != null : "grpId=" + grpId + " " + CU.cacheId("encrypted");
+
+        for (Map.Entry<Integer, Serializable> entry : grpEncKeys.get(grpId).entrySet())
             keysMap.put(entry.getKey(), getSpi().encryptKey(entry.getValue()));
 
         return keysMap;
@@ -1441,8 +1414,13 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
 
         HashMap<Integer, byte[]> knownKeys = new HashMap<>();
 
-        for (Map.Entry<Integer, Serializable> entry : grpEncKeys.entrySet())
-            knownKeys.put(entry.getKey(), getSpi().encryptKey(entry.getValue()));
+        for (Map.Entry<Integer, Map<Integer, Serializable>> entry : grpEncKeys.entrySet()) {
+            int grpId = entry.getKey();
+            Map<Integer, Serializable> grpKeys = entry.getValue();
+            int activeId = grpEncActiveKeys.get(grpId);
+
+            knownKeys.put(grpId, getSpi().encryptKey(grpKeys.get(activeId)));
+        }
 
         return knownKeys;
     }
@@ -1509,10 +1487,12 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
 
     /** Writes the record with the master key name and all keys to WAL. */
     private void writeKeysToWal() throws IgniteCheckedException {
-        Map<Integer, byte[]> reencryptedKeys = new HashMap<>();
+        List<T3<Integer, Byte, byte[]>> reencryptedKeys = new ArrayList<>();
 
-        for (Map.Entry<Integer, Serializable> entry : grpEncKeys.entrySet())
-            reencryptedKeys.put(entry.getKey(), getSpi().encryptKey(entry.getValue()));
+        for (Map.Entry<Integer, Map<Integer, Serializable>> entry : grpEncKeys.entrySet()) {
+            for (Map.Entry<Integer, Serializable> e : entry.getValue().entrySet())
+                reencryptedKeys.add(new T3<>(entry.getKey(), (byte)e.getKey().intValue(), getSpi().encryptKey(e.getValue())));
+        }
 
         MasterKeyChangeRecord rec = new MasterKeyChangeRecord(getSpi().getMasterKeyName(), reencryptedKeys);
 
@@ -1534,8 +1514,21 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
         try {
             getSpi().setMasterKeyName(rec.getMasterKeyName());
 
-            for (Map.Entry<Integer, byte[]> entry : rec.getGrpKeys().entrySet())
-                grpEncKeys.put(entry.getKey(), getSpi().decryptKey(entry.getValue()));
+            for (T3<Integer, Byte, byte[]> entry : rec.getGrpKeys()) {
+                int grpId = entry.get1();
+                int keyId = entry.get2() & 0xff;
+                byte[] key = entry.get3();
+
+                Map<Integer, Serializable> map = grpEncKeys.get(grpId);
+
+                if (map == null) {
+                    map = new ConcurrentHashMap<>();
+
+                    grpEncKeys.put(grpId, map);
+                }
+
+                map.put(keyId, getSpi().decryptKey(key));
+            }
 
             restoredFromWAL = true;
         } catch (IgniteSpiException e) {
@@ -1644,22 +1637,18 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
      */
     private void completeMasterKeyChangeFuture(UUID reqId, Map<UUID, Exception> err) {
         synchronized (opsMux) {
-            completeKeyChangeFuture(reqId, err, masterKeyChangeFut);
-
-            masterKeyChangeFut = null;
+            if (completeKeyChangeFuture(reqId, err, masterKeyChangeFut))
+                masterKeyChangeFut = null;
         }
     }
 
-    private void completeKeyChangeFuture(UUID reqId, Map<UUID, Exception> err, KeyChangeFuture fut) {
+    private boolean completeKeyChangeFuture(UUID reqId, Map<UUID, Exception> err, KeyChangeFuture fut) {
         boolean isInitiator = fut != null && fut.id().equals(reqId);
 
         if (!isInitiator || fut.isDone())
-            return;
+            return false;
 
-        if (!F.isEmpty(err))
-            fut.onDone(F.firstValue(err));
-        else
-            fut.onDone();
+        return !F.isEmpty(err) ? fut.onDone(F.firstValue(err)) : fut.onDone();
     }
 
     /**

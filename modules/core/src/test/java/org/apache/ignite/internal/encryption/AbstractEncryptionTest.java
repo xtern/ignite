@@ -33,6 +33,7 @@ import org.apache.ignite.configuration.DataStorageConfiguration;
 import org.apache.ignite.configuration.IgniteConfiguration;
 import org.apache.ignite.internal.IgniteEx;
 import org.apache.ignite.internal.IgniteInterruptedCheckedException;
+import org.apache.ignite.internal.managers.encryption.GroupKey;
 import org.apache.ignite.internal.processors.cache.IgniteInternalCache;
 import org.apache.ignite.internal.util.IgniteUtils;
 import org.apache.ignite.internal.util.typedef.G;
@@ -149,13 +150,21 @@ public abstract class AbstractEncryptionTest extends GridCommonAbstractTest {
 
             assertTrue(encrypted1.configuration().isEncryptionEnabled());
 
-            KeystoreEncryptionKey encKey0 = (KeystoreEncryptionKey)grid0.context().encryption().groupKey(grpId);
+            GroupKey grpKey0 = grid0.context().encryption().groupKey(grpId);
+
+            assertNotNull(grpKey0);
+
+            KeystoreEncryptionKey encKey0 = (KeystoreEncryptionKey)grpKey0.key();
 
             assertNotNull(encKey0);
             assertNotNull(encKey0.key());
 
             if (!grid1.configuration().isClientMode()) {
-                KeystoreEncryptionKey encKey1 = (KeystoreEncryptionKey)grid1.context().encryption().groupKey(grpId);
+                GroupKey grpKey1 = grid1.context().encryption().groupKey(grpId);
+
+                assertNotNull(grpKey1);
+
+                KeystoreEncryptionKey encKey1 = (KeystoreEncryptionKey)grpKey1.key();
 
                 assertNotNull(encKey1);
                 assertNotNull(encKey1.key());

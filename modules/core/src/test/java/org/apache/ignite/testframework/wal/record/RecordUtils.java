@@ -17,6 +17,7 @@
 
 package org.apache.ignite.testframework.wal.record;
 
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.EnumMap;
 import java.util.HashMap;
@@ -514,7 +515,7 @@ public class RecordUtils {
 
     /** **/
     public static MasterKeyChangeRecord buildMasterKeyChangeRecord() {
-        return new MasterKeyChangeRecord("", new HashMap<>());
+        return new MasterKeyChangeRecord("", Collections.emptyList());
     }
 
     /** **/
