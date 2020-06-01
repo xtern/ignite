@@ -3,6 +3,7 @@ package org.apache.ignite.internal.managers.encryption;
 import java.io.Serializable;
 import java.util.Objects;
 import java.util.UUID;
+import org.apache.ignite.internal.processors.affinity.AffinityTopologyVersion;
 
 public class ChangeCacheEncryptionRequest implements Serializable {
     /** Serial version uid. */
@@ -19,16 +20,19 @@ public class ChangeCacheEncryptionRequest implements Serializable {
 
     private final byte[] keyIds;
 
+    private AffinityTopologyVersion topVer;
+
     /**
      * @param groups Groups.
      * @param keys Keys.
      */
-    public ChangeCacheEncryptionRequest(int[] groups, byte[][] keys, byte[] keyIds) {
+    public ChangeCacheEncryptionRequest(int[] groups, byte[][] keys, byte[] keyIds, AffinityTopologyVersion topVer) {
         reqId = UUID.randomUUID();
 
         this.groups = groups;
         this.keys = keys;
         this.keyIds = keyIds;
+        this.topVer = topVer;
     }
 
     public UUID requestId() {
@@ -44,6 +48,10 @@ public class ChangeCacheEncryptionRequest implements Serializable {
     }
 
     public byte[] keyIdentifiers() { return keyIds; }
+
+    public AffinityTopologyVersion topologyVersion() {
+        return topVer;
+    }
 
     @Override public boolean equals(Object o) {
         if (this == o)

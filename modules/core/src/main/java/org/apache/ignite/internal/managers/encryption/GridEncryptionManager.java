@@ -41,6 +41,7 @@ import org.apache.ignite.IgniteClientDisconnectedException;
 import org.apache.ignite.IgniteEncryption;
 import org.apache.ignite.IgniteException;
 import org.apache.ignite.IgniteSystemProperties;
+import org.apache.ignite.cluster.BaselineNode;
 import org.apache.ignite.cluster.ClusterNode;
 import org.apache.ignite.failure.FailureContext;
 import org.apache.ignite.internal.GridKernalContext;
@@ -53,6 +54,7 @@ import org.apache.ignite.internal.managers.eventstorage.DiscoveryEventListener;
 import org.apache.ignite.internal.pagemem.store.PageStore;
 import org.apache.ignite.internal.pagemem.wal.WALPointer;
 import org.apache.ignite.internal.pagemem.wal.record.MasterKeyChangeRecord;
+import org.apache.ignite.internal.processors.affinity.AffinityTopologyVersion;
 import org.apache.ignite.internal.processors.cache.CacheGroupContext;
 import org.apache.ignite.internal.processors.cache.CacheGroupDescriptor;
 import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtLocalPartition;
@@ -63,6 +65,7 @@ import org.apache.ignite.internal.processors.cache.persistence.metastorage.ReadW
 import org.apache.ignite.internal.processors.cluster.IgniteChangeGlobalStateSupport;
 import org.apache.ignite.internal.util.GridConcurrentHashSet;
 import org.apache.ignite.internal.util.distributed.DistributedProcess;
+import org.apache.ignite.internal.util.distributed.InitMessage;
 import org.apache.ignite.internal.util.future.GridFinishedFuture;
 import org.apache.ignite.internal.util.future.GridFutureAdapter;
 import org.apache.ignite.internal.util.future.IgniteFinishedFutureImpl;
@@ -377,10 +380,15 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
         private volatile ChangeCacheEncryptionRequest groupKeyChangeRequest;
 
         DistributedProcess<ChangeCacheEncryptionRequest, EmptyResult> prepareGKChangeProc =
-            new DistributedProcess<>(ctx, GROUP_KEY_CHANGE_PREPARE, this::prepare, this::finishPrepare);
+            new DistributedProcess<>(ctx, GROUP_KEY_CHANGE_PREPARE, this::prepare, this::finishPrepare,
+                (id, req) -> new InitMessage<>(id, GROUP_KEY_CHANGE_PREPARE, req), true);
 
         DistributedProcess<ChangeCacheEncryptionRequest, EmptyResult> performGKChangeProc =
             new DistributedProcess<>(ctx, GROUP_KEY_CHANGE_FINISH, this::perform, this::finishPerform);
+
+        private boolean inProgress() {
+            return groupKeyChangeRequest != null;
+        }
 
         /**
          * @param groups Groups.
@@ -449,7 +457,8 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
                                 ctx.cache().context().database().checkpointReadUnlock();
                             }
 
-                            System.out.println("Re-encryption for grp " + grpId + " is finished");
+                            if (log.isInfoEnabled())
+                                log.info("Cache group reencryption is finished [grp=" + grpId + "]");
                         }
                         catch (IgniteCheckedException e) {
                             log.warning("Reencryption failed [grp=" + grpId + "]", e);
@@ -481,7 +490,7 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
                     "The previous change was not completed."));
             }
 
-            prepareGroupKeyChangeFut = new KeyChangeFuture(req.requestId());
+            prepareGroupKeyChangeFut = new KeyChangeFuture(req.requestId(), req.topologyVersion());
 
             // todo
             prepareGKChangeProc.start(req.requestId(), req);
@@ -510,22 +519,14 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
                 int n = 0;
 
                 for (int grpId : req.groups()) {
-                    if (!encryptionTask(grpId).isDone())
-                        return new GridFinishedFuture<>(new IgniteException("Encryption in progress [grpId=" + grpId + "]"));
+//                    if (!encryptionTask(grpId).isDone())
+//                        return new GridFinishedFuture<>(new IgniteException("Encryption in progress [grpId=" + grpId + "]"));
 
                     // todo max key
                     int newKeyId = req.keyIdentifiers()[n] & 0xff;
 
                     if (grpEncKeys.get(grpId).containsKey(newKeyId))
                         return new GridFinishedFuture<>(new IgniteException("Incorrect new key identifer [grpId=" + grpId + ", keyId=" + newKeyId + "]"));
-
-                    DiscoCache discoCache = ctx.discovery().discoCache();
-
-                    int bltSize = discoCache.baselineNodes().size();
-                    int bltOnline = discoCache.aliveBaselineNodes().size();
-
-                    if (bltSize != bltOnline)
-                        return new GridFinishedFuture<>(new IgniteException("Not all baseline nodes online."));
 
                     ++n;
                 }
@@ -551,7 +552,7 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
                     groupKeyChangeRequest = null;
 
                 synchronized (opsMux) {
-                    completeKeyChangeFuture(groupKeyChangeRequest.requestId(), err, prepareGroupKeyChangeFut);
+                    completeKeyChangeFuture(id, err, prepareGroupKeyChangeFut);
 
                     prepareGroupKeyChangeFut = null;
                 }
@@ -585,9 +586,25 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
 
         private void finishPerform(UUID id, Map<UUID, EmptyResult> res, Map<UUID, Exception> err) {
             synchronized (opsMux) {
-                completeKeyChangeFuture(id, err, prepareGroupKeyChangeFut);
+                KeyChangeFuture fut = prepareGroupKeyChangeFut;
 
-                prepareGroupKeyChangeFut = null;
+                if (completeKeyChangeFuture(id, err, fut)) {
+                    AffinityTopologyVersion initVer = fut.topologyVersion();
+
+                    if (initVer.topologyVersion() != ctx.discovery().topologyVersion()) {
+                        DiscoCache discoCache = ctx.discovery().discoCache();
+
+                        Set<BaselineNode> bltNodes = new HashSet<>(discoCache.baselineNodes());
+
+                        bltNodes.removeAll(discoCache.aliveBaselineNodes());
+
+                        log.warning("Cache group key rotation may be incomplete on missed baseline nodes, " +
+                            "this node(s) should be preconfigured to re-join the cluster with the existing data, " +
+                            "[nodes=" + F.viewReadOnly(bltNodes, BaselineNode::consistentId) + "]");
+                    }
+
+                    prepareGroupKeyChangeFut = null;
+                }
             }
         }
     }
@@ -689,6 +706,13 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
             return new IgniteNodeValidationResult(ctx.localNodeId(),
                 "Master key change is in progress! Node join is rejected. [node=" + node.id() + "]",
                 "Master key change is in progress! Node join is rejected.");
+        }
+
+        // todo verify topology when performing?
+        if (groupKeyChangeProcess.inProgress()) {
+            return new IgniteNodeValidationResult(ctx.localNodeId(),
+                "Group key change is in progress! Node join is rejected. [node=" + node.id() + "]",
+                "Group key change is in progress! Node join is rejected.");
         }
 
         if (node.isClient() || node.isDaemon())
@@ -983,7 +1007,7 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
                     "The previous change was not completed."));
             }
 
-            masterKeyChangeFut = new KeyChangeFuture(request.requestId());
+            masterKeyChangeFut = new KeyChangeFuture(request.requestId(), null);
 
             prepareMKChangeProc.start(request.requestId(), request);
 
@@ -1001,6 +1025,14 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
 
         if (!ctx.state().clusterState().active())
             throw new IgniteException("Operation was rejected. The cluster is inactive.");
+
+        DiscoCache discoCache = ctx.discovery().discoCache();
+
+        int bltSize = discoCache.baselineNodes().size();
+        int bltOnline = discoCache.aliveBaselineNodes().size();
+
+        if (bltSize != bltOnline)
+            throw new IgniteException("Not all baseline nodes online [total=" + bltSize + ", online=" + bltOnline + "]");
 
         int[] groups0 = groups.stream().mapToInt(i -> i).toArray();
         byte[][] keys = new byte[groups0.length][];
@@ -1020,10 +1052,13 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
             keyIds[n] = (byte)(grpEncActiveKeys.get(grpId) + 1);
         }
 
+        AffinityTopologyVersion curVer = ctx.cache().context().exchange().readyAffinityVersion();
+        ChangeCacheEncryptionRequest req = new ChangeCacheEncryptionRequest(groups0, keys, keyIds, curVer);
+
         IgniteFuture<Void> fut;
 
         synchronized (opsMux) {
-            fut = groupKeyChangeProcess.start(new ChangeCacheEncryptionRequest(groups0, keys, keyIds));
+            fut = groupKeyChangeProcess.start(req);
         }
 
         return fut;
@@ -1953,14 +1988,23 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
         /** Request ID. */
         private final UUID id;
 
+        /** Topology version. */
+        private final AffinityTopologyVersion topVer;
+
         /** @param id Request ID. */
-        private KeyChangeFuture(UUID id) {
+        private KeyChangeFuture(UUID id, AffinityTopologyVersion topVer) {
             this.id = id;
+            this.topVer = topVer;
         }
 
         /** @return Request ID. */
         public UUID id() {
             return id;
+        }
+
+        /** @return Topology version. */
+        public AffinityTopologyVersion topologyVersion() {
+            return topVer;
         }
 
         /** {@inheritDoc} */

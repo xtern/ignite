@@ -10,6 +10,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
@@ -24,6 +25,7 @@ import org.apache.ignite.configuration.DataStorageConfiguration;
 import org.apache.ignite.configuration.IgniteConfiguration;
 import org.apache.ignite.internal.IgniteEx;
 import org.apache.ignite.internal.IgniteInternalFuture;
+import org.apache.ignite.internal.TestRecordingCommunicationSpi;
 import org.apache.ignite.internal.managers.encryption.GridEncryptionManager;
 import org.apache.ignite.internal.pagemem.PageIdAllocator;
 import org.apache.ignite.internal.pagemem.PageIdUtils;
@@ -31,11 +33,20 @@ import org.apache.ignite.internal.processors.cache.GridCacheContext;
 import org.apache.ignite.internal.processors.cache.IgniteInternalCache;
 import org.apache.ignite.internal.processors.cache.persistence.file.FilePageStore;
 import org.apache.ignite.internal.processors.cache.persistence.file.FilePageStoreManager;
+import org.apache.ignite.internal.util.distributed.SingleNodeMessage;
+import org.apache.ignite.internal.util.typedef.G;
+import org.apache.ignite.internal.util.typedef.T2;
+import org.apache.ignite.internal.util.typedef.internal.CU;
+import org.apache.ignite.lang.IgniteFuture;
 import org.apache.ignite.testframework.GridTestUtils;
 import org.junit.Test;
 
 import static org.apache.ignite.configuration.WALMode.LOG_ONLY;
 import static org.apache.ignite.internal.pagemem.PageIdAllocator.INDEX_PARTITION;
+import static org.apache.ignite.testframework.GridTestUtils.assertThrows;
+import static org.apache.ignite.testframework.GridTestUtils.assertThrowsAnyCause;
+import static org.apache.ignite.testframework.GridTestUtils.assertThrowsWithCause;
+import static org.apache.ignite.testframework.GridTestUtils.runAsync;
 
 /**
  *
@@ -55,6 +66,7 @@ public class GroupKeyChangeTest extends AbstractEncryptionTest {
         IgniteConfiguration cfg = super.getConfiguration(name);
 
         cfg.setConsistentId(name);
+        cfg.setCommunicationSpi(new TestRecordingCommunicationSpi());
 
         DataStorageConfiguration memCfg = new DataStorageConfiguration()
             .setDefaultDataRegionConfiguration(
@@ -77,6 +89,110 @@ public class GroupKeyChangeTest extends AbstractEncryptionTest {
         CacheConfiguration<K, V> cfg = super.cacheConfiguration(name, grp);
 
         return cfg.setAffinity(new RendezvousAffinityFunction(false, 8));
+    }
+
+    /** @throws Exception If failed. */
+    @Test
+    public void testRejectNodeJoinDuringRotation() throws Exception {
+        T2<IgniteEx, IgniteEx> grids = startTestGrids(true);
+
+        createEncryptedCache(grids.get1(), grids.get2(), cacheName(), null);
+
+        int grpId = CU.cacheId(cacheName());
+
+        assertEquals(0, grids.get1().context().encryption().groupKey(grpId).id());
+
+        TestRecordingCommunicationSpi commSpi = TestRecordingCommunicationSpi.spi(grids.get2());
+
+        commSpi.blockMessages((node, msg) -> msg instanceof SingleNodeMessage);
+
+        IgniteFuture<Void> fut = grids.get1().encryption().changeGroupKey(Collections.singleton(grpId));
+
+        commSpi.waitForBlocked();
+
+        assertThrowsWithCause(() -> startGrid(3), IgniteCheckedException.class);
+
+        commSpi.stopBlock();
+
+        fut.get();
+
+        ensureGroupKey(grpId, 1);
+
+        checkEncryptedCaches(grids.get1(), grids.get2());
+    }
+
+
+    @Test
+    public void testNodeFailsDuringPrepare() throws Exception {
+        checkNodeFailsDuringRotation(false, true, 0);
+    }
+
+    @Test
+    public void testCrdFailsDuringPrepare() throws Exception {
+        checkNodeFailsDuringRotation(true, true, 0);
+    }
+
+    @Test
+    public void testNodeFailsDuringPerform() throws Exception {
+        checkNodeFailsDuringRotation(false, false, 1);
+    }
+
+    @Test
+    public void testCrdFailsDuringPerform() throws Exception {
+        checkNodeFailsDuringRotation(true, false, 1);
+    }
+
+    @Test
+    public void testNotAllBltNodesPresent() throws Exception {
+        checkNodeFailsDuringRotation(false, true, 0);
+    }
+
+    /**
+     * @param stopCrd {@code True} if stop coordinator.
+     * @param prepare {@code True} if stop on the prepare phase. {@code False} if stop on the perform phase.
+     */
+    private void checkNodeFailsDuringRotation(boolean stopCrd, boolean prepare, int expKeyId) throws Exception {
+        T2<IgniteEx, IgniteEx> grids = startTestGrids(true);
+
+        createEncryptedCache(grids.get1(), grids.get2(), cacheName(), null);
+
+        int grpId = CU.cacheId(cacheName());
+
+        ensureGroupKey(grpId, 0);
+
+        TestRecordingCommunicationSpi spi = TestRecordingCommunicationSpi.spi(grids.get2());
+
+        AtomicBoolean preparePhase = new AtomicBoolean(true);
+
+        spi.blockMessages((node, msg) -> {
+            if (msg instanceof SingleNodeMessage) {
+                boolean isPrepare = preparePhase.compareAndSet(true, false);
+
+                return prepare || !isPrepare;
+            }
+
+            return false;
+        });
+
+        IgniteEx aliveNode = stopCrd ? grids.get2() : grids.get1();
+
+        IgniteFuture<Void> fut = aliveNode.encryption().changeGroupKey(Collections.singleton(grpId));
+
+        spi.waitForBlocked();
+
+        runAsync(() -> {
+            if (stopCrd)
+                stopGrid(GRID_0, true);
+            else
+                stopGrid(GRID_1, true);
+        });
+
+        if (prepare)
+            assertThrowsAnyCause(log, fut::get, IgniteCheckedException.class, null);
+        else
+            fut.get();
+
+        assertEquals(expKeyId, aliveNode.context().encryption().groupKey(grpId).id());
     }
 
     @Test
@@ -278,30 +394,18 @@ public class GroupKeyChangeTest extends AbstractEncryptionTest {
         }
     }
 
-//    private static final char[] HEX_ARRAY = "0123456789ABCDEF".toCharArray();
-//
-//    public static String bytesToHex(byte[] bytes) {
-//        char[] hexChars = new char[bytes.length * 2];
-//        for (int j = 0; j < bytes.length; j++) {
-//            int v = bytes[j] & 0xFF;
-//            hexChars[j * 2] = HEX_ARRAY[v >>> 4];
-//            hexChars[j * 2 + 1] = HEX_ARRAY[v & 0x0F];
-//        }
-//
-//        StringBuilder buf = new StringBuilder();
-//
-//        for (int j = 0; j < bytes.length; j++) {
-//            if (j != 0 && j % 4 == 0)
-//                buf.append(" | ");
-//
-//            if (j != 0 && j % 16 == 0)
-//                buf.append('\n');
-//
-//            buf.append(hexChars[j * 2]);
-//            buf.append(hexChars[j * 2 + 1]);
-//            buf.append(' ');
-//        }
-//
-//        return buf.toString();
-//    }
+    private void ensureGroupKey(int grpId, int keyId) throws IgniteCheckedException {
+        for (Ignite g : G.allGrids()) {
+            IgniteEx grid = (IgniteEx)g;
+
+            if (grid.context().clientNode())
+                continue;
+
+            GridEncryptionManager encrMgr = grid.context().encryption();
+
+            assertEquals(grid.localNode().id().toString(), keyId, encrMgr.groupKey(grpId).id());
+
+            encrMgr.encryptionTask(grpId).get();
+        }
+    }
 }
