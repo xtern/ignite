@@ -236,7 +236,10 @@ public abstract class WALRecord {
         ENCRYPTED_RECORD_V2(62, PHYSICAL),
 
         /** Ecnrypted data record. */
-        ENCRYPTED_DATA_RECORD_V2(63, LOGICAL);
+        ENCRYPTED_DATA_RECORD_V2(63, LOGICAL),
+
+        /** */
+        ENCRYPTION_STATUS_RECORD(64, LOGICAL);
 
         /** Index for serialization. Should be consistent throughout all versions. */
         private final int idx;

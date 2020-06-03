@@ -22,6 +22,7 @@ import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicIntegerArray;
 import org.apache.ignite.IgniteCheckedException;
+import org.apache.ignite.IgniteLogger;
 import org.apache.ignite.internal.GridKernalContext;
 import org.apache.ignite.internal.IgniteInternalFuture;
 import org.apache.ignite.internal.pagemem.FullPageId;
@@ -45,8 +46,12 @@ public class CacheEncryptionTask {
 
     private final GridKernalContext ctx;
 
+    private final IgniteLogger log;
+
     public CacheEncryptionTask(GridKernalContext ctx) {
         this.ctx = ctx;
+
+        log = ctx.log(getClass());
     }
 
     private Map<Integer, ReencryptionState> statesMap = new ConcurrentHashMap<>();
@@ -59,6 +64,9 @@ public class CacheEncryptionTask {
         CacheGroupContext grp = ctx.cache().cacheGroup(grpId);
 
         assert grp != null;
+
+        if (log.isInfoEnabled())
+            log.info("Shecudled re-encryption [grp=" + grpId + "]");
 
         for (GridDhtLocalPartition part : grp.topology().currentLocalPartitions()) {
             if ((part.state() != OWNING && part.state() != MOVING) || part.isClearing())
@@ -74,14 +82,22 @@ public class CacheEncryptionTask {
         statesMap.put(grpId, state);
         futMap.put(grpId, state.fut);
 
+        state.fut.listen(f -> {
+            if (log.isInfoEnabled())
+                log.info("Re-encryption is finished for group [grp=" + grpId + "]");
+        });
+
         return state.fut;
     }
 
     private void schedule(int grpId, int partId, ReencryptionState state) throws IgniteCheckedException {
         PageStore pageStore = ((FilePageStoreManager)ctx.cache().context().pageStore()).getStore(grpId, partId);
 
-        if (pageStore.encryptedPagesCount() == 0)
+        if (pageStore.encryptedPagesCount() == 0) {
+            log.info("Skipping [grpId=" + grpId + ", partId=" + partId);
+
             return;
+        }
 
         GridFutureAdapter fut = new GridFutureAdapter();
 
@@ -180,6 +196,8 @@ public class CacheEncryptionTask {
 
             int pageNum = off;
 
+            log.info("Re-encryption is started " + partId + " off=" + pageNum + ", cnt=" + cnt);
+
             while (pageNum < cnt) {
                 if (fut.isDone())
                     break;
@@ -219,6 +237,8 @@ public class CacheEncryptionTask {
                     ctx.cache().context().database().checkpointReadUnlock();
                 }
             }
+
+            log.info("Re-encryption is finished " + partId);
 
             if (!fut.isDone())
                 fut.onDone();

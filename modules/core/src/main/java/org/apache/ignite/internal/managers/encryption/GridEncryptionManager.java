@@ -53,6 +53,7 @@ import org.apache.ignite.internal.managers.discovery.DiscoCache;
 import org.apache.ignite.internal.managers.eventstorage.DiscoveryEventListener;
 import org.apache.ignite.internal.pagemem.store.PageStore;
 import org.apache.ignite.internal.pagemem.wal.WALPointer;
+import org.apache.ignite.internal.pagemem.wal.record.EncryptionStatusRecord;
 import org.apache.ignite.internal.pagemem.wal.record.MasterKeyChangeRecord;
 import org.apache.ignite.internal.processors.affinity.AffinityTopologyVersion;
 import org.apache.ignite.internal.processors.cache.CacheGroupContext;
@@ -373,7 +374,10 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
         }
     }
 
-    private void storeEncryptionOffsets(int grpId) throws IgniteCheckedException {
+    private List<T2<Integer, Integer>> storeEncryptionOffsets(int grpId) throws IgniteCheckedException {
+        U.dumpStack("storeencroffsets");
+        List<T2<Integer, Integer>> offsets = new ArrayList<>();
+
         CacheGroupContext grp = ctx.cache().cacheGroup(grpId);
 
         FilePageStoreManager mgr = (FilePageStoreManager)ctx.cache().context().pageStore();
@@ -384,14 +388,24 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
 
             PageStore pageStore = mgr.getStore(grpId, part.id());
 
-            pageStore.encryptedPagesCount(pageStore.pages());
+            int pagesCnt = pageStore.pages();
+
+            pageStore.encryptedPagesCount(pagesCnt);
             pageStore.encryptedPagesOffset(0);
+
+            offsets.add(new T2<>(part.id(), pagesCnt));
         }
 
         PageStore pageStore = mgr.getStore(grpId, INDEX_PARTITION);
 
-        pageStore.encryptedPagesCount(pageStore.pages());
+        int pagesCnt = pageStore.pages();
+
+        offsets.add(new T2<>(INDEX_PARTITION, pagesCnt));
+
+        pageStore.encryptedPagesCount(pagesCnt);
         pageStore.encryptedPagesOffset(0);
+
+        return offsets;
     }
 
     /**
@@ -418,58 +432,66 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
          * @param groups Cache group identifiers.
          */
         private void doChangeGroupKeys(int[] groups) throws IgniteCheckedException {
+            Map<Integer, List<T2<Integer, Integer>>> encryptionStatus = new HashMap<>();
+
             ctx.cache().context().database().checkpointReadLock();
 
             try {
-                for (int i = 0; i < groups.length; i++) {
-                    int grpId = groups[i];
+                for (int grpId : groups) {
+                    List<T2<Integer, Integer>> offsets = storeEncryptionOffsets(grpId);
 
-                    storeEncryptionOffsets(grpId);
-
-                    IgniteInternalFuture<?> fut = encryptTask.schedule(grpId);
-
-                    fut.listen(f -> {
-                        try {
-                            f.get();
-
-                            boolean changed = false;
-
-                            for (Map<Integer, ?> map : walSegments.values()) {
-                                if (!map.containsKey(grpId)) {
-                                    int activeKey = grpEncActiveKeys.get(grpId);
-
-                                    changed |= grpEncKeys.get(grpId).keySet().removeIf(v -> v != activeKey);
-                                }
-                            }
-
-                            ctx.cache().context().database().checkpointReadLock();
-
-                            try {
-                                encryptedGroups.remove(grpId);
-
-                                metaStorage.write(REENCRYPTED_GROUPS, encryptedGroups.stream().mapToInt(n -> n).toArray());
-
-                                if (changed) {
-                                    metaStorage.write(ENCRYPTION_KEYS_PREFIX + grpId, keysMap(grpId));
-
-                                    if (log.isInfoEnabled())
-                                        log.info("Previous encryption keys were removed");
-                                }
-
-                            } finally {
-                                ctx.cache().context().database().checkpointReadUnlock();
-                            }
-
-                            if (log.isInfoEnabled())
-                                log.info("Cache group reencryption is finished [grp=" + grpId + "]");
-                        }
-                        catch (IgniteCheckedException e) {
-                            log.warning("Reencryption failed [grp=" + grpId + "]", e);
-                        }
-                    });
+                    encryptionStatus.put(grpId, offsets);
                 }
             } finally {
                 ctx.cache().context().database().checkpointReadUnlock();
+            }
+
+            WALPointer ptr = ctx.cache().context().wal().log(new EncryptionStatusRecord(encryptionStatus));
+
+            assert ptr != null;
+
+            for (int grpId : groups) {
+                IgniteInternalFuture<?> fut = encryptTask.schedule(grpId);
+
+                fut.listen(f -> {
+                    try {
+                        f.get();
+
+                        boolean changed = false;
+
+                        for (Map<Integer, ?> map : walSegments.values()) {
+                            if (!map.containsKey(grpId)) {
+                                int activeKey = grpEncActiveKeys.get(grpId);
+
+                                changed |= grpEncKeys.get(grpId).keySet().removeIf(v -> v != activeKey);
+                            }
+                        }
+
+                        ctx.cache().context().database().checkpointReadLock();
+
+                        try {
+                            encryptedGroups.remove(grpId);
+
+                            metaStorage.write(REENCRYPTED_GROUPS, encryptedGroups.stream().mapToInt(n -> n).toArray());
+
+                            if (changed) {
+                                metaStorage.write(ENCRYPTION_KEYS_PREFIX + grpId, keysMap(grpId));
+
+                                if (log.isInfoEnabled())
+                                    log.info("Previous encryption keys were removed");
+                            }
+
+                        } finally {
+                            ctx.cache().context().database().checkpointReadUnlock();
+                        }
+
+                        if (log.isInfoEnabled())
+                            log.info("Cache group reencryption is finished [grp=" + grpId + "]");
+                    }
+                    catch (IgniteCheckedException e) {
+                        log.warning("Reencryption failed [grp=" + grpId + "]", e);
+                    }
+                });
             }
         }
 
@@ -1661,6 +1683,35 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
         } catch (IgniteSpiException e) {
             log.warning("Unable to apply group keys from WAL record [masterKeyName=" + rec.getMasterKeyName() + ']', e);
         }
+    }
+
+    /**
+     * Apply keys from WAL record during the recovery phase.
+     *
+     * @param rec Record.
+     */
+    public void applyEncryptionStatus(EncryptionStatusRecord rec) throws IgniteCheckedException {
+        assert !writeToMetaStoreEnabled && !ctx.state().clusterState().active();
+
+        FilePageStoreManager mgr = (FilePageStoreManager)ctx.cache().context().pageStore();
+
+        for (Map.Entry<Integer, List<T2<Integer, Integer>>> entry : rec.groupsStatus().entrySet()) {
+            int grpId = entry.getKey();
+
+            for (T2<Integer, Integer> state : entry.getValue()) {
+                int partId = state.getKey();
+
+                PageStore pageStore = mgr.getStore(grpId, partId);
+
+                pageStore.encryptedPagesCount(state.getValue());
+
+                System.out.println("p=" + partId + " cnt=" + state.getValue());
+            }
+
+            encryptedGroups.add(grpId);
+        }
+
+        System.out.println("apply logical status [" + rec.groupsStatus().keySet() + "]");
     }
 
     /**

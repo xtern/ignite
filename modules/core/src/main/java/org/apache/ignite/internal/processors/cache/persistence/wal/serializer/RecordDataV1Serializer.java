@@ -39,6 +39,7 @@ import org.apache.ignite.internal.pagemem.wal.record.CheckpointRecord;
 import org.apache.ignite.internal.pagemem.wal.record.DataEntry;
 import org.apache.ignite.internal.pagemem.wal.record.DataRecord;
 import org.apache.ignite.internal.pagemem.wal.record.EncryptedRecord;
+import org.apache.ignite.internal.pagemem.wal.record.EncryptionStatusRecord;
 import org.apache.ignite.internal.pagemem.wal.record.LazyDataEntry;
 import org.apache.ignite.internal.pagemem.wal.record.MasterKeyChangeRecord;
 import org.apache.ignite.internal.pagemem.wal.record.MemoryRecoveryRecord;
@@ -555,6 +556,10 @@ public class RecordDataV1Serializer implements RecordDataSerializer {
                 MasterKeyChangeRecord rec = (MasterKeyChangeRecord)record;
 
                 return rec.dataSize();
+
+            case ENCRYPTION_STATUS_RECORD:
+                return ((EncryptionStatusRecord)record).dataSize();
+
             default:
                 throw new UnsupportedOperationException("Type: " + record.type());
         }
@@ -1232,6 +1237,27 @@ public class RecordDataV1Serializer implements RecordDataSerializer {
 
                 break;
 
+            case ENCRYPTION_STATUS_RECORD:
+                int grpsCnt = in.readInt();
+
+                Map<Integer, List<T2<Integer, Integer>>> map = new HashMap<>(U.capacity(grpsCnt));
+
+                for (int i = 0; i < grpsCnt; i++) {
+                    int grpId = in.readInt();
+                    int partsCnt = in.readInt();
+
+                    List<T2<Integer, Integer>> parts = new ArrayList<>(partsCnt);
+
+                    for (int j = 0; j < partsCnt; j++)
+                        parts.add( new T2<>(in.readShort() & 0xffff, in.readInt()));
+
+                    map.put(grpId, parts);
+                }
+
+                res = new EncryptionStatusRecord(map);
+
+                break;
+
             default:
                 throw new UnsupportedOperationException("Type: " + type);
         }
@@ -1839,6 +1865,27 @@ public class RecordDataV1Serializer implements RecordDataSerializer {
 
                     buf.putInt(entry.get3().length);
                     buf.put(entry.get3());
+                }
+
+                break;
+
+            case ENCRYPTION_STATUS_RECORD:
+                EncryptionStatusRecord statusRecord = (EncryptionStatusRecord)rec;
+
+                Map<Integer, List<T2<Integer, Integer>>> map = statusRecord.groupsStatus();
+
+                buf.putInt(map.size());
+
+                for (Map.Entry<Integer, List<T2<Integer, Integer>>> e : map.entrySet()) {
+                    List<T2<Integer, Integer>> parts = e.getValue();
+
+                    buf.putInt(e.getKey());
+                    buf.putInt(parts.size());
+
+                    for (T2<Integer, Integer> state : parts) {
+                        buf.putShort((short)state.get1().intValue());
+                        buf.putInt(state.getValue());
+                    }
                 }
 
                 break;

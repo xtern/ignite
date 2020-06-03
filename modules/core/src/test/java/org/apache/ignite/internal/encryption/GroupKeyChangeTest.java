@@ -176,6 +176,47 @@ public class GroupKeyChangeTest extends AbstractEncryptionTest {
     }
 
     @Test
+    public void testEncryptionRecoveryFromWal() throws Exception {
+        T2<IgniteEx, IgniteEx> nodes = startTestGrids(true);
+
+        IgniteEx node0 = nodes.get1();
+        IgniteEx node1 = nodes.get2();
+
+        createEncryptedCache(node0, node1, cacheName(), null);
+
+        forceCheckpoint();
+
+        enableCheckpoints(node0, false);
+        enableCheckpoints(node1, false);
+
+        int grpId = CU.cacheId(cacheName());
+
+        node0.encryption().changeGroupKey(Collections.singleton(grpId)).get();
+
+        node0.context().encryption().encryptionTask(grpId).get();
+        node1.context().encryption().encryptionTask(grpId).get();
+
+        assertEquals(1, node0.context().encryption().groupKey(grpId).id());
+        assertEquals(1, node1.context().encryption().groupKey(grpId).id());
+
+        stopAllGrids();
+
+        System.out.println(">>> Start grid");
+
+        nodes = startTestGrids(false);
+
+        node0 = nodes.get1();
+        node1 = nodes.get2();
+
+        enableCheckpoints(node0, true);
+        enableCheckpoints(node1, true);
+
+        awaitPartitionMapExchange();
+
+        checkGroupKey(grpId, 1);
+    }
+
+    @Test
     public void testNodeFailsBeforePrepare() throws Exception {
         checkNodeFailsDuringRotation(false, true, true);
     }
@@ -304,6 +345,8 @@ public class GroupKeyChangeTest extends AbstractEncryptionTest {
         if (prepare) {
             IgniteEx stoppedNode = startGrid(stopped);
 
+            stoppedNode.resetLostPartitions(Collections.singleton(ENCRYPTED_CACHE));
+
             awaitPartitionMapExchange();
 
             stoppedNode.encryption().changeGroupKey(Collections.singleton(grpId)).get(MAX_AWAIT_MILLIS);
@@ -315,6 +358,8 @@ public class GroupKeyChangeTest extends AbstractEncryptionTest {
 
             try {
                 IgniteEx stoppedNode = startGrid(stopped);
+
+                stoppedNode.resetLostPartitions(Collections.singleton(ENCRYPTED_CACHE));
 
                 awaitPartitionMapExchange();
 
@@ -495,6 +540,11 @@ public class GroupKeyChangeTest extends AbstractEncryptionTest {
 
             if (!pageStore.exists())
                 continue;
+
+//            assertEquals("p=" + p, pageStore.encryptedPagesCount(), pageStore.encryptedPagesOffset());
+
+//            assertEquals(0, pageStore.encryptedPagesCount());
+//            assertEquals(0, pageStore.encryptedPagesOffset());
 
             long metaPageId = PageIdUtils.pageId(p, PageIdAllocator.FLAG_DATA, 0);
 

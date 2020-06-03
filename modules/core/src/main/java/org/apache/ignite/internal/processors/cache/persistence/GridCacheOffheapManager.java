@@ -412,11 +412,23 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
 
                             PageStore pageStore = ((FilePageStoreManager)this.ctx.pageStore()).getStore(grpId, part.id());
 
-                            if (pageStore.encryptedPagesCount() != 0) {
+                            int pagesCnt = pageStore.encryptedPagesCount();
+
+                            if (pagesCnt != 0) {
                                 int off = this.ctx.kernalContext().encryption().encryptionOffset(grpId, part.id());
+
+                                if (off == pagesCnt - 1) {
+                                    off = 0;
+                                    pagesCnt = 0;
+
+                                    pageStore.encryptedPagesCount(0);
+                                }
+
+                                pageStore.encryptedPagesOffset(off);
+
                                 changed |= io.setEncryptionPageIdx(partMetaPageAddr, off);
                                 // todo first time should save current pages count
-                                changed |= io.setEncryptionPagesCount(partMetaPageAddr, pageStore.encryptedPagesCount());
+                                changed |= io.setEncryptionPagesCount(partMetaPageAddr, pagesCnt);
                             }
                         }
 
@@ -1890,6 +1902,8 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
 
                                     pageStore.encryptedPagesCount(encrPageCnt);
                                     pageStore.encryptedPagesOffset(io.getEncryptionPageIdx(pageAddr));
+
+                                    System.out.println("init meta " + grp.name() + " p=" + partId);
                                 }
 
                                 globalRemoveId().setIfGreater(io.getGlobalRemoveId(pageAddr));
