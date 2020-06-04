@@ -19,22 +19,36 @@ package org.apache.ignite.internal.encryption;
 
 import java.io.File;
 import java.io.FileOutputStream;
+import java.io.IOException;
 import java.io.OutputStream;
+import java.nio.ByteBuffer;
+import java.nio.channels.FileChannel;
+import java.nio.file.StandardOpenOption;
 import java.security.KeyStore;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Set;
+import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 import javax.crypto.KeyGenerator;
 import javax.crypto.SecretKey;
 import org.apache.ignite.Ignite;
 import org.apache.ignite.IgniteCache;
+import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.configuration.CacheConfiguration;
 import org.apache.ignite.configuration.DataRegionConfiguration;
 import org.apache.ignite.configuration.DataStorageConfiguration;
 import org.apache.ignite.configuration.IgniteConfiguration;
 import org.apache.ignite.internal.IgniteEx;
 import org.apache.ignite.internal.IgniteInterruptedCheckedException;
+import org.apache.ignite.internal.managers.encryption.GridEncryptionManager;
 import org.apache.ignite.internal.managers.encryption.GroupKey;
+import org.apache.ignite.internal.pagemem.PageIdAllocator;
+import org.apache.ignite.internal.pagemem.PageIdUtils;
+import org.apache.ignite.internal.processors.cache.CacheGroupContext;
 import org.apache.ignite.internal.processors.cache.IgniteInternalCache;
+import org.apache.ignite.internal.processors.cache.persistence.file.FilePageStore;
+import org.apache.ignite.internal.processors.cache.persistence.file.FilePageStoreManager;
 import org.apache.ignite.internal.util.IgniteUtils;
 import org.apache.ignite.internal.util.typedef.G;
 import org.apache.ignite.internal.util.typedef.T2;
@@ -48,6 +62,7 @@ import org.jetbrains.annotations.Nullable;
 
 import static org.apache.ignite.cache.CacheWriteSynchronizationMode.FULL_SYNC;
 import static org.apache.ignite.configuration.WALMode.FSYNC;
+import static org.apache.ignite.internal.pagemem.PageIdAllocator.INDEX_PARTITION;
 import static org.apache.ignite.spi.encryption.keystore.KeystoreEncryptionSpi.CIPHER_ALGO;
 import static org.apache.ignite.spi.encryption.keystore.KeystoreEncryptionSpi.DEFAULT_MASTER_KEY_NAME;
 
@@ -284,5 +299,82 @@ public abstract class AbstractEncryptionTest extends GridCommonAbstractTest {
                 return false;
 
         return true;
+    }
+
+    protected void validateKeyIdentifier(
+        CacheGroupContext grp, int keyId) throws IgniteCheckedException, IOException {
+        int grpId = grp.groupId();
+
+        int realPageSize = grp.dataRegion().pageMemory().realPageSize(grpId);
+
+        int encryptionBlockSize = grp.shared().kernalContext().config().getEncryptionSpi().blockSize();
+
+        List<Integer> parts = IntStream.range(0, grp.shared().affinity().affinity(grpId).partitions())
+            .boxed().collect(Collectors.toList());
+
+        parts.add(INDEX_PARTITION);
+
+        for (int p : parts) {
+            FilePageStore pageStore =
+                (FilePageStore)((FilePageStoreManager)grp.shared().pageStore()).getStore(grpId, p);
+
+            if (!pageStore.exists())
+                continue;
+
+            assertEquals("p=" + p, pageStore.encryptedPagesCount(), pageStore.encryptedPagesOffset());
+
+//            assertEquals(0, pageStore.encryptedPagesCount());
+//            assertEquals(0, pageStore.encryptedPagesOffset());
+
+            long metaPageId = PageIdUtils.pageId(p, PageIdAllocator.FLAG_DATA, 0);
+
+            scanFileStore(pageStore, metaPageId, realPageSize, encryptionBlockSize, keyId);
+        }
+    }
+
+    private void scanFileStore(FilePageStore pageStore, long startPageId, int realPageSize, int blockSize, int expKeyIdentifier) throws IOException {
+        int pagesCnt = pageStore.pages();
+        int pageSize = pageStore.getPageSize();
+
+        ByteBuffer pageBuf = ByteBuffer.allocate(pageSize);
+
+        try (FileChannel ch = FileChannel.open( new File(pageStore.getFileAbsolutePath()).toPath(), StandardOpenOption.READ)) {
+            for (int n = 0; n < pagesCnt; n++) {
+                long pageId = startPageId + n;
+
+                long pageOffset = pageStore.pageOffset(pageId);
+
+                pageBuf.position(0);
+
+                ch.position(pageOffset);
+                ch.read(pageBuf);
+
+                pageBuf.position(realPageSize + blockSize + 4);
+
+                assertEquals(expKeyIdentifier, pageBuf.get() & 0xff);
+            }
+        }
+    }
+
+    protected void checkGroupKey(int grpId, int keyId) throws IgniteCheckedException, IOException {
+        for (Ignite g : G.allGrids()) {
+            IgniteEx grid = (IgniteEx)g;
+
+            if (grid.context().clientNode())
+                continue;
+
+            GridEncryptionManager encrMgr = grid.context().encryption();
+
+            assertEquals(grid.localNode().id().toString(), keyId, encrMgr.groupKey(grpId).id());
+
+            encrMgr.encryptionTask(grpId).get();
+
+            // todo check after restart without checkpoint.
+            forceCheckpoint(g);
+
+            info("Validating page store [node=" + g.cluster().localNode().id() + ", grp=" + grpId + "]");
+
+            validateKeyIdentifier(grid.context().cache().cacheGroup(grpId), keyId);
+        }
     }
 }

@@ -375,7 +375,6 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
     }
 
     private List<T2<Integer, Integer>> storeEncryptionOffsets(int grpId) throws IgniteCheckedException {
-        U.dumpStack("storeencroffsets");
         List<T2<Integer, Integer>> offsets = new ArrayList<>();
 
         CacheGroupContext grp = ctx.cache().cacheGroup(grpId);

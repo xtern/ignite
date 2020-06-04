@@ -1,19 +1,28 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package org.apache.ignite.internal.encryption;
 
-import java.io.File;
-import java.io.IOException;
-import java.nio.ByteBuffer;
-import java.nio.channels.FileChannel;
-import java.nio.file.StandardOpenOption;
 import java.util.Collections;
-import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.stream.Collectors;
-import java.util.stream.IntStream;
 import org.apache.ignite.Ignite;
 import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.IgniteDataStreamer;
@@ -29,17 +38,11 @@ import org.apache.ignite.internal.IgniteInternalFuture;
 import org.apache.ignite.internal.TestRecordingCommunicationSpi;
 import org.apache.ignite.internal.managers.discovery.DiscoveryCustomMessage;
 import org.apache.ignite.internal.managers.encryption.GridEncryptionManager;
-import org.apache.ignite.internal.pagemem.PageIdAllocator;
-import org.apache.ignite.internal.pagemem.PageIdUtils;
-import org.apache.ignite.internal.processors.cache.CacheGroupContext;
 import org.apache.ignite.internal.processors.cache.IgniteInternalCache;
-import org.apache.ignite.internal.processors.cache.persistence.file.FilePageStore;
-import org.apache.ignite.internal.processors.cache.persistence.file.FilePageStoreManager;
 import org.apache.ignite.internal.util.distributed.DistributedProcess.DistributedProcessType;
 import org.apache.ignite.internal.util.distributed.InitMessage;
 import org.apache.ignite.internal.util.distributed.SingleNodeMessage;
 import org.apache.ignite.internal.util.future.GridFinishedFuture;
-import org.apache.ignite.internal.util.typedef.G;
 import org.apache.ignite.internal.util.typedef.T2;
 import org.apache.ignite.internal.util.typedef.internal.CU;
 import org.apache.ignite.lang.IgniteFuture;
@@ -50,7 +53,6 @@ import org.junit.Test;
 
 import static org.apache.ignite.IgniteSystemProperties.IGNITE_ACTIVE_KEY_ID_FOR_GROUP;
 import static org.apache.ignite.configuration.WALMode.LOG_ONLY;
-import static org.apache.ignite.internal.pagemem.PageIdAllocator.INDEX_PARTITION;
 import static org.apache.ignite.testframework.GridTestUtils.assertThrowsAnyCause;
 import static org.apache.ignite.testframework.GridTestUtils.assertThrowsWithCause;
 import static org.apache.ignite.testframework.GridTestUtils.runAsync;
@@ -173,47 +175,6 @@ public class GroupKeyChangeTest extends AbstractEncryptionTest {
         assertThrowsAnyCause(log, () -> {
             return grid(GRID_0).encryption().changeGroupKey(Collections.singleton(CU.cacheId(cacheName())));
         }, IgniteException.class, "Not all baseline nodes online [total=2, online=1]");
-    }
-
-    @Test
-    public void testEncryptionRecoveryFromWal() throws Exception {
-        T2<IgniteEx, IgniteEx> nodes = startTestGrids(true);
-
-        IgniteEx node0 = nodes.get1();
-        IgniteEx node1 = nodes.get2();
-
-        createEncryptedCache(node0, node1, cacheName(), null);
-
-        forceCheckpoint();
-
-        enableCheckpoints(node0, false);
-        enableCheckpoints(node1, false);
-
-        int grpId = CU.cacheId(cacheName());
-
-        node0.encryption().changeGroupKey(Collections.singleton(grpId)).get();
-
-        node0.context().encryption().encryptionTask(grpId).get();
-        node1.context().encryption().encryptionTask(grpId).get();
-
-        assertEquals(1, node0.context().encryption().groupKey(grpId).id());
-        assertEquals(1, node1.context().encryption().groupKey(grpId).id());
-
-        stopAllGrids();
-
-        System.out.println(">>> Start grid");
-
-        nodes = startTestGrids(false);
-
-        node0 = nodes.get1();
-        node1 = nodes.get2();
-
-        enableCheckpoints(node0, true);
-        enableCheckpoints(node1, true);
-
-        awaitPartitionMapExchange();
-
-        checkGroupKey(grpId, 1);
     }
 
     @Test
@@ -522,81 +483,7 @@ public class GroupKeyChangeTest extends AbstractEncryptionTest {
         assertEquals(1, node2.context().encryption().groupKeysInfo(grpId).size());
     }
 
-    private void validateKeyIdentifier(CacheGroupContext grp, int keyId) throws IgniteCheckedException, IOException {
-        int grpId = grp.groupId();
 
-        int realPageSize = grp.dataRegion().pageMemory().realPageSize(grpId);
-
-        int encryptionBlockSize = grp.shared().kernalContext().config().getEncryptionSpi().blockSize();
-
-        List<Integer> parts = IntStream.range(0, grp.shared().affinity().affinity(grpId).partitions())
-            .boxed().collect(Collectors.toList());
-
-        parts.add(INDEX_PARTITION);
-
-        for (int p : parts) {
-            FilePageStore pageStore =
-                (FilePageStore)((FilePageStoreManager)grp.shared().pageStore()).getStore(grpId, p);
-
-            if (!pageStore.exists())
-                continue;
-
-            assertEquals("p=" + p, pageStore.encryptedPagesCount(), pageStore.encryptedPagesOffset());
-
-//            assertEquals(0, pageStore.encryptedPagesCount());
-//            assertEquals(0, pageStore.encryptedPagesOffset());
-
-            long metaPageId = PageIdUtils.pageId(p, PageIdAllocator.FLAG_DATA, 0);
-
-            scanFileStore(pageStore, metaPageId, realPageSize, encryptionBlockSize, keyId);
-        }
-    }
-
-    private void scanFileStore(FilePageStore pageStore, long startPageId, int realPageSize, int blockSize, int expKeyIdentifier) throws IOException {
-        int pagesCnt = pageStore.pages();
-        int pageSize = pageStore.getPageSize();
-
-        ByteBuffer pageBuf = ByteBuffer.allocate(pageSize);
-
-        try (FileChannel ch = FileChannel.open( new File(pageStore.getFileAbsolutePath()).toPath(), StandardOpenOption.READ)) {
-            for (int n = 0; n < pagesCnt; n++) {
-                long pageId = startPageId + n;
-
-                long pageOffset = pageStore.pageOffset(pageId);
-
-                pageBuf.position(0);
-
-                ch.position(pageOffset);
-                ch.read(pageBuf);
-
-                pageBuf.position(realPageSize + blockSize + 4);
-
-                assertEquals(expKeyIdentifier, pageBuf.get() & 0xff);
-            }
-        }
-    }
-
-    private void checkGroupKey(int grpId, int keyId) throws IgniteCheckedException, IOException {
-        for (Ignite g : G.allGrids()) {
-            IgniteEx grid = (IgniteEx)g;
-
-            if (grid.context().clientNode())
-                continue;
-
-            GridEncryptionManager encrMgr = grid.context().encryption();
-
-            assertEquals(grid.localNode().id().toString(), keyId, encrMgr.groupKey(grpId).id());
-
-            encrMgr.encryptionTask(grpId).get();
-
-            // todo check after restart without checkpoint.
-            forceCheckpoint(g);
-
-            info("Validating page store [node=" + g.cluster().localNode().id() + ", grp=" + grpId + "]");
-
-            validateKeyIdentifier(grid.context().cache().cacheGroup(grpId), keyId);
-        }
-    }
 
     private static class InitMessageDiscoHook extends DiscoveryHook {
         private final CountDownLatch discoLatch;
