@@ -296,6 +296,8 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
                     }
                 });
         }
+
+        updateEncryptionStatus(grp.groupId(), PageIdAllocator.INDEX_PARTITION);
     }
 
     /**
@@ -409,7 +411,6 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
                         changed |= io.setSize(partMetaPageAddr, size);
 
                         if (!encryptionDisabled && grp.persistenceEnabled()) {
-
                             PageStore pageStore = ((FilePageStoreManager)this.ctx.pageStore()).getStore(grpId, part.id());
 
                             int pagesCnt = pageStore.encryptedPagesCount();
@@ -834,6 +835,55 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
         }
     }
 
+    private boolean updateEncryptionStatus(int grpId, int partId) throws IgniteCheckedException {
+        boolean changed = false;
+
+        PageStore pageStore = ((FilePageStoreManager)this.ctx.pageStore()).getStore(grpId, partId);
+
+        int pagesCnt = pageStore.encryptedPagesCount();
+
+        if (pagesCnt == 0)
+            return false;
+
+        PageMemoryEx pageMem = (PageMemoryEx)grp.dataRegion().pageMemory();
+
+        long metaPageId = pageMem.metaPageId(grpId);
+        long metaPage = pageMem.acquirePage(grpId, metaPageId);
+
+        try {
+            long metaPageAddr = pageMem.writeLock(grpId, metaPageId, metaPage);
+
+            try {
+                PageMetaIO metaIo = PageMetaIO.getPageIO(metaPageAddr);
+
+                int off = this.ctx.kernalContext().encryption().encryptionOffset(grpId, partId);
+
+                System.out.println("(encr-state) grp=" + grpId + ", p=" + partId + ", pages=" + pagesCnt);
+
+                if (off == pagesCnt - 1) {
+                    off = 0;
+                    pagesCnt = 0;
+
+                    pageStore.encryptedPagesCount(0);
+                }
+
+                pageStore.encryptedPagesOffset(off);
+
+                changed |= metaIo.setEncryptionPageIdx(metaPageAddr, off);
+                // todo first time should save current pages count
+                changed |= metaIo.setEncryptionPagesCount(metaPageAddr, pagesCnt);
+            }
+            finally {
+                pageMem.writeUnlock(grpId, metaPageId, metaPage, null, changed);
+            }
+        }
+        finally {
+            pageMem.releasePage(grpId, metaPageId, metaPage);
+        }
+
+        return changed;
+    }
+
     /**
      * @param part Local partition.
      * @param map Map to add values to.
@@ -1013,6 +1063,18 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
 
                     metastoreRoot = pageIO.getTreeRoot(pageAddr);
                     reuseListRoot = pageIO.getReuseListRoot(pageAddr);
+
+                    int encrPageCnt = pageIO.getEncryptionPagesCount(pageAddr);
+
+                    if (encrPageCnt > 0) {
+                        PageStore pageStore =
+                            ((FilePageStoreManager)ctx.pageStore()).getStore(grpId, PageIdAllocator.INDEX_PARTITION);
+
+                        pageStore.encryptedPagesCount(encrPageCnt);
+                        pageStore.encryptedPagesOffset(pageIO.getEncryptionPageIdx(pageAddr));
+                    }
+
+                    System.out.println("init meta " + grpId + " p=" + PageIdAllocator.INDEX_PARTITION + " pagesCnt="+encrPageCnt);
 
                     assert reuseListRoot != 0L;
                 }

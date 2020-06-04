@@ -238,42 +238,6 @@ public class PagePartitionMetaIO extends PageMetaIO {
             "this PagePartitionMetaIO version: ver=" + getVersion());
     }
 
-    /**
-     * @param pageAddr Page address.
-     * @return Current encryption page index.
-     */
-    public int getEncryptionPageIdx(long pageAddr) {
-        throw new UnsupportedOperationException();
-    }
-
-    /**
-     * @param pageAddr Page address.
-     * @param pageIdx Encryption page index..
-     *
-     * @return {@code true} if value has changed as a result of this method's invocation.
-     */
-    public boolean setEncryptionPageIdx(long pageAddr, int pageIdx) {
-        throw new UnsupportedOperationException();
-    }
-
-    /**
-     * @param pageAddr Page address.
-     * @return Encryption pages count.
-     */
-    public int getEncryptionPagesCount(long pageAddr) {
-        throw new UnsupportedOperationException();
-    }
-
-    /**
-     * @param pageAddr Page address.
-     * @param pagesCnt Encryption pages count.
-     *
-     * @return {@code true} if value has changed as a result of this method's invocation.
-     */
-    public boolean setEncryptionPagesCount(long pageAddr, int pagesCnt) {
-        throw new UnsupportedOperationException();
-    }
-
     /** {@inheritDoc} */
     @Override protected void printPage(long pageAddr, int pageSize, GridStringBuilder sb) throws IgniteCheckedException {
         super.printPage(pageAddr, pageSize, sb);
