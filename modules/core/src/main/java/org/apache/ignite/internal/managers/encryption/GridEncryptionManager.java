@@ -393,6 +393,8 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
             pageStore.encryptedPagesOffset(0);
 
             offsets.add(new T2<>(part.id(), pagesCnt));
+
+            log.info(">xxx> store encr offset " + grp.cacheOrGroupName() + " p=" + part.id() + " total=" + pagesCnt + ", ");
         }
 
         PageStore pageStore = mgr.getStore(grpId, INDEX_PARTITION);
@@ -456,36 +458,7 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
                     try {
                         f.get();
 
-                        boolean changed = false;
-
-                        for (Map<Integer, ?> map : walSegments.values()) {
-                            if (!map.containsKey(grpId)) {
-                                int activeKey = grpEncActiveKeys.get(grpId);
-
-                                changed |= grpEncKeys.get(grpId).keySet().removeIf(v -> v != activeKey);
-                            }
-                        }
-
-                        ctx.cache().context().database().checkpointReadLock();
-
-                        try {
-                            encryptedGroups.remove(grpId);
-
-                            metaStorage.write(REENCRYPTED_GROUPS, encryptedGroups.stream().mapToInt(n -> n).toArray());
-
-                            if (changed) {
-                                metaStorage.write(ENCRYPTION_KEYS_PREFIX + grpId, keysMap(grpId));
-
-                                if (log.isInfoEnabled())
-                                    log.info("Previous encryption keys were removed");
-                            }
-
-                        } finally {
-                            ctx.cache().context().database().checkpointReadUnlock();
-                        }
-
-                        if (log.isInfoEnabled())
-                            log.info("Cache group reencryption is finished [grp=" + grpId + "]");
+                        cleanupKeys(grpId);
                     }
                     catch (IgniteCheckedException e) {
                         log.warning("Reencryption failed [grp=" + grpId + "]", e);
@@ -1141,6 +1114,11 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
      */
     public IgniteInternalFuture<Void> encryptionTask(Integer grpId) {
         // todo
+        return encryptTask.encryptionCpFuture(grpId);
+    }
+
+    public IgniteInternalFuture<Void> encryptionStateTask(Integer grpId) {
+        // todo
         return encryptTask.encryptionFuture(grpId);
     }
 
@@ -1367,8 +1345,21 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
             }
 
             if (!encryptedGroups.isEmpty()) {
-                for (int grpId : encryptedGroups)
-                    encryptTask.schedule(grpId);
+                for (int grpId : encryptedGroups) {
+                    IgniteInternalFuture<?> fut = encryptTask.schedule(grpId);
+
+                    fut.listen(f -> {
+                        try {
+                            f.get();
+
+                            cleanupKeys(grpId);
+                        }
+                        catch (IgniteCheckedException e) {
+                            log.warning("Reencryption failed [grp=" + grpId + "]", e);
+                        }
+                    });
+
+                }
             }
 
             if (recoveryMasterKeyName)
@@ -1380,6 +1371,45 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
 
             recoveryMasterKeyName = false;
         }
+    }
+
+    private void cleanupKeys(int grpId) throws IgniteCheckedException {
+        log.info("try cleanup keys");
+
+        int activeKey = grpEncActiveKeys.get(grpId);
+
+        Set<Integer> rmvKeys = new HashSet<>(grpEncKeys.get(grpId).keySet());
+
+        rmvKeys.remove(activeKey);
+
+        for (Map<Integer, Set<Integer>> map : walSegments.values()) {
+            Set<Integer> grpKeepKeys = map.get(grpId);
+
+            rmvKeys.removeAll(grpKeepKeys);
+        }
+
+        boolean changed = grpEncKeys.get(grpId).keySet().removeAll(rmvKeys);
+
+        ctx.cache().context().database().checkpointReadLock();
+
+        try {
+            encryptedGroups.remove(grpId);
+
+            metaStorage.write(REENCRYPTED_GROUPS, encryptedGroups.stream().mapToInt(n -> n).toArray());
+
+            if (changed) {
+                metaStorage.write(ENCRYPTION_KEYS_PREFIX + grpId, keysMap(grpId));
+
+                if (log.isInfoEnabled())
+                    log.info("Previous encryption keys were removed");
+            }
+
+        } finally {
+            ctx.cache().context().database().checkpointReadUnlock();
+        }
+
+        if (log.isInfoEnabled())
+            log.info("Cache group reencryption is finished [grp=" + grpId + "]");
     }
 
     /** {@inheritDoc} */

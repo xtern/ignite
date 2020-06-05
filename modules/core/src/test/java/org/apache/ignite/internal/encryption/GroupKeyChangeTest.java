@@ -43,6 +43,7 @@ import org.apache.ignite.internal.util.distributed.DistributedProcess.Distribute
 import org.apache.ignite.internal.util.distributed.InitMessage;
 import org.apache.ignite.internal.util.distributed.SingleNodeMessage;
 import org.apache.ignite.internal.util.future.GridFinishedFuture;
+import org.apache.ignite.internal.util.typedef.G;
 import org.apache.ignite.internal.util.typedef.T2;
 import org.apache.ignite.internal.util.typedef.internal.CU;
 import org.apache.ignite.lang.IgniteFuture;
@@ -310,6 +311,8 @@ public class GroupKeyChangeTest extends AbstractEncryptionTest {
 
             awaitPartitionMapExchange();
 
+            forceCheckpoint(stoppedNode);
+
             stoppedNode.encryption().changeGroupKey(Collections.singleton(grpId)).get(MAX_AWAIT_MILLIS);
 
             checkGroupKey(grpId, keyId + 1);
@@ -323,6 +326,8 @@ public class GroupKeyChangeTest extends AbstractEncryptionTest {
                 stoppedNode.resetLostPartitions(Collections.singleton(ENCRYPTED_CACHE));
 
                 awaitPartitionMapExchange();
+
+                forceCheckpoint(stoppedNode);
 
                 stoppedNode.encryption().changeGroupKey(Collections.singleton(grpId)).get(MAX_AWAIT_MILLIS);
 
@@ -369,7 +374,7 @@ public class GroupKeyChangeTest extends AbstractEncryptionTest {
 
         int grpId = cache.context().groupId();
 
-        node1.encryption().changeGroupKey(Collections.singletonList(grpId)).get();
+        node1.encryption().changeGroupKey(Collections.singletonList(grpId)).get(MAX_AWAIT_MILLIS);
 
         Map<Integer, Integer> keys1 = node1.context().encryption().groupKeysInfo(grpId);
         Map<Integer, Integer> keys2 = node2.context().encryption().groupKeysInfo(grpId);
@@ -381,18 +386,20 @@ public class GroupKeyChangeTest extends AbstractEncryptionTest {
 
         info("New key was set on all nodes [grpId=" + grpId + ", keys=" + keys1 + "]");
 
+        // todo why this works
         node1.context().encryption().encryptionTask(grpId).get(MAX_AWAIT_MILLIS);
         node2.context().encryption().encryptionTask(grpId).get(MAX_AWAIT_MILLIS);
-
-        loadFut.cancel();
 
         info("Re-encryption finished");
 
         forceCheckpoint();
 
+        loadFut.cancel();
+
         // Ensure that data is encrypted with the new key.
-        validateKeyIdentifier(node1.cachex(cacheName()).context().group(), 1);
-        validateKeyIdentifier(node2.cachex(cacheName()).context().group(), 1);
+        checkGroupKey(grpId, 1);
+//        validateKeyIdentifier(node1.cachex(cacheName()).context().group(), 1);
+//        validateKeyIdentifier(node2.cachex(cacheName()).context().group(), 1);
 
         stopAllGrids();
 
@@ -413,7 +420,7 @@ public class GroupKeyChangeTest extends AbstractEncryptionTest {
                 if (n % 1000 == 0 && encMgr1.groupKeysInfo(grpId).size() == 1 && encMgr2.groupKeysInfo(grpId).size() == 1)
                     break;
 
-                if (n > 10_000_000)
+                if (n > 1_000_000)
                     break;
             }
         }
@@ -449,8 +456,7 @@ public class GroupKeyChangeTest extends AbstractEncryptionTest {
 
         info("New key was set on all nodes [grpId=" + grpId + ", keys=" + keys1 + "]");
 
-        node1.context().encryption().encryptionTask(grpId).get(MAX_AWAIT_MILLIS);
-        node2.context().encryption().encryptionTask(grpId).get(MAX_AWAIT_MILLIS);
+        awaitEncryption(G.allGrids(), grpId).get(MAX_AWAIT_MILLIS);
 
         info("Re-encryption finished");
 

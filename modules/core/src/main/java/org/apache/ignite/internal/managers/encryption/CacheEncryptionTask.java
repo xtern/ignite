@@ -18,8 +18,12 @@
 package org.apache.ignite.internal.managers.encryption;
 
 import java.util.Map;
+import java.util.Queue;
+import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicIntegerArray;
 import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.IgniteLogger;
@@ -31,8 +35,11 @@ import org.apache.ignite.internal.pagemem.store.PageStore;
 import org.apache.ignite.internal.pagemem.wal.record.PageSnapshot;
 import org.apache.ignite.internal.processors.cache.CacheGroupContext;
 import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtLocalPartition;
+import org.apache.ignite.internal.processors.cache.persistence.DbCheckpointListener;
+import org.apache.ignite.internal.processors.cache.persistence.GridCacheDatabaseSharedManager;
 import org.apache.ignite.internal.processors.cache.persistence.file.FilePageStoreManager;
 import org.apache.ignite.internal.processors.cache.persistence.pagemem.PageMemoryEx;
+import org.apache.ignite.internal.util.GridConcurrentHashSet;
 import org.apache.ignite.internal.util.future.GridCompoundFuture;
 import org.apache.ignite.internal.util.future.GridFinishedFuture;
 import org.apache.ignite.internal.util.future.GridFutureAdapter;
@@ -41,7 +48,7 @@ import static org.apache.ignite.internal.pagemem.PageIdAllocator.INDEX_PARTITION
 import static org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtPartitionState.MOVING;
 import static org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtPartitionState.OWNING;
 
-public class CacheEncryptionTask {
+public class CacheEncryptionTask implements DbCheckpointListener {
     private static final int BATCH_SIZE = 10_000;
 
     private final GridKernalContext ctx;
@@ -54,6 +61,8 @@ public class CacheEncryptionTask {
         log = ctx.log(getClass());
     }
 
+    private AtomicBoolean init = new AtomicBoolean();
+
     private Map<Integer, ReencryptionState> statesMap = new ConcurrentHashMap<>();
 
     private Map<Integer, IgniteInternalFuture> futMap = new ConcurrentHashMap<>();
@@ -64,6 +73,9 @@ public class CacheEncryptionTask {
         CacheGroupContext grp = ctx.cache().cacheGroup(grpId);
 
         assert grp != null;
+
+        if (init.compareAndSet(false, true))
+            ((GridCacheDatabaseSharedManager)ctx.cache().context().database()).addCheckpointListener(this);
 
         if (log.isInfoEnabled())
             log.info("Shecudled re-encryption [grp=" + grpId + "]");
@@ -77,17 +89,24 @@ public class CacheEncryptionTask {
 
         schedule(grpId, INDEX_PARTITION, state);
 
+//        state.fut.add(cpFut)
+
         state.fut.markInitialized();
 
         statesMap.put(grpId, state);
+
         futMap.put(grpId, state.fut);
 
         state.fut.listen(f -> {
             if (log.isInfoEnabled())
                 log.info("Re-encryption is finished for group [grp=" + grpId + "]");
+
+            boolean added = completed.offer(grpId);
+
+            assert added;
         });
 
-        return state.fut;
+        return state.cpFut;
     }
 
     private void schedule(int grpId, int partId, ReencryptionState state) throws IgniteCheckedException {
@@ -114,6 +133,12 @@ public class CacheEncryptionTask {
         return fut == null ? new GridFinishedFuture() : fut;
     }
 
+    public IgniteInternalFuture encryptionCpFuture(int grpId) {
+        ReencryptionState state = statesMap.get(grpId);
+
+        return state == null ? new GridFinishedFuture() : state.cpFut;
+    }
+
     public int pageOffset(int grpId, int partId) {
         ReencryptionState state = statesMap.get(grpId);
 
@@ -123,13 +148,55 @@ public class CacheEncryptionTask {
         return state.offsets.get(partId == INDEX_PARTITION ? state.offsets.length() - 1 : partId);
     }
 
+    @Override public void onMarkCheckpointBegin(Context ctx) throws IgniteCheckedException {
+
+    }
+
+    private void complete(int grpId) {
+        ReencryptionState state = statesMap.remove(grpId);
+
+        state.cpFut.onDone();
+    }
+
+    private final Queue<Integer> completed = new ConcurrentLinkedQueue<>();
+
+    @Override public void onCheckpointBegin(Context ctx) throws IgniteCheckedException {
+        Integer grpId = null;
+
+        Set<Integer> completeCandidates = new GridConcurrentHashSet<>();
+
+        while ((grpId = completed.poll()) != null)
+            completeCandidates.add(grpId);
+
+        ctx.finishedStateFut().listen(
+            f -> {
+                try {
+                    f.get();
+
+                    for (int grpId0 : completeCandidates)
+                        complete(grpId0);
+                }
+                catch (IgniteCheckedException e) {
+                    log.warning("Checkpoint failed", e);
+                }
+            }
+        );
+    }
+
+    @Override public void beforeCheckpointBegin(Context ctx) throws IgniteCheckedException {
+        //ctx.finishedStateFut()
+    }
+
     private class ReencryptionState {
         final GridCompoundFuture fut;
+
+        final GridFutureAdapter cpFut;
 
         final AtomicIntegerArray offsets;
 
         public ReencryptionState(int grpId) {
             this.fut = new GridCompoundFuture();
+            this.cpFut = new GridFutureAdapter();
             this.offsets = new AtomicIntegerArray(ctx.cache().cacheGroup(grpId).topology().partitions() + 1);
         }
     }
@@ -238,7 +305,7 @@ public class CacheEncryptionTask {
                 }
             }
 
-            log.info("Re-encryption is finished " + partId);
+            log.info("Re-encryption is finished " + partId + " cnt=" + cnt);
 
             if (!fut.isDone())
                 fut.onDone();

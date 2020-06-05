@@ -23,9 +23,12 @@ import java.io.Serializable;
 import java.nio.ByteBuffer;
 import java.nio.file.OpenOption;
 import java.util.Collections;
+import java.util.HashSet;
+import java.util.Set;
 import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.IgniteDataStreamer;
 import org.apache.ignite.cache.affinity.rendezvous.RendezvousAffinityFunction;
+import org.apache.ignite.cluster.ClusterState;
 import org.apache.ignite.configuration.CacheConfiguration;
 import org.apache.ignite.configuration.DataRegionConfiguration;
 import org.apache.ignite.configuration.DataStorageConfiguration;
@@ -63,6 +66,7 @@ public class CacheGroupReencryptionTest extends AbstractEncryptionTest {
             .setWalSegmentSize(10 * 1024 * 1024)
             .setWalSegments(4)
             .setMaxWalArchiveSize(10 * 1024 * 1024L)
+            .setCheckpointFrequency(30 * 1000L)
             .setWalMode(LOG_ONLY)
             .setFileIOFactory(new FailingFileIOFactory(new RandomAccessFileIOFactory(), failCtx));
 
@@ -85,6 +89,11 @@ public class CacheGroupReencryptionTest extends AbstractEncryptionTest {
         return cfg.setAffinity(new RendezvousAffinityFunction(false, 8));
     }
 
+    /**
+     * Check physical recovery after checkpoint failure during re-encryption.
+     *
+     * @throws Exception If failed.
+     */
     @Test
     public void testPhysicalRecovery() throws Exception {
         failCtx.cacheName = cacheName();
@@ -102,8 +111,7 @@ public class CacheGroupReencryptionTest extends AbstractEncryptionTest {
 
         nodes.get1().encryption().changeGroupKey(Collections.singleton(grpId)).get();
 
-        nodes.get1().context().encryption().encryptionTask(grpId).get();
-        nodes.get2().context().encryption().encryptionTask(grpId).get();
+        awaitEncryption(G.allGrids(), grpId).get();
 
         assertThrowsAnyCause(log, () -> {
             forceCheckpoint();
@@ -122,6 +130,11 @@ public class CacheGroupReencryptionTest extends AbstractEncryptionTest {
         checkGroupKey(grpId, 1);
     }
 
+    /**
+     * Ensures that re-encryption continues after a restart.
+     *
+     * @throws Exception If failed.
+     */
     @Test
     public void testLogicalRecovery() throws Exception {
         T2<IgniteEx, IgniteEx> nodes = startTestGrids(true);
@@ -148,8 +161,7 @@ public class CacheGroupReencryptionTest extends AbstractEncryptionTest {
 
         node0.encryption().changeGroupKey(Collections.singleton(grpId)).get();
 
-        node0.context().encryption().encryptionTask(grpId).get();
-        node1.context().encryption().encryptionTask(grpId).get();
+        awaitEncryption(G.allGrids(), grpId).get();
 
         assertEquals(1, node0.context().encryption().groupKey(grpId).id());
         assertEquals(1, node1.context().encryption().groupKey(grpId).id());
@@ -167,6 +179,50 @@ public class CacheGroupReencryptionTest extends AbstractEncryptionTest {
         info(">>> Start grids (iteration 2)");
 
         startTestGrids(false);
+
+        checkGroupKey(grpId, 1);
+    }
+
+    @Test
+    public void testKeyCleanup() throws Exception {
+        T2<IgniteEx, IgniteEx> nodes = startTestGrids(true);
+
+        IgniteEx node0 = nodes.get1();
+        IgniteEx node1 = nodes.get2();
+
+        createEncryptedCache(node0, node1, cacheName(), null);
+
+        forceCheckpoint();
+
+        enableCheckpoints(G.allGrids(), false);
+
+        int grpId = CU.cacheId(cacheName());
+
+        Set<Long> walSegments = new HashSet<>();
+
+        walSegments.add(node1.context().cache().context().wal().currentSegment());
+
+        node0.encryption().changeGroupKey(Collections.singleton(grpId)).get();
+
+        walSegments.add(node1.context().cache().context().wal().currentSegment());
+
+        awaitEncryption(G.allGrids(), grpId).get();
+
+        // Simulate that wal was removed.
+        for (long segment : walSegments)
+            node1.context().encryption().onWalSegmentRemoved(segment);
+
+        stopGrid(GRID_1);
+
+        node1 = startGrid(GRID_1);
+
+        enableCheckpoints(G.allGrids(), true);
+
+        node1.cluster().state(ClusterState.ACTIVE);
+
+        node1.resetLostPartitions(Collections.singleton(ENCRYPTED_CACHE));
+
+        checkEncryptedCaches(node0, node1);
 
         checkGroupKey(grpId, 1);
     }

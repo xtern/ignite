@@ -253,8 +253,6 @@ public class EncryptedFileIO implements FileIO {
 
         res.put(grpKey.id());
 
-//        System.out.println(">> write >> key identifier: " + pair.getValue());
-
         srcBuf.limit(srcLimit);
         srcBuf.position(srcBuf.position() + encryptionOverhead);
     }

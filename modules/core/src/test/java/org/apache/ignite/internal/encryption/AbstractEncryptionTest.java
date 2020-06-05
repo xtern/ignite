@@ -40,6 +40,7 @@ import org.apache.ignite.configuration.DataRegionConfiguration;
 import org.apache.ignite.configuration.DataStorageConfiguration;
 import org.apache.ignite.configuration.IgniteConfiguration;
 import org.apache.ignite.internal.IgniteEx;
+import org.apache.ignite.internal.IgniteInternalFuture;
 import org.apache.ignite.internal.IgniteInterruptedCheckedException;
 import org.apache.ignite.internal.managers.encryption.GridEncryptionManager;
 import org.apache.ignite.internal.managers.encryption.GroupKey;
@@ -50,6 +51,7 @@ import org.apache.ignite.internal.processors.cache.IgniteInternalCache;
 import org.apache.ignite.internal.processors.cache.persistence.file.FilePageStore;
 import org.apache.ignite.internal.processors.cache.persistence.file.FilePageStoreManager;
 import org.apache.ignite.internal.util.IgniteUtils;
+import org.apache.ignite.internal.util.future.GridCompoundFuture;
 import org.apache.ignite.internal.util.typedef.G;
 import org.apache.ignite.internal.util.typedef.T2;
 import org.apache.ignite.internal.util.typedef.internal.CU;
@@ -321,10 +323,10 @@ public abstract class AbstractEncryptionTest extends GridCommonAbstractTest {
             if (!pageStore.exists())
                 continue;
 
-            assertEquals("p=" + p, pageStore.encryptedPagesCount(), pageStore.encryptedPagesOffset());
+//            assertEquals("p=" + p, pageStore.encryptedPagesCount(), pageStore.encryptedPagesOffset());
 
-//            assertEquals(0, pageStore.encryptedPagesCount());
-//            assertEquals(0, pageStore.encryptedPagesOffset());
+            assertEquals(0, pageStore.encryptedPagesCount());
+            assertEquals(0, pageStore.encryptedPagesOffset());
 
             long metaPageId = PageIdUtils.pageId(p, PageIdAllocator.FLAG_DATA, 0);
 
@@ -349,9 +351,13 @@ public abstract class AbstractEncryptionTest extends GridCommonAbstractTest {
                 ch.position(pageOffset);
                 ch.read(pageBuf);
 
-                pageBuf.position(realPageSize + blockSize + 4);
+                // todo ENSURE that page is not empty!!!
+                pageBuf.position(realPageSize + blockSize);
 
-                assertEquals(expKeyIdentifier, pageBuf.get() & 0xff);
+                int crc = pageBuf.getInt();
+
+                if (crc != 0)
+                    assertEquals(pageStore.getFileAbsolutePath() + " page = " + n + ", crc=" + crc, expKeyIdentifier, pageBuf.get() & 0xff);
             }
         }
     }
@@ -367,14 +373,27 @@ public abstract class AbstractEncryptionTest extends GridCommonAbstractTest {
 
             assertEquals(grid.localNode().id().toString(), keyId, encrMgr.groupKey(grpId).id());
 
-            encrMgr.encryptionTask(grpId).get();
+            encrMgr.encryptionStateTask(grpId).get();
 
             // todo check after restart without checkpoint.
             forceCheckpoint(g);
+
+            encrMgr.encryptionTask(grpId).get();
 
             info("Validating page store [node=" + g.cluster().localNode().id() + ", grp=" + grpId + "]");
 
             validateKeyIdentifier(grid.context().cache().cacheGroup(grpId), keyId);
         }
+    }
+
+    protected IgniteInternalFuture awaitEncryption(List<Ignite> grids, int grpId) {
+        GridCompoundFuture fut = new GridCompoundFuture();
+
+        for (Ignite grid : grids)
+            fut.add(((IgniteEx)grid).context().encryption().encryptionStateTask(grpId));
+
+        fut.markInitialized();
+
+        return fut;
     }
 }
