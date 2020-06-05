@@ -167,7 +167,7 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
     private static final String REENCRYPTED_WAL_SEGMENTS = "reencrypted-wal-segments";
 
     /** Prefix for a master key name. */
-    private static final String MASTER_KEY_NAME_PREFIX = "encryption-master-key-name";
+    public static final String MASTER_KEY_NAME_PREFIX = "encryption-master-key-name";
 
     /** Prefix for a encryption group key in meta store. */
     @Deprecated
