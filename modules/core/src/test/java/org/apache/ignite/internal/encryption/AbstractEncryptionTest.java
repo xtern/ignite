@@ -371,7 +371,7 @@ public abstract class AbstractEncryptionTest extends GridCommonAbstractTest {
 
             GridEncryptionManager encrMgr = grid.context().encryption();
 
-            assertEquals(grid.localNode().id().toString(), keyId, encrMgr.groupKey(grpId).id());
+            assertEquals(grid.localNode().id().toString(), (byte)keyId, encrMgr.groupKey(grpId).id());
 
             encrMgr.encryptionStateTask(grpId).get();
 

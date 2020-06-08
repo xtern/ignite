@@ -25,7 +25,7 @@ import org.junit.runners.Suite;
  */
 @RunWith(Suite.class)
 @Suite.SuiteClasses({
-    GroupKeyChangeTest.class,
+    CacheGroupKeyChangeTest.class,
     CacheGroupReencryptionTest.class,
     EncryptedCacheBigEntryTest.class,
     EncryptedCacheCreateTest.class,

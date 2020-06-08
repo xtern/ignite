@@ -31,6 +31,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.TreeSet;
 import java.util.UUID;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentHashMap;
@@ -523,10 +524,23 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
                     // todo max key
                     int newKeyId = req.keyIdentifiers()[n] & 0xff;
 
-                    int activeKey = grpEncActiveKeys.get(grpId);
+                    //int activeKey = grpEncActiveKeys.get(grpId);
 
-                    if (grpEncKeys.get(grpId).containsKey(newKeyId) && activeKey >= newKeyId)
-                        return new GridFinishedFuture<>(new IgniteException("Incorrect new key identifer [grpId=" + grpId + ", keyId=" + newKeyId + "]"));
+                    //&& activeKey >= newKeyId
+                    if (grpEncKeys.get(grpId).containsKey(newKeyId)) {
+                        Set<Long> walIdxs = new TreeSet<>();
+
+                        for (Map.Entry<Long, Map<Integer, Set<Integer>>> entry : walSegments.entrySet()) {
+                            Set<Integer> keys = entry.getValue().get(grpId);
+
+                            if (keys != null && keys.contains(newKeyId))
+                                walIdxs.add(entry.getKey());
+                        }
+
+                        return new GridFinishedFuture<>(new IgniteException("Cannot add new key identifier - it's " +
+                            "already present, probably there existing wal logs that encrypted with this key [" +
+                            "grp=" + grpId + ", keyId=" + newKeyId + " walSegments=" + walIdxs + "]."));
+                    }
 
                     addNewKeys(req.groups(), req.keys(), req.keyIdentifiers(), false);
 
@@ -598,7 +612,10 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
         void addNewKeys(int[] groups, byte[][] keys, byte[] keyIds, boolean active) throws IgniteCheckedException {
             for (int i = 0; i < groups.length; i++) {
                 int grpId = groups[i];
+
                 int keyId = keyIds[i] & 0xff;
+
+                System.out.println(">>> origin " + keyIds[i] + ", keyId=" + keyId);
 
                 replaceKey(grpId, keys[i], keyId, active);
 
@@ -962,7 +979,7 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
 
         synchronized (metaStorageMux) {
             if (log.isDebugEnabled())
-                log.debug("Key added. [grp=" + grpId + "]");
+                log.debug("Key added. [grp=" + grpId + ", keyId=" + keyId + "]");
 
             Map<Integer, Serializable> keys = grpEncKeys.get(grpId);
 
@@ -1085,6 +1102,11 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
             keys[n] = getSpi().encryptKey(key);
 
             // todo key identifier can be not max in case of reverting encryption
+            int curr = grpEncActiveKeys.get(grpId);
+            int next = curr + 1;
+
+            System.out.println(">> generated key [curr=" + curr + ", curr0=" + (byte)curr + ", next=" + next + ", next0=" + (byte)next);
+
             keyIds[n] = (byte)(grpEncActiveKeys.get(grpId) + 1);
         }
 
@@ -1401,7 +1423,7 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
                 metaStorage.write(ENCRYPTION_KEYS_PREFIX + grpId, keysMap(grpId));
 
                 if (log.isInfoEnabled())
-                    log.info("Previous encryption keys were removed");
+                    log.info("Previous encryption keys were removed [ids=" + rmvKeys + "]");
             }
 
         } finally {

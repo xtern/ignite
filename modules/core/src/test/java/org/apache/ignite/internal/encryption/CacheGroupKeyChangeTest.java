@@ -61,7 +61,7 @@ import static org.apache.ignite.testframework.GridTestUtils.runAsync;
 /**
  *
  */
-public class GroupKeyChangeTest extends AbstractEncryptionTest {
+public class CacheGroupKeyChangeTest extends AbstractEncryptionTest {
     private static final long MAX_AWAIT_MILLIS = 15_000;
 
     private DiscoveryHook discoveryHook;
@@ -92,6 +92,7 @@ public class GroupKeyChangeTest extends AbstractEncryptionTest {
             .setWalSegmentSize(1024 * 1024)
             .setWalSegments(4)
             .setMaxWalArchiveSize(10 * 1024 * 1024)
+            .setCheckpointFrequency(30 * 1000L)
             .setWalMode(LOG_ONLY);
 
         cfg.setDataStorageConfiguration(memCfg);
@@ -105,35 +106,6 @@ public class GroupKeyChangeTest extends AbstractEncryptionTest {
 
         return cfg.setAffinity(new RendezvousAffinityFunction(false, 8));
     }
-
-//    @Test
-//    public void testNodeFailsBeforePrepare() throws Exception {
-//        CountDownLatch discoLatch = new CountDownLatch(1);
-//
-//        discoveryHook = new InitMessageDiscoHook(discoLatch, DistributedProcessType.GROUP_KEY_CHANGE_FINISH);
-//
-//        IgniteEx grid0 = startGrid(GRID_0);
-//
-//        discoveryHook = null;
-//
-//        IgniteEx grid1 = startGrid(GRID_1);
-//
-//        grid0.cluster().active(true);
-//
-//        createEncryptedCache(grid0, grid1, cacheName(), null);
-//
-//        int grpId = CU.cacheId(cacheName());
-//
-//        IgniteFuture fut = grid1.encryption().changeGroupKey(Collections.singleton(grpId));
-//
-//        stopGrid(GRID_0);
-//
-//        discoLatch.countDown();
-//
-//        fut.get();
-//
-//        startGrid(GRID_0);
-//    }
 
     /** @throws Exception If failed. */
     @Test
@@ -339,6 +311,32 @@ public class GroupKeyChangeTest extends AbstractEncryptionTest {
     }
 
     @Test
+    public void testKeyIdentifierOverflow() throws Exception {
+        startTestGrids(true);
+
+        IgniteEx node1 = grid(GRID_0);
+        IgniteEx node2 = grid(GRID_1);
+
+        createEncryptedCache(node1, node2, cacheName(), null);
+
+        int grpId = CU.cacheId(cacheName());
+
+        int maxItrs = 0xff * 2;
+
+        for (int i = 0; i < maxItrs; i++) {
+            node1.encryption().changeGroupKey(Collections.singleton(grpId)).get();
+
+            awaitEncryption(G.allGrids(), grpId).get(MAX_AWAIT_MILLIS);
+
+            forceCheckpoint();
+
+            assertEquals((byte)(i + 1), node1.context().encryption().groupKey(grpId).id());
+        }
+
+        checkGroupKey(grpId, (byte)maxItrs & 0xff);
+    }
+
+    @Test
     public void testBasicChangeUnderLoad() throws Exception {
         startTestGrids(true);
 
@@ -488,8 +486,6 @@ public class GroupKeyChangeTest extends AbstractEncryptionTest {
         assertEquals(1, node1.context().encryption().groupKeysInfo(grpId).size());
         assertEquals(1, node2.context().encryption().groupKeysInfo(grpId).size());
     }
-
-
 
     private static class InitMessageDiscoHook extends DiscoveryHook {
         private final CountDownLatch discoLatch;
