@@ -410,254 +410,12 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
         return offsets;
     }
 
-    /**
-     * Two phase distributed process, that performs encryption group key change.
-     */
-    private class GroupKeyChangeProcess {
-        private GroupKeyChangeFuture prepareGroupKeyChangeFut;
-
-        /** */
-        private volatile ChangeCacheEncryptionRequest groupKeyChangeRequest;
-
-        DistributedProcess<ChangeCacheEncryptionRequest, EmptyResult> prepareGKChangeProc =
-            new DistributedProcess<>(ctx, GROUP_KEY_CHANGE_PREPARE, this::prepare, this::finishPrepare,
-                (id, req) -> new InitMessage<>(id, GROUP_KEY_CHANGE_PREPARE, req), true);
-
-        DistributedProcess<ChangeCacheEncryptionRequest, EmptyResult> performGKChangeProc =
-            new DistributedProcess<>(ctx, GROUP_KEY_CHANGE_FINISH, this::perform, this::finishPerform);
-
-        private boolean inProgress() {
-            return groupKeyChangeRequest != null;
-        }
-
-        /**
-         * @param groups Cache group identifiers.
-         */
-        private void doChangeGroupKeys(int[] groups) throws IgniteCheckedException {
-            Map<Integer, List<T2<Integer, Integer>>> encryptionStatus = new HashMap<>();
-
-            ctx.cache().context().database().checkpointReadLock();
-
-            try {
-                for (int grpId : groups) {
-                    List<T2<Integer, Integer>> offsets = storeEncryptionOffsets(grpId);
-
-                    encryptionStatus.put(grpId, offsets);
-                }
-            } finally {
-                ctx.cache().context().database().checkpointReadUnlock();
-            }
-
-            WALPointer ptr = ctx.cache().context().wal().log(new EncryptionStatusRecord(encryptionStatus));
-
-            assert ptr != null;
-
-            for (int grpId : groups) {
-                IgniteInternalFuture<?> fut = encryptTask.schedule(grpId);
-
-                fut.listen(f -> {
-                    try {
-                        f.get();
-
-                        cleanupKeys(grpId);
-                    }
-                    catch (IgniteCheckedException e) {
-                        log.warning("Reencryption failed [grp=" + grpId + "]", e);
-                    }
-                });
-            }
-        }
-
-        /**
-         * @param req Request.
-         */
-        public IgniteFuture<Void> start(ChangeCacheEncryptionRequest req) {
-            if (disconnected) {
-                return new IgniteFinishedFutureImpl<>(new IgniteClientDisconnectedException(
-                    ctx.cluster().clientReconnectFuture(),
-                    "Group key change was rejected. Client node disconnected."));
-            }
-
-            if (stopped) {
-                return new IgniteFinishedFutureImpl<>(new IgniteException("Group key change was rejected. " +
-                    "Node is stopping."));
-            }
-
-            if (prepareGroupKeyChangeFut != null && !prepareGroupKeyChangeFut.isDone()) {
-                return new IgniteFinishedFutureImpl<>(new IgniteException("Group key change was rejected. " +
-                    "The previous change was not completed."));
-            }
-
-            prepareGroupKeyChangeFut = new GroupKeyChangeFuture(req);
-
-            // todo
-            prepareGKChangeProc.start(req.requestId(), req);
-
-            return new IgniteFutureImpl<>(prepareGroupKeyChangeFut);
-        }
-
-        /**
-         * Prepares master key change. Checks master key consistency.
-         *
-         * @param req Request.
-         * @return Result future.
-         */
-        private IgniteInternalFuture<EmptyResult> prepare(ChangeCacheEncryptionRequest req) {
-            if (groupKeyChangeRequest != null) {
-                return new GridFinishedFuture<>(new IgniteException("Group key change was rejected. " +
-                    "The previous change was not completed."));
-            }
-
-            groupKeyChangeRequest = req;
-
-            if (ctx.clientNode())
-                return new GridFinishedFuture<>();
-
-            try {
-                int n = 0;
-
-                for (int grpId : req.groups()) {
-                    // todo if we don't preventing continious reencryption - cancel them
-                    if (!encryptionTask(grpId).isDone())
-                        return new GridFinishedFuture<>(new IgniteException("Encryption in progress [grpId=" + grpId + "]"));
-
-                    // todo max key
-                    int newKeyId = req.keyIdentifiers()[n] & 0xff;
-
-                    if (grpEncKeys.get(grpId).containsKey(newKeyId) && grpEncActiveKeys.get(grpId) >= newKeyId) {
-                        Set<Long> walIdxs = new TreeSet<>();
-
-                        for (Map.Entry<Long, Map<Integer, Set<Integer>>> entry : walSegments.entrySet()) {
-                            Set<Integer> keys = entry.getValue().get(grpId);
-
-                            if (keys != null && keys.contains(newKeyId))
-                                walIdxs.add(entry.getKey());
-                        }
-
-                        return new GridFinishedFuture<>(new IgniteException("Cannot add new key identifier - it's " +
-                            "already present, probably there existing wal logs that encrypted with this key [" +
-                            "grp=" + grpId + ", keyId=" + newKeyId + " walSegments=" + walIdxs + "]."));
-                    }
-
-                    addNewKeys(req.groups(), req.keys(), req.keyIdentifiers(), false);
-
-                    ++n;
-                }
-            }
-            catch (Exception e) {
-                return new GridFinishedFuture<>(new IgniteException("Master key change was rejected [nodeId=" +
-                    ctx.localNodeId() + ']', e));
-            }
-
-            return new GridFinishedFuture<>(new EmptyResult());
-        }
-
-        /**
-         * Starts master key change process if there are no errors.
-         *
-         * @param id Request id.
-         * @param res Results.
-         * @param err Errors.
-         */
-        private void finishPrepare(UUID id, Map<UUID, EmptyResult> res, Map<UUID, Exception> err) {
-            if (!err.isEmpty()) {
-                if (groupKeyChangeRequest != null && groupKeyChangeRequest.requestId().equals(id))
-                    groupKeyChangeRequest = null;
-
-                synchronized (opsMux) {
-                    completeKeyChangeFuture(id, err, prepareGroupKeyChangeFut);
-
-                    prepareGroupKeyChangeFut = null;
-                }
-            }
-            else if (isCoordinator())
-                performGKChangeProc.start(id, groupKeyChangeRequest);
-        }
-
-        private IgniteInternalFuture<EmptyResult> perform(ChangeCacheEncryptionRequest req) {
-            if (groupKeyChangeRequest == null || !groupKeyChangeRequest.equals(req))
-                return new GridFinishedFuture<>(new IgniteException("Unknown group key change was rejected."));
-
-            if (!ctx.state().clusterState().active()) {
-                groupKeyChangeRequest = null;
-
-                return new GridFinishedFuture<>(new IgniteException("Group key change was rejected. " +
-                    "The cluster is inactive."));
-            }
-
-            try {
-                if (!ctx.clientNode()) {
-                    addNewKeys(req.groups(), req.keys(), req.keyIdentifiers(), true);
-
-                    doChangeGroupKeys(req.groups());
-                }
-
-                groupKeyChangeRequest = null;
-
-                return new GridFinishedFuture<>(new EmptyResult());
-            } catch (IgniteCheckedException e) {
-                return new GridFinishedFuture<>(e);
-            }
-        }
-
-        /**
-         * @param groups Cache group identifiers.
-         * @param keys Cache group encryption keys.
-         * @param keyIds Cache group encryption key identifiers.
-         * @param active {@code True} to set new key for writing.
-         */
-        void addNewKeys(int[] groups, byte[][] keys, byte[] keyIds, boolean active) throws IgniteCheckedException {
-            for (int i = 0; i < groups.length; i++) {
-                int grpId = groups[i];
-
-                int keyId = keyIds[i] & 0xff;
-
-                replaceKey(grpId, keys[i], keyId, active);
-
-                if (log.isInfoEnabled()) {
-                    log.info("New encryption key for cache group added [" +
-                        "grp=" + grpId + ", id=" + keyId + ", active=" + active + "]");
-                }
-            }
-        }
-
-        private void finishPerform(UUID id, Map<UUID, EmptyResult> res, Map<UUID, Exception> err) {
-            synchronized (opsMux) {
-                GroupKeyChangeFuture fut = prepareGroupKeyChangeFut;
-
-                if (completeKeyChangeFuture(id, err, fut)) {
-                    prepareGroupKeyChangeFut = null;
-
-                    ChangeCacheEncryptionRequest req = fut.request();
-
-                    AffinityTopologyVersion initVer = req.topologyVersion();
-
-                    if (initVer.topologyVersion() != ctx.discovery().topologyVersion()) {
-                        DiscoCache discoCache = ctx.discovery().discoCache();
-
-                        Set<BaselineNode> bltNodes = new HashSet<>(discoCache.baselineNodes());
-
-                        bltNodes.removeAll(discoCache.aliveBaselineNodes());
-
-                        int[] keyIds = new int[req.keyIdentifiers().length];
-
-                        for (int i = 0; i < req.keyIdentifiers().length; i++)
-                            keyIds[i] = req.keyIdentifiers()[i] & 0xff;
-
-                        log.warning("Cache group key rotation may be incomplete on missed baseline nodes, " +
-                            "this node(s) should be preconfigured to re-join the cluster with the existing data [" +
-                            "nodes=" + F.viewReadOnly(bltNodes, BaselineNode::consistentId) +
-                            ", grps=" + Arrays.toString(req.groups()) +
-                            ", keyIds=" + Arrays.toString(keyIds) + "]");
-                    }
-                }
-            }
-        }
-    }
-
     /** {@inheritDoc} */
     @Override public void stop(boolean cancel) throws IgniteCheckedException {
         stopSpi();
+
+        // Stop re-encryption.
+        encryptTask.stop();
     }
 
     /** {@inheritDoc} */
@@ -2014,6 +1772,251 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
 
             return U.fromBytes(serKeyName);
         });
+    }
+
+    /**
+     * Two phase distributed process, that performs encryption group key change.
+     */
+    private class GroupKeyChangeProcess {
+        private GroupKeyChangeFuture prepareGroupKeyChangeFut;
+
+        /** */
+        private volatile ChangeCacheEncryptionRequest groupKeyChangeRequest;
+
+        DistributedProcess<ChangeCacheEncryptionRequest, EmptyResult> prepareGKChangeProc =
+            new DistributedProcess<>(ctx, GROUP_KEY_CHANGE_PREPARE, this::prepare, this::finishPrepare,
+                (id, req) -> new InitMessage<>(id, GROUP_KEY_CHANGE_PREPARE, req), true);
+
+        DistributedProcess<ChangeCacheEncryptionRequest, EmptyResult> performGKChangeProc =
+            new DistributedProcess<>(ctx, GROUP_KEY_CHANGE_FINISH, this::perform, this::finishPerform);
+
+        private boolean inProgress() {
+            return groupKeyChangeRequest != null;
+        }
+
+        /**
+         * @param groups Cache group identifiers.
+         */
+        private void doChangeGroupKeys(int[] groups) throws IgniteCheckedException {
+            Map<Integer, List<T2<Integer, Integer>>> encryptionStatus = new HashMap<>();
+
+            ctx.cache().context().database().checkpointReadLock();
+
+            try {
+                for (int grpId : groups) {
+                    List<T2<Integer, Integer>> offsets = storeEncryptionOffsets(grpId);
+
+                    encryptionStatus.put(grpId, offsets);
+                }
+            } finally {
+                ctx.cache().context().database().checkpointReadUnlock();
+            }
+
+            WALPointer ptr = ctx.cache().context().wal().log(new EncryptionStatusRecord(encryptionStatus));
+
+            assert ptr != null;
+
+            for (int grpId : groups) {
+                IgniteInternalFuture<?> fut = encryptTask.schedule(grpId);
+
+                fut.listen(f -> {
+                    try {
+                        f.get();
+
+                        cleanupKeys(grpId);
+                    }
+                    catch (IgniteCheckedException e) {
+                        log.warning("Reencryption failed [grp=" + grpId + "]", e);
+                    }
+                });
+            }
+        }
+
+        /**
+         * @param req Request.
+         */
+        public IgniteFuture<Void> start(ChangeCacheEncryptionRequest req) {
+            if (disconnected) {
+                return new IgniteFinishedFutureImpl<>(new IgniteClientDisconnectedException(
+                    ctx.cluster().clientReconnectFuture(),
+                    "Group key change was rejected. Client node disconnected."));
+            }
+
+            if (stopped) {
+                return new IgniteFinishedFutureImpl<>(new IgniteException("Group key change was rejected. " +
+                    "Node is stopping."));
+            }
+
+            if (prepareGroupKeyChangeFut != null && !prepareGroupKeyChangeFut.isDone()) {
+                return new IgniteFinishedFutureImpl<>(new IgniteException("Group key change was rejected. " +
+                    "The previous change was not completed."));
+            }
+
+            prepareGroupKeyChangeFut = new GroupKeyChangeFuture(req);
+
+            // todo
+            prepareGKChangeProc.start(req.requestId(), req);
+
+            return new IgniteFutureImpl<>(prepareGroupKeyChangeFut);
+        }
+
+        /**
+         * Prepares master key change. Checks master key consistency.
+         *
+         * @param req Request.
+         * @return Result future.
+         */
+        private IgniteInternalFuture<EmptyResult> prepare(ChangeCacheEncryptionRequest req) {
+            if (groupKeyChangeRequest != null) {
+                return new GridFinishedFuture<>(new IgniteException("Group key change was rejected. " +
+                    "The previous change was not completed."));
+            }
+
+            groupKeyChangeRequest = req;
+
+            if (ctx.clientNode())
+                return new GridFinishedFuture<>();
+
+            try {
+                int n = 0;
+
+                for (int grpId : req.groups()) {
+                    // todo if we don't preventing continious reencryption - cancel them
+                    if (!encryptionTask(grpId).isDone())
+                        return new GridFinishedFuture<>(new IgniteException("Encryption in progress [grpId=" + grpId + "]"));
+
+                    // todo max key
+                    int newKeyId = req.keyIdentifiers()[n] & 0xff;
+
+                    if (grpEncKeys.get(grpId).containsKey(newKeyId) && grpEncActiveKeys.get(grpId) >= newKeyId) {
+                        Set<Long> walIdxs = new TreeSet<>();
+
+                        for (Map.Entry<Long, Map<Integer, Set<Integer>>> entry : walSegments.entrySet()) {
+                            Set<Integer> keys = entry.getValue().get(grpId);
+
+                            if (keys != null && keys.contains(newKeyId))
+                                walIdxs.add(entry.getKey());
+                        }
+
+                        return new GridFinishedFuture<>(new IgniteException("Cannot add new key identifier - it's " +
+                            "already present, probably there existing wal logs that encrypted with this key [" +
+                            "grp=" + grpId + ", keyId=" + newKeyId + " walSegments=" + walIdxs + "]."));
+                    }
+
+                    addNewKeys(req.groups(), req.keys(), req.keyIdentifiers(), false);
+
+                    ++n;
+                }
+            }
+            catch (Exception e) {
+                return new GridFinishedFuture<>(new IgniteException("Master key change was rejected [nodeId=" +
+                    ctx.localNodeId() + ']', e));
+            }
+
+            return new GridFinishedFuture<>(new EmptyResult());
+        }
+
+        /**
+         * Starts master key change process if there are no errors.
+         *
+         * @param id Request id.
+         * @param res Results.
+         * @param err Errors.
+         */
+        private void finishPrepare(UUID id, Map<UUID, EmptyResult> res, Map<UUID, Exception> err) {
+            if (!err.isEmpty()) {
+                if (groupKeyChangeRequest != null && groupKeyChangeRequest.requestId().equals(id))
+                    groupKeyChangeRequest = null;
+
+                synchronized (opsMux) {
+                    completeKeyChangeFuture(id, err, prepareGroupKeyChangeFut);
+
+                    prepareGroupKeyChangeFut = null;
+                }
+            }
+            else if (isCoordinator())
+                performGKChangeProc.start(id, groupKeyChangeRequest);
+        }
+
+        private IgniteInternalFuture<EmptyResult> perform(ChangeCacheEncryptionRequest req) {
+            if (groupKeyChangeRequest == null || !groupKeyChangeRequest.equals(req))
+                return new GridFinishedFuture<>(new IgniteException("Unknown group key change was rejected."));
+
+            if (!ctx.state().clusterState().active()) {
+                groupKeyChangeRequest = null;
+
+                return new GridFinishedFuture<>(new IgniteException("Group key change was rejected. " +
+                    "The cluster is inactive."));
+            }
+
+            try {
+                if (!ctx.clientNode()) {
+                    addNewKeys(req.groups(), req.keys(), req.keyIdentifiers(), true);
+
+                    doChangeGroupKeys(req.groups());
+                }
+
+                groupKeyChangeRequest = null;
+
+                return new GridFinishedFuture<>(new EmptyResult());
+            } catch (IgniteCheckedException e) {
+                return new GridFinishedFuture<>(e);
+            }
+        }
+
+        /**
+         * @param groups Cache group identifiers.
+         * @param keys Cache group encryption keys.
+         * @param keyIds Cache group encryption key identifiers.
+         * @param active {@code True} to set new key for writing.
+         */
+        void addNewKeys(int[] groups, byte[][] keys, byte[] keyIds, boolean active) throws IgniteCheckedException {
+            for (int i = 0; i < groups.length; i++) {
+                int grpId = groups[i];
+
+                int keyId = keyIds[i] & 0xff;
+
+                replaceKey(grpId, keys[i], keyId, active);
+
+                if (log.isInfoEnabled()) {
+                    log.info("New encryption key for cache group added [" +
+                        "grp=" + grpId + ", id=" + keyId + ", active=" + active + "]");
+                }
+            }
+        }
+
+        private void finishPerform(UUID id, Map<UUID, EmptyResult> res, Map<UUID, Exception> err) {
+            synchronized (opsMux) {
+                GroupKeyChangeFuture fut = prepareGroupKeyChangeFut;
+
+                if (completeKeyChangeFuture(id, err, fut)) {
+                    prepareGroupKeyChangeFut = null;
+
+                    ChangeCacheEncryptionRequest req = fut.request();
+
+                    AffinityTopologyVersion initVer = req.topologyVersion();
+
+                    if (initVer.topologyVersion() != ctx.discovery().topologyVersion()) {
+                        DiscoCache discoCache = ctx.discovery().discoCache();
+
+                        Set<BaselineNode> bltNodes = new HashSet<>(discoCache.baselineNodes());
+
+                        bltNodes.removeAll(discoCache.aliveBaselineNodes());
+
+                        int[] keyIds = new int[req.keyIdentifiers().length];
+
+                        for (int i = 0; i < req.keyIdentifiers().length; i++)
+                            keyIds[i] = req.keyIdentifiers()[i] & 0xff;
+
+                        log.warning("Cache group key rotation may be incomplete on missed baseline nodes, " +
+                            "this node(s) should be preconfigured to re-join the cluster with the existing data [" +
+                            "nodes=" + F.viewReadOnly(bltNodes, BaselineNode::consistentId) +
+                            ", grps=" + Arrays.toString(req.groups()) +
+                            ", keyIds=" + Arrays.toString(keyIds) + "]");
+                    }
+                }
+            }
+        }
     }
 
     /** Master key change request. */

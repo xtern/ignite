@@ -1307,6 +1307,12 @@ public final class IgniteSystemProperties {
      */
     public static final String IGNITE_ACTIVE_KEY_ID_FOR_GROUP = "IGNITE_ACTIVE_KEY_ID_FOR_GROUP_";
 
+    public static final String IGNITE_REENCRYPTION_BATCH_SIZE = "IGNITE_REENCRYPTION_BATCH_SIZE";
+
+    public static final String IGNITE_REENCRYPTION_DISABLED = "IGNITE_REENCRYPTION_DISABLED";
+
+    public static final String IGNITE_REENCRYPTION_THROTTLE = "IGNITE_REENCRYPTION_THROTTLE";
+
     /**
      * Enables extended logging of indexes create/rebuild process. Default {@code false}.
      * <p/>

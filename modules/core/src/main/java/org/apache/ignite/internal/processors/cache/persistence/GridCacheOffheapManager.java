@@ -414,24 +414,7 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
                         if (!encryptionDisabled && grp.persistenceEnabled()) {
                             PageStore pageStore = ((FilePageStoreManager)this.ctx.pageStore()).getStore(grpId, part.id());
 
-                            int pagesCnt = pageStore.encryptedPagesCount();
-
-                            if (pagesCnt != 0) {
-                                int off = pageStore.encryptedPagesOffset();
-
-                                if (off == pagesCnt) {
-                                    off = 0;
-                                    pagesCnt = 0;
-
-                                    pageStore.encryptedPagesCount(0);
-                                }
-
-                                pageStore.encryptedPagesOffset(off);
-
-                                changed |= io.setEncryptionPageIdx(partMetaPageAddr, off);
-                                // todo first time should save current pages count
-                                changed |= io.setEncryptionPagesCount(partMetaPageAddr, pagesCnt);
-                            }
+                            changed |= updateEncryptionStatusUnlocked(pageStore, partMetaPageAddr, io);
                         }
 
                         if (state != null)
@@ -857,22 +840,7 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
             try {
                 PageMetaIO metaIo = PageMetaIO.getPageIO(metaPageAddr);
 
-                int off = pageStore.encryptedPagesOffset();
-
-                System.out.println("(encr-state) grp=" + grpId + ", p=" + partId + ", pages=" + pagesCnt + " off=" + off);
-
-                if (off == pagesCnt) {
-                    off = 0;
-                    pagesCnt = 0;
-
-                    pageStore.encryptedPagesCount(0);
-                }
-
-                pageStore.encryptedPagesOffset(off);
-
-                changed |= metaIo.setEncryptionPageIdx(metaPageAddr, off);
-                // todo first time should save current pages count
-                changed |= metaIo.setEncryptionPagesCount(metaPageAddr, pagesCnt);
+                updateEncryptionStatusUnlocked(pageStore, metaPageAddr, metaIo);
             }
             finally {
                 pageMem.writeUnlock(grpId, metaPageId, metaPage, null, changed);
@@ -883,6 +851,28 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
         }
 
         return changed;
+    }
+
+    private boolean updateEncryptionStatusUnlocked(PageStore pageStore, long pageAddr, PageMetaIO io) {
+        int pagesCnt = pageStore.encryptedPagesCount();
+
+        if (pagesCnt != 0) {
+            int off = pageStore.encryptedPagesOffset();
+
+            if (off == pagesCnt) {
+                off = 0;
+                pagesCnt = 0;
+
+                pageStore.encryptedPagesCount(0);
+            }
+
+            pageStore.encryptedPagesOffset(off);
+
+            // todo first time should save current pages count
+            return io.setEncryptionPageIdx(pageAddr, off) || io.setEncryptionPagesCount(pageAddr, pagesCnt);
+        }
+
+        return false;
     }
 
     /**

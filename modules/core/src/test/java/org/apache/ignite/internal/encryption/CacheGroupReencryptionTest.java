@@ -41,14 +41,18 @@ import org.apache.ignite.internal.processors.cache.persistence.file.RandomAccess
 import org.apache.ignite.internal.util.typedef.G;
 import org.apache.ignite.internal.util.typedef.T2;
 import org.apache.ignite.internal.util.typedef.internal.CU;
+import org.apache.ignite.testframework.junits.WithSystemProperty;
 import org.junit.Test;
 
+import static org.apache.ignite.IgniteSystemProperties.IGNITE_REENCRYPTION_DISABLED;
 import static org.apache.ignite.configuration.WALMode.LOG_ONLY;
 import static org.apache.ignite.internal.processors.cache.persistence.file.FilePageStoreManager.CACHE_DIR_PREFIX;
 import static org.apache.ignite.internal.processors.cache.persistence.file.FilePageStoreManager.INDEX_FILE_NAME;
 import static org.apache.ignite.testframework.GridTestUtils.assertThrowsAnyCause;
 
 public class CacheGroupReencryptionTest extends AbstractEncryptionTest {
+    private static final long MAX_AWAIT_MILLIS = 15_000;
+
     private final FailingContext failCtx = new FailingContext();
 
     /** {@inheritDoc} */
@@ -181,6 +185,43 @@ public class CacheGroupReencryptionTest extends AbstractEncryptionTest {
         startTestGrids(false);
 
         checkGroupKey(grpId, 1);
+    }
+
+    @Test
+    @WithSystemProperty(key = IGNITE_REENCRYPTION_DISABLED, value = "true")
+    public void testReencryptionRestart() throws Exception {
+        T2<IgniteEx, IgniteEx> nodes = startTestGrids(true);
+
+        IgniteEx node0 = nodes.get1();
+        IgniteEx node1 = nodes.get2();
+
+        createEncryptedCache(node0, node1, cacheName(), null);
+
+        forceCheckpoint();
+
+        int grpId = CU.cacheId(cacheName());
+
+        node0.encryption().changeGroupKey(Collections.singleton(grpId)).get();
+
+        forceCheckpoint();
+
+        stopAllGrids();
+
+        nodes = startTestGrids(false);
+
+        node0 = nodes.get1();
+        node1 = nodes.get2();
+
+        assertFalse(node0.context().encryption().encryptionStateTask(grpId).isDone());
+        assertFalse(node1.context().encryption().encryptionStateTask(grpId).isDone());
+
+        stopAllGrids();
+
+        System.setProperty(IGNITE_REENCRYPTION_DISABLED, "false");
+
+        startTestGrids(false);
+
+        awaitEncryption(G.allGrids(), grpId).get(MAX_AWAIT_MILLIS);
     }
 
     @Test
