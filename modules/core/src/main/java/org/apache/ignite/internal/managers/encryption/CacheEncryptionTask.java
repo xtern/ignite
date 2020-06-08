@@ -120,7 +120,7 @@ public class CacheEncryptionTask implements DbCheckpointListener {
 
         GridFutureAdapter fut = new GridFutureAdapter();
 
-        DataStoreScanner scan = new DataStoreScanner(grpId, partId, pageStore, state.offsets, fut);
+        DataStoreScanner scan = new DataStoreScanner(grpId, partId, pageStore, fut);
 
         state.fut.add(fut);
 
@@ -139,14 +139,14 @@ public class CacheEncryptionTask implements DbCheckpointListener {
         return state == null ? new GridFinishedFuture() : state.cpFut;
     }
 
-    public int pageOffset(int grpId, int partId) {
-        ReencryptionState state = statesMap.get(grpId);
-
-        if (state == null)
-            return 0;
-
-        return state.offsets.get(partId == INDEX_PARTITION ? state.offsets.length() - 1 : partId);
-    }
+//    public int pageOffset(int grpId, int partId) {
+//        ReencryptionState state = statesMap.get(grpId);
+//
+//        if (state == null)
+//            return 0;
+//
+//        return state.offsets.get(partId == INDEX_PARTITION ? state.offsets.length() - 1 : partId);
+//    }
 
     @Override public void onMarkCheckpointBegin(Context ctx) throws IgniteCheckedException {
 
@@ -192,12 +192,12 @@ public class CacheEncryptionTask implements DbCheckpointListener {
 
         final GridFutureAdapter cpFut;
 
-        final AtomicIntegerArray offsets;
+//        final AtomicIntegerArray offsets;
 
         public ReencryptionState(int grpId) {
             this.fut = new GridCompoundFuture();
             this.cpFut = new GridFutureAdapter();
-            this.offsets = new AtomicIntegerArray(ctx.cache().cacheGroup(grpId).topology().partitions() + 1);
+//            this.offsets = new AtomicIntegerArray(ctx.cache().cacheGroup(grpId).topology().partitions() + 1);
         }
     }
 
@@ -210,31 +210,27 @@ public class CacheEncryptionTask implements DbCheckpointListener {
 
         private final int off;
 
-        private final AtomicIntegerArray offsets;
+//        private final AtomicIntegerArray offsets;
 
         private final GridFutureAdapter fut;
 
-        public DataStoreScanner(int grpId, int partId, PageStore store, AtomicIntegerArray offsets, GridFutureAdapter fut) {
+        private final PageStore store;
+
+        public DataStoreScanner(int grpId, int partId, PageStore store, GridFutureAdapter fut) {
             this.grpId = grpId;
             this.partId = partId;
-            this.offsets = offsets;
+//            this.offsets = offsets;
             this.fut = fut;
+            this.store = store;
 
             cnt = store.encryptedPagesCount();
             off = store.encryptedPagesOffset();
 
-            updateOffset(partId, cnt);
-        }
-
-        private void updateOffset(int idx, int val) {
-            if (idx == INDEX_PARTITION)
-                idx = offsets.length() - 1;
-
-            offsets.set(idx, val);
+//            updateOffset(partId, cnt);
         }
 
         private Void onDone() {
-            updateOffset(partId, cnt);
+            store.encryptedPagesOffset(cnt);
 
             fut.onDone();
 
@@ -292,10 +288,10 @@ public class CacheEncryptionTask implements DbCheckpointListener {
                             pageMem.writeUnlock(grpId, pageId, page, null, true, true);
                         }
 
-                        updateOffset(partId, pageNum);
-
                         pageNum++;
                     } while (pageNum < end);
+
+                    store.encryptedPagesOffset(pageNum);
                 }
                 catch (Throwable t) {
                     fut.onDone(t);

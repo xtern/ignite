@@ -417,9 +417,9 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
                             int pagesCnt = pageStore.encryptedPagesCount();
 
                             if (pagesCnt != 0) {
-                                int off = this.ctx.kernalContext().encryption().encryptionOffset(grpId, part.id());
+                                int off = pageStore.encryptedPagesOffset();
 
-                                if (off == pagesCnt - 1) {
+                                if (off == pagesCnt) {
                                     off = 0;
                                     pagesCnt = 0;
 
@@ -857,11 +857,11 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
             try {
                 PageMetaIO metaIo = PageMetaIO.getPageIO(metaPageAddr);
 
-                int off = this.ctx.kernalContext().encryption().encryptionOffset(grpId, partId);
+                int off = pageStore.encryptedPagesOffset();
 
-                System.out.println("(encr-state) grp=" + grpId + ", p=" + partId + ", pages=" + pagesCnt);
+                System.out.println("(encr-state) grp=" + grpId + ", p=" + partId + ", pages=" + pagesCnt + " off=" + off);
 
-                if (off == pagesCnt - 1) {
+                if (off == pagesCnt) {
                     off = 0;
                     pagesCnt = 0;
 
@@ -1075,7 +1075,7 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
                         pageStore.encryptedPagesOffset(pageIO.getEncryptionPageIdx(pageAddr));
                     }
 
-                    System.out.println("init meta " + grpId + " p=" + PageIdAllocator.INDEX_PARTITION + " pagesCnt="+encrPageCnt);
+                    System.out.println("init meta " + grpId + " p=" + PageIdAllocator.INDEX_PARTITION + " pagesCnt=" + encrPageCnt);
 
                     assert reuseListRoot != 0L;
                 }

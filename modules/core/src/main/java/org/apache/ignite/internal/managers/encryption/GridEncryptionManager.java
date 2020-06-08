@@ -1117,13 +1117,13 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
         return fut;
     }
 
-    /**
-     * @param grpId Cache group identifier.
-     * @return Encryption status.
-     */
-    public int encryptionOffset(int grpId, int partId) {
-        return encryptTask.pageOffset(grpId, partId);
-    }
+//    /**
+//     * @param grpId Cache group identifier.
+//     * @return Encryption status.
+//     */
+//    public int encryptionOffset(int grpId, int partId) {
+//        return encryptTask.pageOffset(grpId, partId);
+//    }
 
     /**
      * @param grpId Cache group identifier.

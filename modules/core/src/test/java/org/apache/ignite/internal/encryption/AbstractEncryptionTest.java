@@ -323,7 +323,7 @@ public abstract class AbstractEncryptionTest extends GridCommonAbstractTest {
             if (!pageStore.exists())
                 continue;
 
-//            assertEquals("p=" + p, pageStore.encryptedPagesCount(), pageStore.encryptedPagesOffset());
+            assertEquals("p=" + p, pageStore.encryptedPagesCount(), pageStore.encryptedPagesOffset());
 
             assertEquals(0, pageStore.encryptedPagesCount());
             assertEquals(0, pageStore.encryptedPagesOffset());
