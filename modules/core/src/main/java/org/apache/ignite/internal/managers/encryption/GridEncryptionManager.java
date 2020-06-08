@@ -524,10 +524,7 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
                     // todo max key
                     int newKeyId = req.keyIdentifiers()[n] & 0xff;
 
-                    //int activeKey = grpEncActiveKeys.get(grpId);
-
-                    //&& activeKey >= newKeyId
-                    if (grpEncKeys.get(grpId).containsKey(newKeyId)) {
+                    if (grpEncKeys.get(grpId).containsKey(newKeyId) && grpEncActiveKeys.get(grpId) >= newKeyId) {
                         Set<Long> walIdxs = new TreeSet<>();
 
                         for (Map.Entry<Long, Map<Integer, Set<Integer>>> entry : walSegments.entrySet()) {
@@ -614,8 +611,6 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
                 int grpId = groups[i];
 
                 int keyId = keyIds[i] & 0xff;
-
-                System.out.println(">>> origin " + keyIds[i] + ", keyId=" + keyId);
 
                 replaceKey(grpId, keys[i], keyId, active);
 

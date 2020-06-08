@@ -90,6 +90,7 @@ import org.apache.ignite.internal.processors.cache.persistence.tree.io.PageMetaI
 import org.apache.ignite.internal.processors.cache.persistence.tree.io.PagePartitionCountersIO;
 import org.apache.ignite.internal.processors.cache.persistence.tree.io.PagePartitionMetaIO;
 import org.apache.ignite.internal.processors.cache.persistence.tree.io.PagePartitionMetaIOV2;
+import org.apache.ignite.internal.processors.cache.persistence.tree.io.PagePartitionMetaIOV3;
 import org.apache.ignite.internal.processors.cache.persistence.tree.reuse.ReuseList;
 import org.apache.ignite.internal.processors.cache.persistence.tree.reuse.ReuseListImpl;
 import org.apache.ignite.internal.processors.cache.persistence.tree.util.PageHandler;
@@ -2069,8 +2070,8 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
 
                         int pageVer = PagePartitionMetaIO.getVersion(pageAddr);
 
-                        if (pageVer < 2) {
-                            assert pageVer == 1;
+                        if (pageVer < 3) {
+                            assert pageVer == 1 || pageVer == 2;
 
                             if (log.isDebugEnabled())
                                 log.info("Upgrade partition meta page version: [part=" + partId +
@@ -2080,7 +2081,7 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
 
                             io = PagePartitionMetaIO.VERSIONS.latest();
 
-                            ((PagePartitionMetaIOV2)io).upgradePage(pageAddr);
+                            ((PagePartitionMetaIOV3)io).upgradePage(pageAddr);
 
                             pendingTreeRoot = pageMem.allocatePage(grpId, partId, PageMemory.FLAG_DATA);
                             partMetaStoreReuseListRoot = pageMem.allocatePage(grpId, partId, PageMemory.FLAG_DATA);

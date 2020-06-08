@@ -55,13 +55,12 @@ public class PageMetaIO extends PageIO {
     static final int END_OF_PAGE_META = CANDIDATE_PAGE_COUNT_OFF + 4;
 
     /** */
-    private static final int ENCRYPT_PAGE_IDX_OFF = CANDIDATE_PAGE_COUNT_OFF + 4;
+    private static final int ENCRYPT_PAGE_IDX_OFF = END_OF_PAGE_META;
 
     /** */
     private static final int ENCRYPT_PAGE_MAX_OFF = ENCRYPT_PAGE_IDX_OFF + 4;
 
-    // todo upgrade PagePartitionMeta
-    /** */
+    /** End of page meta. */
     static final int END_OF_PAGE_META_V2 = ENCRYPT_PAGE_MAX_OFF + 4;
 
     /** */
