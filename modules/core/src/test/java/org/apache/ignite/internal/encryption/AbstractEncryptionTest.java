@@ -35,6 +35,7 @@ import javax.crypto.SecretKey;
 import org.apache.ignite.Ignite;
 import org.apache.ignite.IgniteCache;
 import org.apache.ignite.IgniteCheckedException;
+import org.apache.ignite.IgniteDataStreamer;
 import org.apache.ignite.configuration.CacheConfiguration;
 import org.apache.ignite.configuration.DataRegionConfiguration;
 import org.apache.ignite.configuration.DataStorageConfiguration;
@@ -303,8 +304,22 @@ public abstract class AbstractEncryptionTest extends GridCommonAbstractTest {
         return true;
     }
 
-    protected void validateKeyIdentifier(
-        CacheGroupContext grp, int keyId) throws IgniteCheckedException, IOException {
+    protected void loadData(int cnt) {
+        info("Loading " + cnt + " entries into " + cacheName());
+
+        IgniteCache<Object, Object> cache = grid(GRID_0).cache(cacheName());
+
+        int start = cache.size();
+
+        try (IgniteDataStreamer<Long, String> streamer = grid(GRID_0).dataStreamer(cacheName())) {
+            for (long i = start; i < (cnt + start); i++)
+                streamer.addData(i, String.valueOf(i));
+        }
+
+        info("Load data finished");
+    }
+
+    protected void validateKeyIdentifier(CacheGroupContext grp, int keyId) throws IgniteCheckedException, IOException {
         int grpId = grp.groupId();
 
         int realPageSize = grp.dataRegion().pageMemory().realPageSize(grpId);
@@ -334,7 +349,13 @@ public abstract class AbstractEncryptionTest extends GridCommonAbstractTest {
         }
     }
 
-    private void scanFileStore(FilePageStore pageStore, long startPageId, int realPageSize, int blockSize, int expKeyIdentifier) throws IOException {
+    private void scanFileStore(
+        FilePageStore pageStore,
+        long startPageId,
+        int realPageSize,
+        int blockSize,
+        int expKeyIdentifier
+    ) throws IOException {
         int pagesCnt = pageStore.pages();
         int pageSize = pageStore.getPageSize();
 

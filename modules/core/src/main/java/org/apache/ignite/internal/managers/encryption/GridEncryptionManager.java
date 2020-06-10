@@ -64,6 +64,7 @@ import org.apache.ignite.internal.processors.cache.persistence.file.FilePageStor
 import org.apache.ignite.internal.processors.cache.persistence.metastorage.MetastorageLifecycleListener;
 import org.apache.ignite.internal.processors.cache.persistence.metastorage.ReadOnlyMetastorage;
 import org.apache.ignite.internal.processors.cache.persistence.metastorage.ReadWriteMetastorage;
+import org.apache.ignite.internal.processors.cache.persistence.wal.FileWALPointer;
 import org.apache.ignite.internal.processors.cluster.IgniteChangeGlobalStateSupport;
 import org.apache.ignite.internal.util.GridConcurrentHashSet;
 import org.apache.ignite.internal.util.distributed.DistributedProcess;
@@ -103,8 +104,7 @@ import static org.apache.ignite.internal.IgniteFeatures.GROUP_KEY_CHANGE;
 import static org.apache.ignite.internal.IgniteFeatures.MASTER_KEY_CHANGE;
 import static org.apache.ignite.internal.managers.communication.GridIoPolicy.SYSTEM_POOL;
 import static org.apache.ignite.internal.pagemem.PageIdAllocator.INDEX_PARTITION;
-import static org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtPartitionState.MOVING;
-import static org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtPartitionState.OWNING;
+import static org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtPartitionState.EVICTED;
 import static org.apache.ignite.internal.util.distributed.DistributedProcess.DistributedProcessType.GROUP_KEY_CHANGE_FINISH;
 import static org.apache.ignite.internal.util.distributed.DistributedProcess.DistributedProcessType.GROUP_KEY_CHANGE_PREPARE;
 import static org.apache.ignite.internal.util.distributed.DistributedProcess.DistributedProcessType.MASTER_KEY_CHANGE_FINISH;
@@ -246,6 +246,9 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
     // todo walidx -> <grp -> keyIds>
     private final Map<Long, Map<Integer, Set<Integer>>> walSegments = new ConcurrentHashMap<>();
 
+    // since we don;t have delta record - we should start re-encryption manually.
+    private volatile EncryptionStatusRecord rec;
+
     /**
      * @param ctx Kernel context.
      */
@@ -338,7 +341,12 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
     }
 
     public void onWalSegmentRemoved(long segmentIdx) {
-        System.out.println(">>> remove " + segmentIdx + ", await=" + walSegments.keySet());
+        // todo remove
+        if (log.isDebugEnabled())
+            log.debug(">>> removed segment [idx=" + segmentIdx + ", await=" + walSegments.keySet() + "]");
+
+        if (stopped)
+            return;
 
         Map<Integer, Set<Integer>> grpKeys = walSegments.remove(segmentIdx);
 
@@ -383,8 +391,10 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
         FilePageStoreManager mgr = (FilePageStoreManager)ctx.cache().context().pageStore();
 
         for (GridDhtLocalPartition part : grp.topology().currentLocalPartitions()) {
-            if ((part.state() != OWNING && part.state() != MOVING) || part.isClearing())
+            if (part.state() == EVICTED)
                 continue;
+//            if ((part.state() != OWNING && part.state() != MOVING) || part.isClearing())
+//                continue;
 
             PageStore pageStore = mgr.getStore(grpId, part.id());
 
@@ -875,13 +885,31 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
         return fut;
     }
 
-//    /**
-//     * @param grpId Cache group identifier.
-//     * @return Encryption status.
-//     */
-//    public int encryptionOffset(int grpId, int partId) {
-//        return encryptTask.pageOffset(grpId, partId);
-//    }
+    /**
+     * @param grpId Cache group ID.
+     * @param partId Partition ID.
+     * @return Encryption status.
+     */
+    public boolean onPartitionClearing(int grpId, int partId) {
+        try {
+            if (!encryptTask.cancel(grpId, partId))
+                return false;
+
+            FilePageStoreManager mgr = (FilePageStoreManager)ctx.cache().context().pageStore();
+
+            PageStore pageStore = mgr.getStore(grpId, partId);
+
+            pageStore.encryptedPagesOffset(0);
+            pageStore.encryptedPagesCount(0);
+
+            return true;
+        }
+        catch (IgniteCheckedException e) {
+            log.warning("Unable to cancel re-encryption [grpId=" + grpId + ", partId=" + partId + "]");
+        }
+
+        return false;
+    }
 
     /**
      * @param grpId Cache group identifier.
@@ -1102,6 +1130,8 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
     @Override public void onReadyForReadWrite(ReadWriteMetastorage metaStorage) throws IgniteCheckedException {
         synchronized (metaStorageMux) {
             this.metaStorage = metaStorage;
+
+            applyEncryptionStatus();
 
             writeToMetaStoreEnabled = true;
 
@@ -1497,9 +1527,22 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
     public void applyEncryptionStatus(EncryptionStatusRecord rec) throws IgniteCheckedException {
         assert !writeToMetaStoreEnabled && !ctx.state().clusterState().active();
 
+        this.rec = rec;
+    }
+
+    private void applyEncryptionStatus() throws IgniteCheckedException {
+        if (rec == null)
+            return;
+
+        EncryptionStatusRecord rec0 = rec;
+
+        rec = null;
+
+//        U.dumpStack("apply encryption status");
+
         FilePageStoreManager mgr = (FilePageStoreManager)ctx.cache().context().pageStore();
 
-        for (Map.Entry<Integer, List<T2<Integer, Integer>>> entry : rec.groupsStatus().entrySet()) {
+        for (Map.Entry<Integer, List<T2<Integer, Integer>>> entry : rec0.groupsStatus().entrySet()) {
             int grpId = entry.getKey();
 
             for (T2<Integer, Integer> state : entry.getValue()) {
@@ -1515,7 +1558,7 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
             encryptedGroups.add(grpId);
         }
 
-        System.out.println("apply logical status [" + rec.groupsStatus().keySet() + "]");
+        System.out.println("apply logical status [" + rec0.groupsStatus().keySet() + "]");
     }
 
     /**
@@ -1814,7 +1857,11 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
 
             WALPointer ptr = ctx.cache().context().wal().log(new EncryptionStatusRecord(encryptionStatus));
 
-            assert ptr != null;
+            if (ptr != null) {
+                ctx.cache().context().wal().flush(ptr, false);
+
+                log.info("Added record for recovery [walIdx=" + ((FileWALPointer)ptr).index());
+            }
 
             for (int grpId : groups) {
                 IgniteInternalFuture<?> fut = encryptTask.schedule(grpId);

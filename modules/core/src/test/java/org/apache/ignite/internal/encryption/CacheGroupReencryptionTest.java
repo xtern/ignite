@@ -22,12 +22,16 @@ import java.io.IOException;
 import java.io.Serializable;
 import java.nio.ByteBuffer;
 import java.nio.file.OpenOption;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Set;
+import org.apache.ignite.IgniteCache;
 import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.IgniteDataStreamer;
 import org.apache.ignite.cache.affinity.rendezvous.RendezvousAffinityFunction;
+import org.apache.ignite.cluster.BaselineNode;
 import org.apache.ignite.cluster.ClusterState;
 import org.apache.ignite.configuration.CacheConfiguration;
 import org.apache.ignite.configuration.DataRegionConfiguration;
@@ -41,6 +45,7 @@ import org.apache.ignite.internal.processors.cache.persistence.file.RandomAccess
 import org.apache.ignite.internal.util.typedef.G;
 import org.apache.ignite.internal.util.typedef.T2;
 import org.apache.ignite.internal.util.typedef.internal.CU;
+import org.apache.ignite.lang.IgniteFuture;
 import org.apache.ignite.testframework.junits.WithSystemProperty;
 import org.junit.Test;
 
@@ -90,7 +95,7 @@ public class CacheGroupReencryptionTest extends AbstractEncryptionTest {
     @Override protected <K, V> CacheConfiguration<K, V> cacheConfiguration(String name, String grp) {
         CacheConfiguration<K, V> cfg = super.cacheConfiguration(name, grp);
 
-        return cfg.setAffinity(new RendezvousAffinityFunction(false, 8));
+        return cfg.setAffinity(new RendezvousAffinityFunction(false, 16));
     }
 
     /**
@@ -148,14 +153,7 @@ public class CacheGroupReencryptionTest extends AbstractEncryptionTest {
 
         createEncryptedCache(node0, node1, cacheName(), null, true);
 
-        info("Loading data...");
-
-        try (IgniteDataStreamer<Long, String> streamer = node0.dataStreamer(cacheName())) {
-            for (long i = 100; i < 100_000; i++)
-                streamer.addData(i, "" + i);
-        }
-
-        info("Load data finished");
+        loadData(100_000);
 
         forceCheckpoint();
 
@@ -299,16 +297,8 @@ public class CacheGroupReencryptionTest extends AbstractEncryptionTest {
         @Override public FileIO create(File file, OpenOption... modes) throws IOException {
             FileIO delegate = delegateFactory.create(file, modes);
 
-            String path = file.getAbsolutePath();
-
-
-
-            boolean apply = path.contains(CACHE_DIR_PREFIX + ctx.cacheName) && file.getName().equals(ctx.failFileName);
-
-            System.out.println(path + ", apply="+apply);
-            System.out.println(file.getName() + ", failName="+ctx.failFileName);
-
-            return file.getAbsolutePath().contains(CACHE_DIR_PREFIX + ctx.cacheName) && file.getName().equals(ctx.failFileName) ? new FailingFileIO(delegate) : delegate;
+            return file.getAbsolutePath().contains(CACHE_DIR_PREFIX + ctx.cacheName) &&
+                file.getName().equals(ctx.failFileName) ? new FailingFileIO(delegate) : delegate;
         }
 
         /** */
@@ -323,8 +313,6 @@ public class CacheGroupReencryptionTest extends AbstractEncryptionTest {
             @Override public int writeFully(ByteBuffer srcBuf, long position) throws IOException {
                 if (ctx.failOffset == position)
                     throw new IOException("Test exception.");
-
-                System.out.println(">>> pos = " + position);
 
                 return delegate.writeFully(srcBuf, position);
             }

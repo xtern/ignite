@@ -86,7 +86,7 @@ public class CacheGroupKeyChangeTest extends AbstractEncryptionTest {
         DataStorageConfiguration memCfg = new DataStorageConfiguration()
             .setDefaultDataRegionConfiguration(
                 new DataRegionConfiguration()
-                    .setMaxSize(10L * 1024 * 1024)
+                    .setMaxSize(100L * 1024 * 1024)
                     .setPersistenceEnabled(true))
             .setPageSize(4 * 1024)
             .setWalSegmentSize(1024 * 1024)
@@ -425,6 +425,40 @@ public class CacheGroupKeyChangeTest extends AbstractEncryptionTest {
 
         assertEquals(1, node1.context().encryption().groupKeysInfo(grpId).size());
         assertEquals(1, node2.context().encryption().groupKeysInfo(grpId).size());
+    }
+
+    @Test
+    public void testChangeKeyDuringRebalancing() throws Exception {
+        T2<IgniteEx, IgniteEx> grids = startTestGrids(true);
+
+        IgniteEx node0 = grids.get1();
+        IgniteEx node1 = grids.get2();
+
+        createEncryptedCache(node0, node1, cacheName(), null);
+
+        loadData(500_000);
+
+        IgniteEx node2 = startGrid("grid-2");
+
+        node0.cluster().setBaselineTopology(node0.context().discovery().topologyVersion());
+
+        int grpId = CU.cacheId(cacheName());
+
+        IgniteFuture fut = node2.encryption().changeGroupKey(Collections.singleton(grpId));
+
+        fut.get(MAX_AWAIT_MILLIS);
+
+        stopAllGrids();
+
+        startGrid(GRID_0);
+        startGrid(GRID_1);
+        startGrid("grid-2");
+
+        grid(GRID_0).cluster().state(ClusterState.ACTIVE);
+
+        awaitPartitionMapExchange();
+
+        checkGroupKey(grpId, 1);
     }
 
     @Test

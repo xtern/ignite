@@ -271,6 +271,8 @@ public class EncryptedFileIO implements FileIO {
 
         Serializable key = readKey(keyId);
 
+        assert key != null : keyId;
+
         encSpi.decryptNoPadding(encrypted, key, destBuf);
 
         destBuf.put(zeroes); //Forcibly purge page buffer tail.

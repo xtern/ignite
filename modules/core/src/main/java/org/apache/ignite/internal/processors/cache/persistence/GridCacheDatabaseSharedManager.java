@@ -2429,6 +2429,11 @@ public class GridCacheDatabaseSharedManager extends IgniteCacheDatabaseSharedMan
                     }
                     break;
 
+                    case ENCRYPTION_STATUS_RECORD:
+                        cctx.kernalContext().encryption().applyEncryptionStatus((EncryptionStatusRecord)rec);
+
+                    break;
+
                     default:
                         if (restoreBinaryState.needApplyBinaryUpdate() && rec instanceof PageDeltaRecord) {
                             PageDeltaRecord pageDelta = (PageDeltaRecord)rec;

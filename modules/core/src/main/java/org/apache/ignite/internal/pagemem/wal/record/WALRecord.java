@@ -239,7 +239,7 @@ public abstract class WALRecord {
         ENCRYPTED_DATA_RECORD_V2(63, LOGICAL),
 
         /** */
-        ENCRYPTION_STATUS_RECORD(64, LOGICAL),
+        ENCRYPTION_STATUS_RECORD(64, MIXED),
 
         // todo implement meta page recovery
         META_PAGE_DELTA_RECORD(65, PHYSICAL);
