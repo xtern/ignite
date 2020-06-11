@@ -173,7 +173,7 @@ public class CacheEncryptionTask implements DbCheckpointListener {
             IgniteInternalFuture<Void> fut = scheduleScanner(grpId, INDEX_PARTITION);
 
             if (fut != null)
-                state.fut.add(fut);
+                state.add(INDEX_PARTITION, fut);
 
             for (GridDhtLocalPartition part : grp.topology().currentLocalPartitions()) {
 //                if ((part.state() != OWNING && part.state() != MOVING) || part.isClearing())
@@ -184,7 +184,7 @@ public class CacheEncryptionTask implements DbCheckpointListener {
                 IgniteInternalFuture<Void> fut0 = scheduleScanner(grpId, part.id());
 
                 if (fut0 != null)
-                    state.fut.add(fut0);
+                    state.add(part.id(), fut0);
             }
 
             state.fut.markInitialized();
@@ -287,9 +287,24 @@ public class CacheEncryptionTask implements DbCheckpointListener {
     private static class ReencryptionState {
         private final GridCompoundFuture<Void, Void> fut = new GridCompoundFuture<>();
 
-        private final GridFutureAdapter<Void> cpFut = new GridFutureAdapter<>();
+        private final GridFutureAdapter<Void> cpFut = new GridFutureAdapter<Void>() {
+            @Override public boolean cancel() throws IgniteCheckedException {
+//                for (IgniteInternalFuture<Void> fut : futMap.values()) {
+//                    System.out.println(">xxx> cancel " + fut);
+//                    fut.cancel();
+//                }
+                fut.cancel();
+
+                return onDone(null, null, true);
+            }
+        };
 
         private final Map<Integer, IgniteInternalFuture<Void>> futMap = new ConcurrentHashMap<>();
+
+        private void add(int partId, IgniteInternalFuture<Void> fut0) {
+            fut.add(fut0);
+            futMap.put(partId, fut0);
+        }
     }
 
     private class PageStoreScanner extends GridFutureAdapter<Void> implements Runnable {
@@ -380,18 +395,23 @@ public class CacheEncryptionTask implements DbCheckpointListener {
 
                                 long page = pageMem.acquirePage(grpId, pageId);
 
-                                long pageAddr = pageMem.writeLock(grpId, pageId, page, true);
-
                                 try {
-                                    byte[] payload = PageUtils.getBytes(pageAddr, 0, pageSize);
+                                    long pageAddr = pageMem.writeLock(grpId, pageId, page, true);
 
-                                    FullPageId fullPageId = new FullPageId(pageId, grpId);
+                                    try {
+                                        byte[] payload = PageUtils.getBytes(pageAddr, 0, pageSize);
 
-                                    if (pageMem.isDirty(grpId, pageId, page) && !wal.disabled(grpId))
-                                        wal.log(new PageSnapshot(fullPageId, payload, pageSize));
+                                        FullPageId fullPageId = new FullPageId(pageId, grpId);
+
+                                        if (pageMem.isDirty(grpId, pageId, page) && !wal.disabled(grpId))
+                                            wal.log(new PageSnapshot(fullPageId, payload, pageSize));
+                                    }
+                                    finally {
+                                        pageMem.writeUnlock(grpId, pageId, page, null, true, false);
+                                    }
                                 }
                                 finally {
-                                    pageMem.writeUnlock(grpId, pageId, page, null, true, true);
+                                    pageMem.releasePage(grpId, pageId, page);
                                 }
 
                                 pageNum++;
@@ -418,7 +438,7 @@ public class CacheEncryptionTask implements DbCheckpointListener {
                         U.sleep(timeoutBetweenBatches);
                 }
 
-                if (log.isDebugEnabled()) {
+                if (log.isDebugEnabled() && !isFailed() && !isCancelled()) {
                     log.debug("Partition re-encryption is finished [" +
                         "partId=" + partId + ", offset=" + pageNum + ", total=" + cnt + "]");
                 }

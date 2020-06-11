@@ -38,6 +38,9 @@ import org.apache.ignite.configuration.DataRegionConfiguration;
 import org.apache.ignite.configuration.DataStorageConfiguration;
 import org.apache.ignite.configuration.IgniteConfiguration;
 import org.apache.ignite.internal.IgniteEx;
+import org.apache.ignite.internal.IgniteFutureCancelledCheckedException;
+import org.apache.ignite.internal.IgniteInternalFuture;
+import org.apache.ignite.internal.processors.cache.IgniteInternalCache;
 import org.apache.ignite.internal.processors.cache.persistence.file.FileIO;
 import org.apache.ignite.internal.processors.cache.persistence.file.FileIODecorator;
 import org.apache.ignite.internal.processors.cache.persistence.file.FileIOFactory;
@@ -45,11 +48,15 @@ import org.apache.ignite.internal.processors.cache.persistence.file.RandomAccess
 import org.apache.ignite.internal.util.typedef.G;
 import org.apache.ignite.internal.util.typedef.T2;
 import org.apache.ignite.internal.util.typedef.internal.CU;
+import org.apache.ignite.internal.util.typedef.internal.U;
 import org.apache.ignite.lang.IgniteFuture;
+import org.apache.ignite.testframework.GridTestUtils;
 import org.apache.ignite.testframework.junits.WithSystemProperty;
 import org.junit.Test;
 
+import static org.apache.ignite.IgniteSystemProperties.IGNITE_REENCRYPTION_BATCH_SIZE;
 import static org.apache.ignite.IgniteSystemProperties.IGNITE_REENCRYPTION_DISABLED;
+import static org.apache.ignite.IgniteSystemProperties.IGNITE_REENCRYPTION_THROTTLE;
 import static org.apache.ignite.configuration.WALMode.LOG_ONLY;
 import static org.apache.ignite.internal.processors.cache.persistence.file.FilePageStoreManager.CACHE_DIR_PREFIX;
 import static org.apache.ignite.internal.processors.cache.persistence.file.FilePageStoreManager.INDEX_FILE_NAME;
@@ -112,6 +119,8 @@ public class CacheGroupReencryptionTest extends AbstractEncryptionTest {
 
         createEncryptedCache(nodes.get1(), nodes.get2() ,cacheName(), null);
 
+        IgniteInternalFuture fut = GridTestUtils.runAsync(() -> loadData(100_000));
+
         forceCheckpoint();
 
         int grpId = CU.cacheId(cacheName());
@@ -121,6 +130,8 @@ public class CacheGroupReencryptionTest extends AbstractEncryptionTest {
         nodes.get1().encryption().changeGroupKey(Collections.singleton(grpId)).get();
 
         awaitEncryption(G.allGrids(), grpId).get();
+
+        fut.get();
 
         assertThrowsAnyCause(log, () -> {
             forceCheckpoint();
@@ -137,6 +148,36 @@ public class CacheGroupReencryptionTest extends AbstractEncryptionTest {
         checkEncryptedCaches(nodes.get1(), nodes.get2());
 
         checkGroupKey(grpId, 1);
+    }
+
+    @Test
+    @WithSystemProperty(key = IGNITE_REENCRYPTION_THROTTLE, value = "500")
+    @WithSystemProperty(key = IGNITE_REENCRYPTION_BATCH_SIZE, value = "100")
+    public void testCacheStopDuringReencryption() throws Exception {
+        T2<IgniteEx, IgniteEx> nodes = startTestGrids(true);
+
+        createEncryptedCache(nodes.get1(), nodes.get2() ,cacheName(), null);
+
+        loadData(100_000);
+
+        IgniteEx node0 = nodes.get1();
+
+        IgniteCache cache = node0.cache(cacheName());
+
+        node0.encryption().changeGroupKey(Collections.singleton(CU.cacheId(cacheName()))).get();
+
+        IgniteInternalFuture<Void> fut0 = node0.context().encryption().encryptionStateTask(CU.cacheId(cacheName()));
+
+        assertFalse(fut0.isDone());
+
+        cache.destroy();
+
+        // todo CacheStopException?
+        assertThrowsAnyCause(log, () -> {
+            fut0.get();
+
+            return null;
+        }, IgniteFutureCancelledCheckedException.class, null);
     }
 
     /**

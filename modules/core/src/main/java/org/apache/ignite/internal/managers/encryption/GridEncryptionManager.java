@@ -47,6 +47,7 @@ import org.apache.ignite.cluster.ClusterNode;
 import org.apache.ignite.failure.FailureContext;
 import org.apache.ignite.internal.GridKernalContext;
 import org.apache.ignite.internal.IgniteFeatures;
+import org.apache.ignite.internal.IgniteFutureCancelledCheckedException;
 import org.apache.ignite.internal.IgniteInternalFuture;
 import org.apache.ignite.internal.managers.GridManagerAdapter;
 import org.apache.ignite.internal.managers.communication.GridMessageListener;
@@ -984,6 +985,19 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
         removeGroupKey(grpId);
     }
 
+    public void stopReencryption(int grpId) {
+        IgniteInternalFuture fut = encryptionTask(grpId);
+
+        if (!fut.isDone()) {
+            try {
+                fut.cancel();
+            }
+            catch (IgniteCheckedException e) {
+                e.printStackTrace();
+            }
+        }
+    }
+
     /** {@inheritDoc} */
     @Override public void onReadyForRead(ReadOnlyMetastorage metastorage) {
         try {
@@ -1871,6 +1885,9 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
                         f.get();
 
                         cleanupKeys(grpId);
+                    }
+                    catch (IgniteFutureCancelledCheckedException e) {
+                        log.warning("Reencryption cancelled [grp=" + grpId + "]");
                     }
                     catch (IgniteCheckedException e) {
                         log.warning("Reencryption failed [grp=" + grpId + "]", e);
