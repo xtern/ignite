@@ -203,7 +203,9 @@ public abstract class AbstractEncryptionTest extends GridCommonAbstractTest {
 
         assertNotNull(cache);
 
-        for (long i = 0; i < 100; i++)
+        int size = cache.size();
+
+        for (long i = 0; i < size; i++)
             assertEquals("" + i, cache.get(i));
     }
 
@@ -308,9 +310,7 @@ public abstract class AbstractEncryptionTest extends GridCommonAbstractTest {
     protected void loadData(int cnt) {
         info("Loading " + cnt + " entries into " + cacheName());
 
-        IgniteCache<Object, Object> cache = grid(GRID_0).cache(cacheName());
-
-        int start = cache.size();
+        int start = grid(GRID_0).cache(cacheName()).size();
 
         try (IgniteDataStreamer<Long, String> streamer = grid(GRID_0).dataStreamer(cacheName())) {
             for (long i = start; i < (cnt + start); i++)

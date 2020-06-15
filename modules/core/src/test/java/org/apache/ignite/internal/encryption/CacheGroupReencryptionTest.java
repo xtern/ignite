@@ -40,19 +40,14 @@ import org.apache.ignite.internal.IgniteFutureCancelledCheckedException;
 import org.apache.ignite.internal.IgniteInternalFuture;
 import org.apache.ignite.internal.managers.discovery.DiscoveryCustomMessage;
 import org.apache.ignite.internal.processors.cache.CacheAffinityChangeMessage;
-import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtLocalPartition;
-import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtPartitionState;
-import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtPartitionTopology;
 import org.apache.ignite.internal.processors.cache.persistence.file.FileIO;
 import org.apache.ignite.internal.processors.cache.persistence.file.FileIODecorator;
 import org.apache.ignite.internal.processors.cache.persistence.file.FileIOFactory;
 import org.apache.ignite.internal.processors.cache.persistence.file.RandomAccessFileIOFactory;
-import org.apache.ignite.internal.util.distributed.InitMessage;
 import org.apache.ignite.internal.util.typedef.G;
 import org.apache.ignite.internal.util.typedef.T2;
 import org.apache.ignite.internal.util.typedef.internal.CU;
 import org.apache.ignite.internal.util.typedef.internal.U;
-import org.apache.ignite.spi.discovery.tcp.TestTcpDiscoverySpi;
 import org.apache.ignite.testframework.GridTestUtils;
 import org.apache.ignite.testframework.GridTestUtils.DiscoveryHook;
 import org.apache.ignite.testframework.junits.WithSystemProperty;
@@ -60,12 +55,11 @@ import org.junit.Test;
 
 import static org.apache.ignite.IgniteSystemProperties.IGNITE_REENCRYPTION_BATCH_SIZE;
 import static org.apache.ignite.IgniteSystemProperties.IGNITE_REENCRYPTION_DISABLED;
+import static org.apache.ignite.IgniteSystemProperties.IGNITE_REENCRYPTION_THREAD_POOL_SIZE;
 import static org.apache.ignite.IgniteSystemProperties.IGNITE_REENCRYPTION_THROTTLE;
 import static org.apache.ignite.configuration.WALMode.LOG_ONLY;
-import static org.apache.ignite.internal.processors.cache.persistence.file.FilePageStoreManager.CACHE_DIR_PREFIX;
 import static org.apache.ignite.internal.processors.cache.persistence.file.FilePageStoreManager.INDEX_FILE_NAME;
 import static org.apache.ignite.testframework.GridTestUtils.assertThrowsAnyCause;
-import static org.apache.ignite.testframework.GridTestUtils.waitForCondition;
 
 public class CacheGroupReencryptionTest extends AbstractEncryptionTest {
     private static final long MAX_AWAIT_MILLIS = 15_000;
@@ -156,7 +150,70 @@ public class CacheGroupReencryptionTest extends AbstractEncryptionTest {
 
         stopAllGrids(true);
 
-        failCtx.failFileName = null;
+        failCtx.failOffset = -1;
+
+        nodes = startTestGrids(false);
+
+        checkEncryptedCaches(nodes.get1(), nodes.get2());
+
+        checkGroupKey(grpId, 1);
+    }
+
+    /**
+     * @throws Exception If failed.
+     */
+    @Test
+    @WithSystemProperty(key = IGNITE_REENCRYPTION_THROTTLE, value = "10")
+    @WithSystemProperty(key = IGNITE_REENCRYPTION_BATCH_SIZE, value = "50")
+    @WithSystemProperty(key= IGNITE_REENCRYPTION_THREAD_POOL_SIZE, value = "1")
+    public void testPhysicalRecoveryWithUpdates() throws Exception {
+        failCtx.cacheName = cacheName();
+        failCtx.failFileName = INDEX_FILE_NAME;
+
+        T2<IgniteEx, IgniteEx> nodes = startTestGrids(true);
+
+        createEncryptedCache(nodes.get1(), nodes.get2() ,cacheName(), null);
+
+        loadData(50_000);
+
+        IgniteInternalFuture addFut = GridTestUtils.runAsync(() -> loadData(100_000));
+
+        IgniteInternalFuture updateFut = GridTestUtils.runAsync(() -> {
+            IgniteCache<Long, String> cache = grid(GRID_0).cache(cacheName());
+
+            while (!Thread.currentThread().isInterrupted()) {
+                for (long i = 50_000; i > 20_000; i--) {
+                    String val = cache.get(i);
+
+                    cache.put(i, val);
+                }
+            }
+        });
+
+        forceCheckpoint();
+
+        int grpId = CU.cacheId(cacheName());
+
+        nodes.get1().encryption().changeGroupKey(Collections.singleton(grpId)).get();
+
+        forceCheckpoint();
+
+        failCtx.failOffset = nodes.get1().context().cache().context().database().pageSize();
+
+        awaitEncryption(G.allGrids(), grpId).get();
+
+        addFut.get();
+        updateFut.cancel();
+
+        assertThrowsAnyCause(log, () -> {
+            forceCheckpoint();
+
+            return null;
+        }, IgniteCheckedException.class, null);
+
+        stopAllGrids(true);
+
+        failCtx.failOffset = -1;
 
         nodes = startTestGrids(false);
 
@@ -401,8 +458,9 @@ public class CacheGroupReencryptionTest extends AbstractEncryptionTest {
         @Override public FileIO create(File file, OpenOption... modes) throws IOException {
             FileIO delegate = delegateFactory.create(file, modes);
 
-            return file.getAbsolutePath().contains(CACHE_DIR_PREFIX + ctx.cacheName) &&
-                file.getName().equals(ctx.failFileName) ? new FailingFileIO(delegate) : delegate;
+            return new FailingFileIO(delegate);
+//                file.getAbsolutePath().contains(CACHE_DIR_PREFIX + ctx.cacheName) &&
+//                file.getName().equals(ctx.failFileName) ? new FailingFileIO(delegate) : delegate;
         }
 
         /** */
@@ -415,7 +473,7 @@ public class CacheGroupReencryptionTest extends AbstractEncryptionTest {
             }
 
             @Override public int writeFully(ByteBuffer srcBuf, long position) throws IOException {
-                if (ctx.failOffset == position)
+                if (ctx.failOffset != -1)
                     throw new IOException("Test exception.");
 
                 return delegate.writeFully(srcBuf, position);

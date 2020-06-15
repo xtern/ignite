@@ -23,6 +23,10 @@ import java.util.Queue;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.BooleanSupplier;
@@ -52,7 +56,9 @@ import org.apache.ignite.internal.util.typedef.internal.U;
 
 import static org.apache.ignite.IgniteSystemProperties.IGNITE_REENCRYPTION_BATCH_SIZE;
 import static org.apache.ignite.IgniteSystemProperties.IGNITE_REENCRYPTION_DISABLED;
+import static org.apache.ignite.IgniteSystemProperties.IGNITE_REENCRYPTION_THREAD_POOL_SIZE;
 import static org.apache.ignite.IgniteSystemProperties.IGNITE_REENCRYPTION_THROTTLE;
+import static org.apache.ignite.configuration.IgniteConfiguration.DFLT_THREAD_KEEP_ALIVE_TIME;
 import static org.apache.ignite.internal.pagemem.PageIdAllocator.INDEX_PARTITION;
 
 /**
@@ -67,6 +73,10 @@ public class CacheEncryptionTask implements DbCheckpointListener {
 
     /** Disable background re-encryption. */
     private final boolean disabled = IgniteSystemProperties.getBoolean(IGNITE_REENCRYPTION_DISABLED, false);
+
+    /** */
+    private final int threadsCnt = IgniteSystemProperties.getInteger(IGNITE_REENCRYPTION_THREAD_POOL_SIZE,
+        Runtime.getRuntime().availableProcessors());
 
     /** */
     private final GridKernalContext ctx;
@@ -85,6 +95,10 @@ public class CacheEncryptionTask implements DbCheckpointListener {
 
     /** */
     private boolean stopped;
+
+    /** */
+    private final ExecutorService execSvc = new ThreadPoolExecutor(threadsCnt, threadsCnt, DFLT_THREAD_KEEP_ALIVE_TIME,
+        TimeUnit.MILLISECONDS, new LinkedBlockingQueue<>());
 
     /**
      * @param ctx Grid kernal context.
@@ -106,6 +120,8 @@ public class CacheEncryptionTask implements DbCheckpointListener {
 
             for (ReencryptionState state : grps.values())
                 state.fut.cancel();
+
+            execSvc.shutdown();
         } finally {
             initLock.unlock();
         }
@@ -297,14 +313,15 @@ public class CacheEncryptionTask implements DbCheckpointListener {
 
             if (pageStore.encryptedPagesCount() == 0) {
                 if (log.isDebugEnabled())
-                    log.debug("Skipping re-encryption for part [grpId=" + grpId + ", partId=" + partId);
+                    log.debug("Skipping partition re-encryption [grp=" + grpId + ", p=" + partId + "]");
 
                 return null;
             }
 
             PageStoreScanner scan = new PageStoreScanner(grpId, partId, pageStore, cpFinished);
 
-            ctx.getSystemExecutorService().submit(scan);
+            //ctx.getSystemExecutorService().submit(scan);
+            execSvc.submit(scan);
             //ctx.closure().runLocal(scan, SYSTEM_POOL);
 
             return scan;
@@ -379,7 +396,7 @@ public class CacheEncryptionTask implements DbCheckpointListener {
 
                     if (part == null || part.state() == GridDhtPartitionState.EVICTED) {
                         if (log.isDebugEnabled())
-                            log.debug("Partition re-encryption skipped [grpId=" + grpId + ", p=" + partId + "]");
+                            log.debug("Partition re-encryption skipped [grp=" + grpId + ", p=" + partId + "]");
 
                         store.encryptedPagesOffset(cnt);
 
@@ -399,7 +416,7 @@ public class CacheEncryptionTask implements DbCheckpointListener {
 
                 if (log.isDebugEnabled()) {
                     log.debug("Partition re-encryption is started [" +
-                        "partId=" + partId + ", remain=" + (cnt - pageNum) + ", total=" + cnt + "]");
+                        "p=" + partId + ", remain=" + (cnt - pageNum) + ", total=" + cnt + "]");
                 }
 
                 IgniteWriteAheadLogManager wal = ctx.cache().context().wal();
@@ -414,28 +431,35 @@ public class CacheEncryptionTask implements DbCheckpointListener {
                             do {
                                 long pageId = metaPageId + pageNum;
 
+                                pageNum += 1;
+
                                 long page = pageMem.acquirePage(grpId, pageId);
 
                                 try {
+                                    if (cpFinished.getAsBoolean() && pageMem.isDirty(grpId, pageId, page))
+                                        continue;
+
                                     long pageAddr = pageMem.writeLock(grpId, pageId, page, true);
+
+                                    boolean dirtyFlag = true;
 
                                     try {
                                         byte[] payload = PageUtils.getBytes(pageAddr, 0, pageSize);
 
                                         FullPageId fullPageId = new FullPageId(pageId, grpId);
 
-                                        if (!cpFinished.getAsBoolean() && pageMem.isDirty(grpId, pageId, page) && !wal.disabled(grpId))
+                                        if (pageMem.isDirty(grpId, pageId, page) && !wal.disabled(grpId))
                                             wal.log(new PageSnapshot(fullPageId, payload, pageSize));
                                     }
                                     finally {
-                                        pageMem.writeUnlock(grpId, pageId, page, null, true, false);
+                                        pageMem.writeUnlock(grpId, pageId, page, null, dirtyFlag, false);
                                     }
                                 }
                                 finally {
                                     pageMem.releasePage(grpId, pageId, page);
                                 }
-
-                                pageNum++;
+//
+//                                pageNum++;
                             }
                             while (pageNum < end);
                         }

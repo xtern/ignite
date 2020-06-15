@@ -393,12 +393,11 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
 
         for (GridDhtLocalPartition part : grp.topology().currentLocalPartitions()) {
             if (part.state() == EVICTED) {
-                log.info("Skipping store offset for part=" + part.id() + " (evicted)");
+                if (log.isDebugEnabled())
+                    log.debug("Skipping store offset for evicted partition [grp=" + grpId + ", p=" + part.id() + "]");
 
                 continue;
             }
-//            if ((part.state() != OWNING && part.state() != MOVING) || part.isClearing())
-//                continue;
 
             PageStore pageStore = mgr.getStore(grpId, part.id());
 
