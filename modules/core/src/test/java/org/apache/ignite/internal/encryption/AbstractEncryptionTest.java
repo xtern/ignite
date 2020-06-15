@@ -49,6 +49,7 @@ import org.apache.ignite.internal.pagemem.PageIdAllocator;
 import org.apache.ignite.internal.pagemem.PageIdUtils;
 import org.apache.ignite.internal.processors.cache.CacheGroupContext;
 import org.apache.ignite.internal.processors.cache.IgniteInternalCache;
+import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtLocalPartition;
 import org.apache.ignite.internal.processors.cache.persistence.file.FilePageStore;
 import org.apache.ignite.internal.processors.cache.persistence.file.FilePageStoreManager;
 import org.apache.ignite.internal.util.IgniteUtils;
@@ -337,6 +338,13 @@ public abstract class AbstractEncryptionTest extends GridCommonAbstractTest {
 
             if (!pageStore.exists())
                 continue;
+
+            GridDhtLocalPartition part = p == INDEX_PARTITION ? null : grp.topology().localPartition(p);
+
+            if (part == null)
+                System.out.println(">>> part is null [p=" + p + "]");
+            else
+                System.out.println(">>> validate partition [p=" + p + ", state=" + part.state() + "]");
 
             assertEquals("p=" + p, pageStore.encryptedPagesCount(), pageStore.encryptedPagesOffset());
 

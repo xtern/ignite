@@ -39,6 +39,7 @@ import org.apache.ignite.internal.managers.communication.GridIoPolicy;
 import org.apache.ignite.internal.processors.cache.CacheGroupContext;
 import org.apache.ignite.internal.processors.cache.GridCacheSharedManagerAdapter;
 import org.apache.ignite.internal.util.future.GridFutureAdapter;
+import org.apache.ignite.internal.util.typedef.F;
 import org.apache.ignite.internal.util.typedef.internal.LT;
 import org.apache.ignite.internal.util.typedef.internal.S;
 import org.apache.ignite.internal.util.typedef.internal.U;
@@ -264,6 +265,8 @@ public class PartitionsEvictManager extends GridCacheSharedManagerAdapter {
                         String grpName = (nonNull(grpCtx) ? grpCtx.cacheOrGroupName() : null);
 
                         String partByReasonStr = partByReasonStr(evictParts);
+
+                        System.out.println(">>> evict " + grpCtx.topology().localPartition(F.first(evictParts.keySet())).state());
 
                         evictPartJoiner.add("[grpId=" + grpId + ", grpName=" + grpName + ", " + partByReasonStr + ']');
                     });

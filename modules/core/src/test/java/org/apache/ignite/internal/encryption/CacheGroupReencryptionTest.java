@@ -22,35 +22,39 @@ import java.io.IOException;
 import java.io.Serializable;
 import java.nio.ByteBuffer;
 import java.nio.file.OpenOption;
-import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
-import java.util.List;
 import java.util.Set;
+import java.util.concurrent.CountDownLatch;
 import org.apache.ignite.IgniteCache;
 import org.apache.ignite.IgniteCheckedException;
-import org.apache.ignite.IgniteDataStreamer;
 import org.apache.ignite.cache.affinity.rendezvous.RendezvousAffinityFunction;
-import org.apache.ignite.cluster.BaselineNode;
 import org.apache.ignite.cluster.ClusterState;
 import org.apache.ignite.configuration.CacheConfiguration;
 import org.apache.ignite.configuration.DataRegionConfiguration;
 import org.apache.ignite.configuration.DataStorageConfiguration;
 import org.apache.ignite.configuration.IgniteConfiguration;
+import org.apache.ignite.events.EventType;
 import org.apache.ignite.internal.IgniteEx;
 import org.apache.ignite.internal.IgniteFutureCancelledCheckedException;
 import org.apache.ignite.internal.IgniteInternalFuture;
-import org.apache.ignite.internal.processors.cache.IgniteInternalCache;
+import org.apache.ignite.internal.managers.discovery.DiscoveryCustomMessage;
+import org.apache.ignite.internal.processors.cache.CacheAffinityChangeMessage;
+import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtLocalPartition;
+import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtPartitionState;
+import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtPartitionTopology;
 import org.apache.ignite.internal.processors.cache.persistence.file.FileIO;
 import org.apache.ignite.internal.processors.cache.persistence.file.FileIODecorator;
 import org.apache.ignite.internal.processors.cache.persistence.file.FileIOFactory;
 import org.apache.ignite.internal.processors.cache.persistence.file.RandomAccessFileIOFactory;
+import org.apache.ignite.internal.util.distributed.InitMessage;
 import org.apache.ignite.internal.util.typedef.G;
 import org.apache.ignite.internal.util.typedef.T2;
 import org.apache.ignite.internal.util.typedef.internal.CU;
 import org.apache.ignite.internal.util.typedef.internal.U;
-import org.apache.ignite.lang.IgniteFuture;
+import org.apache.ignite.spi.discovery.tcp.TestTcpDiscoverySpi;
 import org.apache.ignite.testframework.GridTestUtils;
+import org.apache.ignite.testframework.GridTestUtils.DiscoveryHook;
 import org.apache.ignite.testframework.junits.WithSystemProperty;
 import org.junit.Test;
 
@@ -61,17 +65,28 @@ import static org.apache.ignite.configuration.WALMode.LOG_ONLY;
 import static org.apache.ignite.internal.processors.cache.persistence.file.FilePageStoreManager.CACHE_DIR_PREFIX;
 import static org.apache.ignite.internal.processors.cache.persistence.file.FilePageStoreManager.INDEX_FILE_NAME;
 import static org.apache.ignite.testframework.GridTestUtils.assertThrowsAnyCause;
+import static org.apache.ignite.testframework.GridTestUtils.waitForCondition;
 
 public class CacheGroupReencryptionTest extends AbstractEncryptionTest {
     private static final long MAX_AWAIT_MILLIS = 15_000;
 
     private final FailingContext failCtx = new FailingContext();
 
+    private int backups = 0;
+
+    private DiscoveryHook discoveryHook;
+
+    private static final String GRID_2 = "grid-2";
+
     /** {@inheritDoc} */
     @Override protected IgniteConfiguration getConfiguration(String name) throws Exception {
         IgniteConfiguration cfg = super.getConfiguration(name);
 
         cfg.setConsistentId(name);
+
+        cfg.setIncludeEventTypes(EventType.EVT_CACHE_REBALANCE_STOPPED);
+//        if (discoveryHook != null)
+//            ((TestTcpDiscoverySpi)cfg.getDiscoverySpi()).discoveryHook(discoveryHook);
 
         DataStorageConfiguration memCfg = new DataStorageConfiguration()
             .setDefaultDataRegionConfiguration(
@@ -81,7 +96,7 @@ public class CacheGroupReencryptionTest extends AbstractEncryptionTest {
             .setPageSize(4 * 1024)
             .setWalSegmentSize(10 * 1024 * 1024)
             .setWalSegments(4)
-            .setMaxWalArchiveSize(10 * 1024 * 1024L)
+            .setMaxWalArchiveSize(100 * 1024 * 1024L)
             .setCheckpointFrequency(30 * 1000L)
             .setWalMode(LOG_ONLY)
             .setFileIOFactory(new FailingFileIOFactory(new RandomAccessFileIOFactory(), failCtx));
@@ -102,7 +117,7 @@ public class CacheGroupReencryptionTest extends AbstractEncryptionTest {
     @Override protected <K, V> CacheConfiguration<K, V> cacheConfiguration(String name, String grp) {
         CacheConfiguration<K, V> cfg = super.cacheConfiguration(name, grp);
 
-        return cfg.setAffinity(new RendezvousAffinityFunction(false, 16));
+        return cfg.setAffinity(new RendezvousAffinityFunction(false, 16)).setBackups(backups);
     }
 
     /**
@@ -178,6 +193,54 @@ public class CacheGroupReencryptionTest extends AbstractEncryptionTest {
 
             return null;
         }, IgniteFutureCancelledCheckedException.class, null);
+    }
+
+    @Test
+    @WithSystemProperty(key = IGNITE_REENCRYPTION_THROTTLE, value = "500")
+    @WithSystemProperty(key = IGNITE_REENCRYPTION_BATCH_SIZE, value = "100")
+    public void testPartitionEvictionDuringReencryption() throws Exception {
+        backups = 1;
+
+        CountDownLatch rebalanceFinished = new CountDownLatch(1);
+
+        T2<IgniteEx, IgniteEx> nodes = startTestGrids(true);
+
+        IgniteEx node0 = nodes.get1();
+        IgniteEx node1 = nodes.get2();
+
+        createEncryptedCache(node0, node1, cacheName(), null);
+
+        loadData(100_000);
+
+        IgniteEx node2 = startGrid(GRID_2);
+
+        node2.events().localListen(evt -> {
+            rebalanceFinished.countDown();
+
+            return true;
+        }, EventType.EVT_CACHE_REBALANCE_STOPPED);
+
+        node0.cluster().setBaselineTopology(node0.context().discovery().topologyVersion());
+
+        rebalanceFinished.await();
+
+        stopGrid(GRID_2);
+
+        node0.cluster().setBaselineTopology(node0.context().discovery().topologyVersion());
+
+        int grpId = CU.cacheId(cacheName());
+
+        node0.encryption().changeGroupKey(Collections.singleton(grpId)).get();
+
+        stopAllGrids();
+
+        System.setProperty(IGNITE_REENCRYPTION_THROTTLE, "0");
+
+        startTestGrids(false);
+
+        awaitEncryption(G.allGrids(), grpId);
+
+        checkGroupKey(grpId, 1);
     }
 
     /**
@@ -360,5 +423,18 @@ public class CacheGroupReencryptionTest extends AbstractEncryptionTest {
         }
     }
 
+    private static class AffinityChangeMessageDiscoHook extends DiscoveryHook {
+        private final CountDownLatch discoLatch;
 
+        public AffinityChangeMessageDiscoHook(CountDownLatch discoLatch) {
+            this.discoLatch = discoLatch;
+        }
+
+        /** {@inheritDoc} */
+        @Override public void beforeDiscovery(DiscoveryCustomMessage customMsg) {
+            if (customMsg instanceof CacheAffinityChangeMessage) {
+                U.awaitQuiet(discoLatch);;
+            }
+        }
+    }
 }

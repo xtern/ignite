@@ -928,6 +928,8 @@ public class GridDhtLocalPartition extends GridCacheConcurrentMapImpl implements
         if (clearFuture.isDone())
             return true;
 
+        log.info("Evicting [p=" + id + "]");
+
         long state = this.state.get();
 
         if (getReservations(state) != 0 || groupReserved())

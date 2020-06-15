@@ -74,6 +74,7 @@ import org.apache.ignite.internal.processors.cache.distributed.dht.topology.Grid
 import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtPartitionState;
 import org.apache.ignite.internal.processors.cache.mvcc.MvccSnapshot;
 import org.apache.ignite.internal.processors.cache.mvcc.MvccVersion;
+import org.apache.ignite.internal.processors.cache.persistence.file.FilePageStore;
 import org.apache.ignite.internal.processors.cache.persistence.file.FilePageStoreManager;
 import org.apache.ignite.internal.processors.cache.persistence.freelist.AbstractFreeList;
 import org.apache.ignite.internal.processors.cache.persistence.freelist.CacheFreeList;
@@ -344,8 +345,12 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
                     }
 
                     // Do not save meta for evicted partitions on next checkpoints.
-                    if (state == null)
+                    if (state == null) {
+                        if (log.isInfoEnabled())
+                            log.info("Skip savemeta [p=" + store.partId() + "]");
+
                         return;
+                    }
                 }
 
                 int grpId = grp.groupId();
@@ -411,8 +416,10 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
                         changed |= io.setGlobalRemoveId(partMetaPageAddr, rmvId);
                         changed |= io.setSize(partMetaPageAddr, size);
 
-                        if (!encryptionDisabled && grp.persistenceEnabled()) {
-                            PageStore pageStore = ((FilePageStoreManager)this.ctx.pageStore()).getStore(grpId, part.id());
+                        if (!encryptionDisabled && grp.persistenceEnabled() && !beforeDestroy) {
+                            FilePageStoreManager pageStoreMgr = ((FilePageStoreManager)this.ctx.pageStore());
+
+                            PageStore pageStore = pageStoreMgr.getStore(grpId, part.id());
 
                             changed |= updateEncryptionStatusUnlocked(pageStore, partMetaPageAddr, io);
                         }
@@ -855,21 +862,27 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
 
     private boolean updateEncryptionStatusUnlocked(PageStore pageStore, long pageAddr, PageMetaIO io) {
         int pagesCnt = pageStore.encryptedPagesCount();
+        boolean changed = false;
 
         if (pagesCnt != 0) {
             int off = pageStore.encryptedPagesOffset();
+
+            if (log.isInfoEnabled())
+                log.info("(save meta) update status [off=" + off + ", cnt=" + pagesCnt + ", path=" + ((FilePageStore)pageStore).getFileAbsolutePath() + "]");
 
             if (off == pagesCnt) {
                 off = 0;
                 pagesCnt = 0;
 
                 pageStore.encryptedPagesCount(0);
+                pageStore.encryptedPagesOffset(off);
             }
 
-            pageStore.encryptedPagesOffset(off);
-
             // todo first time should save current pages count
-            return io.setEncryptionPageIdx(pageAddr, off) || io.setEncryptionPagesCount(pageAddr, pagesCnt);
+            changed |= io.setEncryptionPageIdx(pageAddr, off);
+            changed |= io.setEncryptionPagesCount(pageAddr, pagesCnt);
+
+            return changed;
         }
 
         return false;
@@ -1955,9 +1968,10 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
 
                                     pageStore.encryptedPagesCount(encrPageCnt);
                                     pageStore.encryptedPagesOffset(io.getEncryptionPageIdx(pageAddr));
-
-                                    System.out.println("init meta " + grp.name() + " p=" + partId);
                                 }
+
+                                if (log.isInfoEnabled())
+                                    log.info("init meta " + grp.name() + " p=" + partId + " encrPageCnt=" + encrPageCnt);
 
                                 globalRemoveId().setIfGreater(io.getGlobalRemoveId(pageAddr));
                             }

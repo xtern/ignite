@@ -392,8 +392,11 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
         FilePageStoreManager mgr = (FilePageStoreManager)ctx.cache().context().pageStore();
 
         for (GridDhtLocalPartition part : grp.topology().currentLocalPartitions()) {
-            if (part.state() == EVICTED)
+            if (part.state() == EVICTED) {
+                log.info("Skipping store offset for part=" + part.id() + " (evicted)");
+
                 continue;
+            }
 //            if ((part.state() != OWNING && part.state() != MOVING) || part.isClearing())
 //                continue;
 
@@ -892,22 +895,22 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
      * @return Encryption status.
      */
     public boolean onPartitionClearing(int grpId, int partId) {
-        try {
-            if (!encryptTask.cancel(grpId, partId))
-                return false;
-
-            FilePageStoreManager mgr = (FilePageStoreManager)ctx.cache().context().pageStore();
-
-            PageStore pageStore = mgr.getStore(grpId, partId);
-
-            pageStore.encryptedPagesOffset(0);
-            pageStore.encryptedPagesCount(0);
-
-            return true;
-        }
-        catch (IgniteCheckedException e) {
-            log.warning("Unable to cancel re-encryption [grpId=" + grpId + ", partId=" + partId + "]");
-        }
+//        try {
+//            if (!encryptTask.cancel(grpId, partId))
+//                return false;
+//
+//            FilePageStoreManager mgr = (FilePageStoreManager)ctx.cache().context().pageStore();
+//
+//            PageStore pageStore = mgr.getStore(grpId, partId);
+//
+//            pageStore.encryptedPagesOffset(0);
+//            pageStore.encryptedPagesCount(0);
+//
+//            return true;
+//        }
+//        catch (IgniteCheckedException e) {
+//            log.warning("Unable to cancel re-encryption [grpId=" + grpId + ", partId=" + partId + "]");
+//        }
 
         return false;
     }
@@ -1572,7 +1575,8 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
             encryptedGroups.add(grpId);
         }
 
-        System.out.println("apply logical status [" + rec0.groupsStatus().keySet() + "]");
+        if (log.isInfoEnabled())
+            log.info("apply logical status [" + rec0.groupsStatus().keySet() + "]");
     }
 
     /**
@@ -1973,7 +1977,7 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
                 }
             }
             catch (Exception e) {
-                return new GridFinishedFuture<>(new IgniteException("Master key change was rejected [nodeId=" +
+                return new GridFinishedFuture<>(new IgniteException("Cache group key change was rejected [nodeId=" +
                     ctx.localNodeId() + ']', e));
             }
 
