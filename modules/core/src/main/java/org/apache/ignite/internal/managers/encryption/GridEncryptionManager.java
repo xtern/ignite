@@ -492,7 +492,7 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
         //And sends that keys to every joining node.
         synchronized (metaStorageMux) {
             //Keys read from meta storage.
-            HashMap<Integer, byte[]> knownEncKeys = knownEncryptionKeys();
+            HashMap<Integer, T2<Integer, byte[]>> knownEncKeys = knownEncryptionKeys();
 
             //Generated(not saved!) keys for a new caches.
             //Configured statically in config, but doesn't stored on the disk.
@@ -555,21 +555,31 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
                 "Master key digest differs! Node join is rejected.");
         }
 
+        if (!IgniteFeatures.nodeSupports(node, GROUP_KEY_CHANGE)) {
+            return new IgniteNodeValidationResult(ctx.localNodeId(),
+                "Joining node doesn't support multiple encryption keys for single group [node=" + node.id() + "]",
+                "Joining node doesn't support multiple encryption keys for single group.");
+        }
+
         if (F.isEmpty(nodeEncKeys.knownKeys)) {
             U.quietAndInfo(log, "Joining node doesn't have stored group keys [node=" + node.id() + "]");
 
             return null;
         }
 
+        assert !F.isEmpty(nodeEncKeys.knownKeyIds);
+
         for (Map.Entry<Integer, byte[]> entry : nodeEncKeys.knownKeys.entrySet()) {
-            GroupKey locEncKey = groupKey(entry.getKey());
+            int grpId = entry.getKey();
+
+            GroupKey locEncKey = groupKey(grpId);
 
             if (locEncKey == null)
-                continue; // todo should we continue if we don't have a key
+                continue;
 
             Serializable rmtKey = getSpi().decryptKey(entry.getValue());
 
-            if (F.eq(locEncKey.key(), rmtKey))
+            if (F.eq(locEncKey.key(), rmtKey) && F.eq(locEncKey.id(), nodeEncKeys.knownKeyIds.get(grpId)))
                 continue;
 
             return new IgniteNodeValidationResult(ctx.localNodeId(),
@@ -585,7 +595,7 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
         if (dataBag.isJoiningNodeClient())
             return;
 
-        HashMap<Integer, byte[]> knownEncKeys = knownEncryptionKeys();
+        HashMap<Integer, T2<Integer, byte[]>> knownEncKeys = knownEncryptionKeys();
 
         HashMap<Integer, byte[]> newKeys =
             newEncryptionKeys(knownEncKeys == null ? Collections.EMPTY_SET : knownEncKeys.keySet());
@@ -632,16 +642,14 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
         if (dataBag.isJoiningNodeClient() || dataBag.commonDataCollectedFor(ENCRYPTION_MGR.ordinal()))
             return;
 
-        HashMap<Integer, byte[]> knownEncKeys = knownEncryptionKeys();
+        HashMap<Integer, T2<Integer, byte[]>> knownEncKeys = knownEncryptionKeys();
 
         HashMap<Integer, byte[]> newKeys =
             newEncryptionKeys(knownEncKeys == null ? Collections.EMPTY_SET : knownEncKeys.keySet());
 
-        if (knownEncKeys == null)
-            knownEncKeys = newKeys;
-        else if (newKeys != null) {
+        if (newKeys != null) {
             for (Map.Entry<Integer, byte[]> entry : newKeys.entrySet()) {
-                byte[] old = knownEncKeys.putIfAbsent(entry.getKey(), entry.getValue());
+                T2 old = knownEncKeys.putIfAbsent(entry.getKey(), new T2<>(0, entry.getValue()));
 
                 assert old == null;
             }
@@ -655,16 +663,25 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
         if (ctx.clientNode())
             return;
 
-        Map<Integer, byte[]> encKeysFromCluster = (Map<Integer, byte[]>)data.commonData();
+        Map<Integer, Object> encKeysFromCluster = (Map<Integer, Object>)data.commonData();
 
         if (F.isEmpty(encKeysFromCluster))
             return;
 
-        for (Map.Entry<Integer, byte[]> entry : encKeysFromCluster.entrySet()) {
+        for (Map.Entry<Integer, Object> entry : encKeysFromCluster.entrySet()) {
             if (groupKey(entry.getKey()) == null) {
                 U.quietAndInfo(log, "Store group key received from coordinator [grp=" + entry.getKey() + "]");
 
-                groupKey(entry.getKey(), entry.getValue());
+                if (entry.getValue() instanceof T2) {
+                    T2<Integer, byte[]> pair = (T2<Integer, byte[]>)entry.getValue();
+
+                    groupKey(entry.getKey(), pair.get2(), pair.get1());
+
+                    continue;
+                }
+
+                // compatibility
+                groupKey(entry.getKey(), (byte[])entry.getValue(), 0);
             }
             else {
                 U.quietAndInfo(log, "Skip group key received from coordinator. Already exists. [grp=" +
@@ -735,6 +752,14 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
     private void groupKey(int grpId, byte[] encGrpKey) {
         try {
             replaceKey(grpId, encGrpKey, 0, true);
+        } catch (IgniteCheckedException e) {
+            throw new IgniteException("Failed to write cache group encryption key [grpId=" + grpId + ']', e);
+        }
+    }
+
+    private void groupKey(int grpId, byte[] encGrpKey, int keyId) {
+        try {
+            replaceKey(grpId, encGrpKey, keyId, true);
         } catch (IgniteCheckedException e) {
             throw new IgniteException("Failed to write cache group encryption key [grpId=" + grpId + ']', e);
         }
@@ -1327,7 +1352,11 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
                 continue;
 
             // todo
-            writeToMetaStore(entry.getKey(), getSpi().encryptKey(entry.getValue().get(0)), 0);
+            Integer keyId = grpEncActiveKeys.get(entry.getKey());
+
+            assert keyId != null;
+
+            writeToMetaStore(entry.getKey(), getSpi().encryptKey(entry.getValue().get(keyId)), keyId);
         }
     }
 
@@ -1418,18 +1447,18 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
     /**
      * @return Local encryption keys.
      */
-    @Nullable private HashMap<Integer, byte[]> knownEncryptionKeys() {
+    @Nullable private HashMap<Integer, T2<Integer, byte[]>> knownEncryptionKeys() {
         if (F.isEmpty(grpEncKeys))
             return null;
 
-        HashMap<Integer, byte[]> knownKeys = new HashMap<>();
+        HashMap<Integer, T2<Integer, byte[]>> knownKeys = new HashMap<>();
 
         for (Map.Entry<Integer, Map<Integer, Serializable>> entry : grpEncKeys.entrySet()) {
             int grpId = entry.getKey();
             Map<Integer, Serializable> grpKeys = entry.getValue();
             int activeId = grpEncActiveKeys.get(grpId);
 
-            knownKeys.put(grpId, getSpi().encryptKey(grpKeys.get(activeId)));
+            knownKeys.put(grpId, new T2<>(activeId, getSpi().encryptKey(grpKeys.get(activeId))));
         }
 
         return knownKeys;
@@ -2180,10 +2209,24 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
         private static final long serialVersionUID = 0L;
 
         /** */
-        NodeEncryptionKeys(Map<Integer, byte[]> knownKeys, Map<Integer, byte[]> newKeys, byte[] masterKeyDigest) {
-            this.knownKeys = knownKeys;
+        NodeEncryptionKeys(
+            HashMap<Integer, T2<Integer, byte[]>> knownKeysWithIds,
+            Map<Integer, byte[]> newKeys,
+            byte[] masterKeyDigest
+        ) {
             this.newKeys = newKeys;
             this.masterKeyDigest = masterKeyDigest;
+
+            if (F.isEmpty(knownKeysWithIds))
+                return;
+
+            knownKeys = U.newHashMap(knownKeysWithIds.size());
+            knownKeyIds = U.newHashMap(knownKeysWithIds.size());
+
+            for (Map.Entry<Integer, T2<Integer, byte[]>> entry : knownKeysWithIds.entrySet()) {
+                knownKeys.put(entry.getKey(), entry.getValue().get2());
+                knownKeyIds.put(entry.getKey(), (byte)entry.getValue().get1().intValue());
+            }
         }
 
         /** Known i.e. stored in {@code ReadWriteMetastorage} keys from node. */
@@ -2194,6 +2237,8 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
 
         /** Master key digest. */
         byte[] masterKeyDigest;
+
+        Map<Integer, Byte> knownKeyIds;
     }
 
     /** */
