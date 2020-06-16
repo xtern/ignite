@@ -60,6 +60,7 @@ import org.apache.ignite.internal.pagemem.wal.record.MasterKeyChangeRecord;
 import org.apache.ignite.internal.processors.affinity.AffinityTopologyVersion;
 import org.apache.ignite.internal.processors.cache.CacheGroupContext;
 import org.apache.ignite.internal.processors.cache.CacheGroupDescriptor;
+import org.apache.ignite.internal.processors.cache.IgniteInternalCache;
 import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtLocalPartition;
 import org.apache.ignite.internal.processors.cache.persistence.file.FilePageStoreManager;
 import org.apache.ignite.internal.processors.cache.persistence.metastorage.MetastorageLifecycleListener;
@@ -835,7 +836,7 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
     }
 
     /** {@inheritDoc} */
-    @Override public IgniteFuture<Void> changeGroupKey(Collection<Integer> groups) throws IgniteCheckedException {
+    @Override public IgniteFuture<Void> changeGroupKey(Collection<String> cacheOrGrpNames) {
         if (ctx.clientNode())
             throw new UnsupportedOperationException("Client and daemon nodes can not perform this operation.");
 
@@ -853,31 +854,41 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
         if (bltSize != bltOnline)
             throw new IgniteException("Not all baseline nodes online [total=" + bltSize + ", online=" + bltOnline + "]");
 
-        int[] groups0 = groups.stream().mapToInt(i -> i).toArray();
-        byte[][] keys = new byte[groups0.length][];
-        byte[] keyIds = new byte[groups0.length];
+        int[] groups = new int[cacheOrGrpNames.size()];
+        byte[][] keys = new byte[groups.length][];
+        byte[] keyIds = new byte[groups.length];
 
-        for (int n = 0; n < groups0.length; n++) {
-            int grpId = groups0[n];
+        int n = 0;
 
-            if (!encryptionTask(grpId).isDone())
-                throw new IgniteCheckedException("Encryption in progress [grp=" + grpId + "]");
+        for (String cacheOrGroupName : cacheOrGrpNames) {
+            CacheGroupContext grp = ctx.cache().cacheGroup(CU.cacheId(cacheOrGroupName));
 
-            Serializable key = getSpi().create();
+            if (grp == null) {
+                IgniteInternalCache cache = ctx.cache().cache(cacheOrGroupName);
 
-            keys[n] = getSpi().encryptKey(key);
+                if (cache == null)
+                    throw new IgniteException("Cache or group " + cacheOrGroupName + " doesn't exists");
 
-            // todo key identifier can be not max in case of reverting encryption
-            int curr = grpEncActiveKeys.get(grpId);
-            int next = curr + 1;
+                grp = cache.context().group();
 
-            System.out.println(">> generated key [curr=" + curr + ", curr0=" + (byte)curr + ", next=" + next + ", next0=" + (byte)next);
+                if (grp.sharedGroup()) {
+                    throw new IgniteException("Cache " + cacheOrGroupName + " is a part of group " + grp.name() +
+                        ". Provide group name instead of cache name for shared groups.");
+                }
+            }
 
-            keyIds[n] = (byte)(grpEncActiveKeys.get(grpId) + 1);
+            if (!encryptionTask(grp.groupId()).isDone())
+                throw new IgniteException("Encryption is in progress [grp=" + cacheOrGroupName + "]");
+
+            groups[n] = grp.groupId();
+            keys[n] = getSpi().encryptKey(getSpi().create());
+            keyIds[n] = (byte)(grpEncActiveKeys.get(grp.groupId()) + 1);
+
+            n += 1;
         }
 
         AffinityTopologyVersion curVer = ctx.cache().context().exchange().readyAffinityVersion();
-        ChangeCacheEncryptionRequest req = new ChangeCacheEncryptionRequest(groups0, keys, keyIds, curVer);
+        ChangeCacheEncryptionRequest req = new ChangeCacheEncryptionRequest(groups, keys, keyIds, curVer);
 
         IgniteFuture<Void> fut;
 

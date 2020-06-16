@@ -66,7 +66,7 @@ import static org.apache.ignite.internal.pagemem.PageIdAllocator.INDEX_PARTITION
  */
 public class CacheEncryptionTask implements DbCheckpointListener {
     /** Max amount of pages that will be read into memory under checkpoint lock. */
-    private final int batchSize = IgniteSystemProperties.getInteger(IGNITE_REENCRYPTION_BATCH_SIZE, 10_000);
+    private final int batchSize = IgniteSystemProperties.getInteger(IGNITE_REENCRYPTION_BATCH_SIZE, 1_000);
 
     /** Timeout between batches. */
     private final long timeoutBetweenBatches = IgniteSystemProperties.getLong(IGNITE_REENCRYPTION_THROTTLE, 0);
@@ -178,7 +178,7 @@ public class CacheEncryptionTask implements DbCheckpointListener {
 
         if (grp == null) {
             if (log.isDebugEnabled())
-                log.debug("Skip re-encryption [grpId=" + grpId + "]");
+                log.debug("Skip re-encryption, group was destroyed [grp=" + grpId + "]");
 
             return new GridFinishedFuture();
         }
@@ -193,7 +193,7 @@ public class CacheEncryptionTask implements DbCheckpointListener {
                 ((GridCacheDatabaseSharedManager)ctx.cache().context().database()).addCheckpointListener(this);
 
             if (log.isInfoEnabled())
-                log.info("Scheduled re-encryption [grp=" + grpId + "]");
+                log.info("Scheduled re-encryption [grpId=" + grpId + "]");
 
             state.initialize(grp);
 
@@ -203,7 +203,7 @@ public class CacheEncryptionTask implements DbCheckpointListener {
                 Throwable t = state.fut.error();
 
                 if (t != null) {
-                    log.error("Re-encryption is failed [grp=" + grpId + "]", t);
+                    log.error("Re-encryption is failed [grpId=" + grpId + "]", t);
 
                     state.cpFut.onDone(t);
 
@@ -211,7 +211,7 @@ public class CacheEncryptionTask implements DbCheckpointListener {
                 }
 
                 if (log.isInfoEnabled())
-                    log.info("Re-encryption is finished [grp=" + grpId + "]");
+                    log.info("Re-encryption is finished [grpId=" + grpId + "]");
 
                 boolean added = completedGrps.offer(grpId);
 
@@ -283,10 +283,6 @@ public class CacheEncryptionTask implements DbCheckpointListener {
 
         private final GridFutureAdapter<Void> cpFut = new GridFutureAdapter<Void>() {
             @Override public boolean cancel() throws IgniteCheckedException {
-//                for (IgniteInternalFuture<Void> fut : futMap.values()) {
-//                    System.out.println(">xxx> cancel " + fut);
-//                    fut.cancel();
-//                }
                 fut.cancel();
 
                 return onDone(null, null, true);
@@ -391,8 +387,10 @@ public class CacheEncryptionTask implements DbCheckpointListener {
                     return;
                 }
 
+                GridDhtLocalPartition part = null;
+
                 if (partId != INDEX_PARTITION) {
-                    GridDhtLocalPartition part = grp.topology().localPartition(partId);
+                    part = grp.topology().localPartition(partId);
 
                     if (part == null || part.state() == GridDhtPartitionState.EVICTED) {
                         if (log.isDebugEnabled())
@@ -458,8 +456,6 @@ public class CacheEncryptionTask implements DbCheckpointListener {
                                 finally {
                                     pageMem.releasePage(grpId, pageId, page);
                                 }
-//
-//                                pageNum++;
                             }
                             while (pageNum < end);
                         }

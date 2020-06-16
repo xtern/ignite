@@ -79,8 +79,6 @@ public class CacheGroupReencryptionTest extends AbstractEncryptionTest {
         cfg.setConsistentId(name);
 
         cfg.setIncludeEventTypes(EventType.EVT_CACHE_REBALANCE_STOPPED);
-//        if (discoveryHook != null)
-//            ((TestTcpDiscoverySpi)cfg.getDiscoverySpi()).discoveryHook(discoveryHook);
 
         DataStorageConfiguration memCfg = new DataStorageConfiguration()
             .setDefaultDataRegionConfiguration(
@@ -136,7 +134,7 @@ public class CacheGroupReencryptionTest extends AbstractEncryptionTest {
 
         failCtx.failOffset = nodes.get1().context().cache().context().database().pageSize();
 
-        nodes.get1().encryption().changeGroupKey(Collections.singleton(grpId)).get();
+        nodes.get1().encryption().changeGroupKey(Collections.singleton(cacheName())).get();
 
         awaitEncryption(G.allGrids(), grpId).get();
 
@@ -194,7 +192,7 @@ public class CacheGroupReencryptionTest extends AbstractEncryptionTest {
 
         int grpId = CU.cacheId(cacheName());
 
-        nodes.get1().encryption().changeGroupKey(Collections.singleton(grpId)).get();
+        nodes.get1().encryption().changeGroupKey(Collections.singleton(cacheName())).get();
 
         forceCheckpoint();
 
@@ -236,7 +234,7 @@ public class CacheGroupReencryptionTest extends AbstractEncryptionTest {
 
         IgniteCache cache = node0.cache(cacheName());
 
-        node0.encryption().changeGroupKey(Collections.singleton(CU.cacheId(cacheName()))).get();
+        node0.encryption().changeGroupKey(Collections.singleton(cacheName())).get();
 
         IgniteInternalFuture<Void> fut0 = node0.context().encryption().encryptionStateTask(CU.cacheId(cacheName()));
 
@@ -287,7 +285,7 @@ public class CacheGroupReencryptionTest extends AbstractEncryptionTest {
 
         int grpId = CU.cacheId(cacheName());
 
-        node0.encryption().changeGroupKey(Collections.singleton(grpId)).get();
+        node0.encryption().changeGroupKey(Collections.singleton(cacheName())).get();
 
         stopAllGrids();
 
@@ -322,7 +320,7 @@ public class CacheGroupReencryptionTest extends AbstractEncryptionTest {
 
         int grpId = CU.cacheId(cacheName());
 
-        node0.encryption().changeGroupKey(Collections.singleton(grpId)).get();
+        node0.encryption().changeGroupKey(Collections.singleton(cacheName())).get();
 
         awaitEncryption(G.allGrids(), grpId).get();
 
@@ -360,7 +358,7 @@ public class CacheGroupReencryptionTest extends AbstractEncryptionTest {
 
         int grpId = CU.cacheId(cacheName());
 
-        node0.encryption().changeGroupKey(Collections.singleton(grpId)).get();
+        node0.encryption().changeGroupKey(Collections.singleton(cacheName())).get();
 
         forceCheckpoint();
 
@@ -402,7 +400,7 @@ public class CacheGroupReencryptionTest extends AbstractEncryptionTest {
 
         walSegments.add(node1.context().cache().context().wal().currentSegment());
 
-        node0.encryption().changeGroupKey(Collections.singleton(grpId)).get();
+        node0.encryption().changeGroupKey(Collections.singleton(cacheName())).get();
 
         walSegments.add(node1.context().cache().context().wal().currentSegment());
 

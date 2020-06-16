@@ -122,7 +122,7 @@ public class CacheGroupKeyChangeTest extends AbstractEncryptionTest {
 
         commSpi.blockMessages((node, msg) -> msg instanceof SingleNodeMessage);
 
-        IgniteFuture<Void> fut = grids.get1().encryption().changeGroupKey(Collections.singleton(grpId));
+        IgniteFuture<Void> fut = grids.get1().encryption().changeGroupKey(Collections.singleton(cacheName()));
 
         commSpi.waitForBlocked();
 
@@ -146,7 +146,7 @@ public class CacheGroupKeyChangeTest extends AbstractEncryptionTest {
         stopGrid(GRID_1);
 
         assertThrowsAnyCause(log, () -> {
-            return grid(GRID_0).encryption().changeGroupKey(Collections.singleton(CU.cacheId(cacheName())));
+            return grid(GRID_0).encryption().changeGroupKey(Collections.singleton(cacheName()));
         }, IgniteException.class, "Not all baseline nodes online [total=2, online=1]");
     }
 
@@ -239,7 +239,7 @@ public class CacheGroupKeyChangeTest extends AbstractEncryptionTest {
         String alive = stopCrd ? GRID_1 : GRID_0;
         String stopped = stopCrd ? GRID_0 : GRID_1;
 
-        IgniteFuture<Void> fut = grid(alive).encryption().changeGroupKey(Collections.singleton(grpId));
+        IgniteFuture<Void> fut = grid(alive).encryption().changeGroupKey(Collections.singleton(cacheName()));
 
         IgniteInternalFuture stopFut;
 
@@ -285,7 +285,7 @@ public class CacheGroupKeyChangeTest extends AbstractEncryptionTest {
 
             forceCheckpoint(stoppedNode);
 
-            stoppedNode.encryption().changeGroupKey(Collections.singleton(grpId)).get(MAX_AWAIT_MILLIS);
+            stoppedNode.encryption().changeGroupKey(Collections.singleton(cacheName())).get(MAX_AWAIT_MILLIS);
 
             checkGroupKey(grpId, keyId + 1);
         }
@@ -301,7 +301,7 @@ public class CacheGroupKeyChangeTest extends AbstractEncryptionTest {
 
                 forceCheckpoint(stoppedNode);
 
-                stoppedNode.encryption().changeGroupKey(Collections.singleton(grpId)).get(MAX_AWAIT_MILLIS);
+                stoppedNode.encryption().changeGroupKey(Collections.singleton(cacheName())).get(MAX_AWAIT_MILLIS);
 
                 checkGroupKey(grpId, keyId + 1);
             } finally {
@@ -324,7 +324,7 @@ public class CacheGroupKeyChangeTest extends AbstractEncryptionTest {
         int maxItrs = 0xff * 2;
 
         for (int i = 0; i < maxItrs; i++) {
-            node1.encryption().changeGroupKey(Collections.singleton(grpId)).get();
+            node1.encryption().changeGroupKey(Collections.singleton(cacheName())).get();
 
             awaitEncryption(G.allGrids(), grpId).get(MAX_AWAIT_MILLIS);
 
@@ -372,7 +372,7 @@ public class CacheGroupKeyChangeTest extends AbstractEncryptionTest {
 
         int grpId = cache.context().groupId();
 
-        node1.encryption().changeGroupKey(Collections.singletonList(grpId)).get(MAX_AWAIT_MILLIS);
+        node1.encryption().changeGroupKey(Collections.singleton(cacheName())).get(MAX_AWAIT_MILLIS);
 
         Map<Integer, Integer> keys1 = node1.context().encryption().groupKeysInfo(grpId);
         Map<Integer, Integer> keys2 = node2.context().encryption().groupKeysInfo(grpId);
@@ -444,7 +444,7 @@ public class CacheGroupKeyChangeTest extends AbstractEncryptionTest {
 
         int grpId = CU.cacheId(cacheName());
 
-        IgniteFuture fut = node2.encryption().changeGroupKey(Collections.singleton(grpId));
+        IgniteFuture fut = node2.encryption().changeGroupKey(Collections.singleton(cacheName()));
 
         fut.get(MAX_AWAIT_MILLIS);
 
@@ -476,7 +476,7 @@ public class CacheGroupKeyChangeTest extends AbstractEncryptionTest {
 
         int grpId = cache.context().groupId();
 
-        node1.encryption().changeGroupKey(Collections.singletonList(grpId)).get();
+        node1.encryption().changeGroupKey(Collections.singleton(cacheName())).get();
 
         Map<Integer, Integer> keys1 = node1.context().encryption().groupKeysInfo(grpId);
         Map<Integer, Integer> keys2 = node2.context().encryption().groupKeysInfo(grpId);
