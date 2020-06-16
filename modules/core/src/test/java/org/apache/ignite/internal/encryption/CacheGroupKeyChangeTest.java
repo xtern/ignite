@@ -63,6 +63,7 @@ import static org.apache.ignite.testframework.GridTestUtils.runAsync;
  */
 public class CacheGroupKeyChangeTest extends AbstractEncryptionTest {
     private static final long MAX_AWAIT_MILLIS = 15_000;
+    private static final String GRID_2 = "grid-2";
 
     private DiscoveryHook discoveryHook;
 
@@ -314,26 +315,42 @@ public class CacheGroupKeyChangeTest extends AbstractEncryptionTest {
     public void testKeyIdentifierOverflow() throws Exception {
         startTestGrids(true);
 
-        IgniteEx node1 = grid(GRID_0);
-        IgniteEx node2 = grid(GRID_1);
+        IgniteEx node0 = grid(GRID_0);
+        IgniteEx node1 = grid(GRID_1);
 
-        createEncryptedCache(node1, node2, cacheName(), null);
+        createEncryptedCache(node0, node1, cacheName(), null);
 
         int grpId = CU.cacheId(cacheName());
 
         int maxItrs = 0xff * 2;
 
         for (int i = 0; i < maxItrs; i++) {
-            node1.encryption().changeGroupKey(Collections.singleton(cacheName())).get();
+            node0.encryption().changeGroupKey(Collections.singleton(cacheName())).get();
 
             awaitEncryption(G.allGrids(), grpId).get(MAX_AWAIT_MILLIS);
 
             forceCheckpoint();
 
-            assertEquals((byte)(i + 1), node1.context().encryption().groupKey(grpId).id());
+            assertEquals((byte)(i + 1), node0.context().encryption().groupKey(grpId).id());
         }
 
         checkGroupKey(grpId, (byte)maxItrs & 0xff);
+    }
+
+    @Test
+    public void testNodeJoinAfterChange() throws Exception {
+        startTestGrids(true);
+
+        IgniteEx node0 = grid(GRID_0);
+        IgniteEx node1 = grid(GRID_1);
+
+        createEncryptedCache(node0, node1, cacheName(), null);
+
+        node0.encryption().changeGroupKey(Collections.singleton(cacheName())).get();
+
+        startGrid(GRID_2);
+
+        checkGroupKey(CU.cacheId(cacheName()), 1);
     }
 
     @Test

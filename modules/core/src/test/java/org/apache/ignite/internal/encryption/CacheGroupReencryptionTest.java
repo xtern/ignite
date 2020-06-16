@@ -26,6 +26,7 @@ import java.util.Collections;
 import java.util.HashSet;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
+import org.apache.ignite.Ignite;
 import org.apache.ignite.IgniteCache;
 import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.cache.affinity.rendezvous.RendezvousAffinityFunction;
@@ -296,6 +297,127 @@ public class CacheGroupReencryptionTest extends AbstractEncryptionTest {
         awaitEncryption(G.allGrids(), grpId);
 
         checkGroupKey(grpId, 1);
+    }
+
+    /**
+     * Test that partition files are reused correctly.
+     *
+     * @throws Exception If failed.
+     */
+    @Test
+    @WithSystemProperty(key = IGNITE_REENCRYPTION_THROTTLE, value = "50")
+    @WithSystemProperty(key = IGNITE_REENCRYPTION_BATCH_SIZE, value = "10")
+    @WithSystemProperty(key= IGNITE_REENCRYPTION_THREAD_POOL_SIZE, value = "1")
+    public void testPartitionFileDestroy() throws Exception {
+        backups = 1;
+
+        T2<IgniteEx, IgniteEx> nodes = startTestGrids(true);
+
+        createEncryptedCache(nodes.get1(), nodes.get2(), cacheName(), null);
+
+        loadData(50_000);
+
+        forceCheckpoint();
+
+        nodes.get1().encryption().changeGroupKey(Collections.singleton(cacheName())).get();
+
+        startGrid(GRID_2);
+
+        // Trigger partitions eviction.
+        resetBaselineTopology();
+
+        awaitPartitionMapExchange(true, true, null);
+
+        forceCheckpoint();
+
+        checkGroupKey(CU.cacheId(cacheName()), 1);
+    }
+
+    /**
+     * Test that partition files are reused correctly.
+     *
+     * @throws Exception If failed.
+     */
+    @Test
+    @WithSystemProperty(key = IGNITE_REENCRYPTION_THROTTLE, value = "50")
+    @WithSystemProperty(key = IGNITE_REENCRYPTION_BATCH_SIZE, value = "50")
+    @WithSystemProperty(key= IGNITE_REENCRYPTION_THREAD_POOL_SIZE, value = "1")
+    public void testPartitionFileDestroyAndRecreate() throws Exception {
+        backups = 1;
+
+        T2<IgniteEx, IgniteEx> nodes = startTestGrids(true);
+
+        createEncryptedCache(nodes.get1(), nodes.get2(), cacheName(), null);
+
+        loadData(50_000);
+
+        forceCheckpoint();
+
+        startGrid(GRID_2);
+
+        // Trigger partitions eviction.
+        resetBaselineTopology();
+
+        awaitPartitionMapExchange(true, true, null);
+
+        grid(GRID_0).encryption().changeGroupKey(Collections.singleton(cacheName())).get();
+
+        long walSegment = nodes.get1().context().cache().context().wal().currentSegment();
+
+        for (long n = 0; n < walSegment; n++)
+            nodes.get1().context().encryption().onWalSegmentRemoved(n);
+
+        walSegment = nodes.get2().context().cache().context().wal().currentSegment();
+
+        for (long n = 0; n < walSegment; n++)
+            nodes.get2().context().encryption().onWalSegmentRemoved(n);
+
+        // Trigger partitions re-create.
+        stopGrid(GRID_2);
+
+        resetBaselineTopology();
+
+        stopAllGrids();
+
+        nodes = startTestGrids(false);
+
+//        awaitPartitionMapExchange(true, true, null);
+
+//        int grpId = CU.cacheId(cacheName());
+//
+//        nodes.get1().context().encryption().encryptionStateTask(grpId).get();
+//        nodes.get2().context().encryption().encryptionStateTask(grpId).get();
+//
+//        forceCheckpoint();
+//
+
+
+//        checkGroupKey(CU.cacheId(cacheName()), 1);
+
+//        walSegments.add(node1.context().cache().context().wal().currentSegment());
+
+//        stopAllGrids();
+//
+//        nodes = startTestGrids(false);
+//
+        checkEncryptedCaches(nodes.get1(), nodes.get2());
+
+        checkGroupKey(CU.cacheId(cacheName()), 1);
+
+//        checkGroupKey();
+//        checkPartitionFiles(node, true);
+//
+//        // Rewrite data.
+//        loadData(crd, keysCnt, 2);
+//
+//        // Force checkpoint on all nodes.
+//        forceCheckpoint();
+//
+//        // Check that all unecessary partition files have been deleted.
+//        checkPartitionFiles(node, false);
+//
+//        for (Ignite ignite : G.allGrids())
+//            checkData((IgniteEx)ignite, keysCnt, 2);
     }
 
     /**
