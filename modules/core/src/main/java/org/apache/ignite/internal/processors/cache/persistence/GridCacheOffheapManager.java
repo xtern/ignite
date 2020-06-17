@@ -44,6 +44,7 @@ import org.apache.ignite.internal.pagemem.PageIdUtils;
 import org.apache.ignite.internal.pagemem.PageMemory;
 import org.apache.ignite.internal.pagemem.PageSupport;
 import org.apache.ignite.internal.pagemem.store.IgnitePageStoreManager;
+import org.apache.ignite.internal.pagemem.store.PageStore;
 import org.apache.ignite.internal.pagemem.wal.IgniteWriteAheadLogManager;
 import org.apache.ignite.internal.pagemem.wal.WALIterator;
 import org.apache.ignite.internal.pagemem.wal.WALPointer;
@@ -74,6 +75,8 @@ import org.apache.ignite.internal.processors.cache.distributed.dht.topology.Grid
 import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtPartitionState;
 import org.apache.ignite.internal.processors.cache.mvcc.MvccSnapshot;
 import org.apache.ignite.internal.processors.cache.mvcc.MvccVersion;
+import org.apache.ignite.internal.processors.cache.persistence.file.FilePageStore;
+import org.apache.ignite.internal.processors.cache.persistence.file.FilePageStoreManager;
 import org.apache.ignite.internal.processors.cache.persistence.freelist.AbstractFreeList;
 import org.apache.ignite.internal.processors.cache.persistence.freelist.CacheFreeList;
 import org.apache.ignite.internal.processors.cache.persistence.freelist.SimpleDataRow;
@@ -89,6 +92,7 @@ import org.apache.ignite.internal.processors.cache.persistence.tree.io.PageMetaI
 import org.apache.ignite.internal.processors.cache.persistence.tree.io.PagePartitionCountersIO;
 import org.apache.ignite.internal.processors.cache.persistence.tree.io.PagePartitionMetaIO;
 import org.apache.ignite.internal.processors.cache.persistence.tree.io.PagePartitionMetaIOV2;
+import org.apache.ignite.internal.processors.cache.persistence.tree.io.PagePartitionMetaIOV3;
 import org.apache.ignite.internal.processors.cache.persistence.tree.reuse.ReuseList;
 import org.apache.ignite.internal.processors.cache.persistence.tree.reuse.ReuseListImpl;
 import org.apache.ignite.internal.processors.cache.persistence.tree.util.PageHandler;
@@ -111,6 +115,7 @@ import org.apache.ignite.internal.util.typedef.internal.CU;
 import org.apache.ignite.internal.util.typedef.internal.S;
 import org.apache.ignite.internal.util.typedef.internal.U;
 import org.apache.ignite.lang.IgniteBiTuple;
+import org.apache.ignite.spi.encryption.noop.NoopEncryptionSpi;
 import org.jetbrains.annotations.Nullable;
 
 import static org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtPartitionState.EVICTED;
@@ -140,6 +145,9 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
 
     /** Flag indicates that all group partitions have restored their state from page memory / disk. */
     private volatile boolean partitionStatesRestored;
+
+    /** */
+    private boolean encryptionDisabled;
 
     /** {@inheritDoc} */
     @Override protected void initPendingTree(GridCacheContext cctx) throws IgniteCheckedException {
@@ -189,6 +197,8 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
             ctx.kernalContext().failure(),
             diagnosticMgr.pageLockTracker().createPageLockTracker(indexStorageTreeName)
         );
+
+        encryptionDisabled = ctx.gridConfig().getEncryptionSpi() instanceof NoopEncryptionSpi;
 
         ((GridCacheDatabaseSharedManager)ctx.database()).addCheckpointListener(this);
     }
@@ -290,6 +300,8 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
                     }
                 });
         }
+
+        updateEncryptionStatus(grp.groupId(), PageIdAllocator.INDEX_PARTITION);
     }
 
     /**
@@ -335,8 +347,12 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
                     }
 
                     // Do not save meta for evicted partitions on next checkpoints.
-                    if (state == null)
+                    if (state == null) {
+                        if (log.isInfoEnabled())
+                            log.info("Skip savemeta [p=" + store.partId() + "]");
+
                         return;
+                    }
                 }
 
                 int grpId = grp.groupId();
@@ -401,6 +417,14 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
                         changed |= io.setUpdateCounter(partMetaPageAddr, updCntr);
                         changed |= io.setGlobalRemoveId(partMetaPageAddr, rmvId);
                         changed |= io.setSize(partMetaPageAddr, size);
+
+                        if (!encryptionDisabled && grp.persistenceEnabled() && !beforeDestroy) {
+                            FilePageStoreManager pageStoreMgr = ((FilePageStoreManager)this.ctx.pageStore());
+
+                            PageStore pageStore = pageStoreMgr.getStore(grpId, part.id());
+
+                            changed |= updateEncryptionStatusUnlocked(pageStore, partMetaPageAddr, io);
+                        }
 
                         if (state != null)
                             changed |= io.setPartitionState(partMetaPageAddr, (byte)state.ordinal());
@@ -804,6 +828,68 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
         }
     }
 
+    private boolean updateEncryptionStatus(int grpId, int partId) throws IgniteCheckedException {
+        boolean changed = false;
+
+        PageStore pageStore = ((FilePageStoreManager)this.ctx.pageStore()).getStore(grpId, partId);
+
+        int pagesCnt = pageStore.encryptedPagesCount();
+
+        if (pagesCnt == 0)
+            return false;
+
+        PageMemoryEx pageMem = (PageMemoryEx)grp.dataRegion().pageMemory();
+
+        long metaPageId = pageMem.metaPageId(grpId);
+        long metaPage = pageMem.acquirePage(grpId, metaPageId);
+
+        try {
+            long metaPageAddr = pageMem.writeLock(grpId, metaPageId, metaPage);
+
+            try {
+                PageMetaIO metaIo = PageMetaIO.getPageIO(metaPageAddr);
+
+                updateEncryptionStatusUnlocked(pageStore, metaPageAddr, metaIo);
+            }
+            finally {
+                pageMem.writeUnlock(grpId, metaPageId, metaPage, null, changed);
+            }
+        }
+        finally {
+            pageMem.releasePage(grpId, metaPageId, metaPage);
+        }
+
+        return changed;
+    }
+
+    private boolean updateEncryptionStatusUnlocked(PageStore pageStore, long pageAddr, PageMetaIO io) {
+        int pagesCnt = pageStore.encryptedPagesCount();
+        boolean changed = false;
+
+        if (pagesCnt != 0) {
+            int off = pageStore.encryptedPagesOffset();
+
+            if (log.isInfoEnabled())
+                log.info("(save meta) update status [off=" + off + ", cnt=" + pagesCnt + ", path=" + ((FilePageStore)pageStore).getFileAbsolutePath() + "]");
+
+            if (off == pagesCnt) {
+                off = 0;
+                pagesCnt = 0;
+
+                pageStore.encryptedPagesCount(0);
+                pageStore.encryptedPagesOffset(off);
+            }
+
+            // todo first time should save current pages count
+            changed |= io.setEncryptionPageIdx(pageAddr, off);
+            changed |= io.setEncryptionPagesCount(pageAddr, pagesCnt);
+
+            return changed;
+        }
+
+        return false;
+    }
+
     /**
      * @param part Local partition.
      * @param map Map to add values to.
@@ -876,6 +962,9 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
      */
     public void destroyPartitionStore(int grpId, int partId) throws IgniteCheckedException {
         PageMemoryEx pageMemory = (PageMemoryEx)grp.dataRegion().pageMemory();
+
+        if (grp.config().isEncryptionEnabled())
+            ctx.kernalContext().encryption().onDestroyPartitionStore(grpId, partId);
 
         int tag = pageMemory.invalidate(grp.groupId(), partId);
 
@@ -983,6 +1072,18 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
 
                     metastoreRoot = pageIO.getTreeRoot(pageAddr);
                     reuseListRoot = pageIO.getReuseListRoot(pageAddr);
+
+                    int encrPageCnt = pageIO.getEncryptionPagesCount(pageAddr);
+
+                    if (encrPageCnt > 0) {
+                        PageStore pageStore =
+                            ((FilePageStoreManager)ctx.pageStore()).getStore(grpId, PageIdAllocator.INDEX_PARTITION);
+
+                        pageStore.encryptedPagesCount(encrPageCnt);
+                        pageStore.encryptedPagesOffset(pageIO.getEncryptionPageIdx(pageAddr));
+                    }
+
+                    System.out.println("init meta " + grpId + " p=" + PageIdAllocator.INDEX_PARTITION + " pagesCnt=" + encrPageCnt);
 
                     assert reuseListRoot != 0L;
                 }
@@ -1876,6 +1977,18 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
 
                                 delegate0.restoreState(io.getSize(pageAddr), io.getUpdateCounter(pageAddr), cacheSizes, data);
 
+                                int encrPageCnt = io.getEncryptionPagesCount(pageAddr);
+
+                                if (encrPageCnt > 0) {
+                                    PageStore pageStore = ((FilePageStoreManager)ctx.pageStore()).getStore(grpId, partId);
+
+                                    pageStore.encryptedPagesCount(encrPageCnt);
+                                    pageStore.encryptedPagesOffset(io.getEncryptionPageIdx(pageAddr));
+                                }
+
+                                if (log.isInfoEnabled())
+                                    log.info("init meta " + grp.name() + " p=" + partId + " encrPageCnt=" + encrPageCnt);
+
                                 globalRemoveId().setIfGreater(io.getGlobalRemoveId(pageAddr));
                             }
                         }
@@ -1977,8 +2090,8 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
 
                         int pageVer = PagePartitionMetaIO.getVersion(pageAddr);
 
-                        if (pageVer < 2) {
-                            assert pageVer == 1;
+                        if (pageVer < 3) {
+                            assert pageVer == 1 || pageVer == 2;
 
                             if (log.isDebugEnabled())
                                 log.info("Upgrade partition meta page version: [part=" + partId +
@@ -1988,7 +2101,7 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
 
                             io = PagePartitionMetaIO.VERSIONS.latest();
 
-                            ((PagePartitionMetaIOV2)io).upgradePage(pageAddr);
+                            ((PagePartitionMetaIOV3)io).upgradePage(pageAddr);
 
                             pendingTreeRoot = pageMem.allocatePage(grpId, partId, PageMemory.FLAG_DATA);
                             partMetaStoreReuseListRoot = pageMem.allocatePage(grpId, partId, PageMemory.FLAG_DATA);

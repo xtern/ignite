@@ -230,7 +230,19 @@ public abstract class WALRecord {
         MASTER_KEY_CHANGE_RECORD(60, LOGICAL),
 
         /** Record that indicates that "corrupted" flag should be removed from tracking page. */
-        TRACKING_PAGE_REPAIR_DELTA(61, PHYSICAL);
+        TRACKING_PAGE_REPAIR_DELTA(61, PHYSICAL),
+
+        /** Encrypted WAL-record. */
+        ENCRYPTED_RECORD_V2(62, PHYSICAL),
+
+        /** Ecnrypted data record. */
+        ENCRYPTED_DATA_RECORD_V2(63, LOGICAL),
+
+        /** */
+        ENCRYPTION_STATUS_RECORD(64, MIXED),
+
+        // todo implement meta page recovery
+        META_PAGE_DELTA_RECORD(65, PHYSICAL);
 
         /** Index for serialization. Should be consistent throughout all versions. */
         private final int idx;
