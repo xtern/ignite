@@ -392,13 +392,19 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
 
         FilePageStoreManager mgr = (FilePageStoreManager)ctx.cache().context().pageStore();
 
-        for (GridDhtLocalPartition part : grp.topology().currentLocalPartitions()) {
-            if (part.state() == EVICTED) {
-                if (log.isDebugEnabled())
-                    log.debug("Skipping store offset for evicted partition [grp=" + grpId + ", p=" + part.id() + "]");
+        for (int p = 0; p < grp.affinity().partitions(); p++) {
+//        }
+            GridDhtLocalPartition part = grp.topology().localPartition(p);
 
+            if (part == null)
                 continue;
-            }
+//        for (GridDhtLocalPartition part : grp.topology().currentLocalPartitions()) {
+//            if (part.state() == EVICTED) {
+//                if (log.isDebugEnabled())
+//                    log.debug("Skipping store offset for evicted partition [grp=" + grpId + ", p=" + part.id() + "]");
+//
+//                continue;
+//            }
 
             PageStore pageStore = mgr.getStore(grpId, part.id());
 
@@ -926,6 +932,8 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
 
     public void onDestroyPartitionStore(int grpId, int partId) {
         try {
+            log.info(">xxx> On destroy partition store [grp=" + grpId + ", p=" + partId + "]");
+
             if (!encryptTask.cancel(grpId, partId))
                 return;
 

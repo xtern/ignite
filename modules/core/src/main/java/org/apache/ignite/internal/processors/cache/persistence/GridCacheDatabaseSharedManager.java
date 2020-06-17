@@ -2348,7 +2348,7 @@ public class GridCacheDatabaseSharedManager extends IgniteCacheDatabaseSharedMan
                     case PAGE_RECORD:
                         if (restoreBinaryState.needApplyBinaryUpdate()) {
 
-                            System.out.println(">>> need ApplyBinaryUpdate");
+//                            System.out.println(">>> need ApplyBinaryUpdate");
 
                             PageSnapshot pageSnapshot = (PageSnapshot)rec;
 
@@ -2356,7 +2356,7 @@ public class GridCacheDatabaseSharedManager extends IgniteCacheDatabaseSharedMan
                             // several repetitive restarts and the same pages may have changed several times.
                             int groupId = pageSnapshot.fullPageId().groupId();
 
-                            System.out.println(">>> apply " + pageSnapshot.fullPageId());
+//                            System.out.println(">>> apply " + pageSnapshot.fullPageId());
 
                             int partId = partId(pageSnapshot.fullPageId().pageId());
 

@@ -25,14 +25,13 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.LinkedBlockingQueue;
-import java.util.concurrent.ThreadPoolExecutor;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.BooleanSupplier;
 import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.IgniteLogger;
 import org.apache.ignite.IgniteSystemProperties;
+import org.apache.ignite.configuration.IgniteConfiguration;
 import org.apache.ignite.internal.GridKernalContext;
 import org.apache.ignite.internal.IgniteInternalFuture;
 import org.apache.ignite.internal.NodeStoppingException;
@@ -43,7 +42,6 @@ import org.apache.ignite.internal.pagemem.wal.IgniteWriteAheadLogManager;
 import org.apache.ignite.internal.pagemem.wal.record.PageSnapshot;
 import org.apache.ignite.internal.processors.cache.CacheGroupContext;
 import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtLocalPartition;
-import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtPartitionState;
 import org.apache.ignite.internal.processors.cache.persistence.DbCheckpointListener;
 import org.apache.ignite.internal.processors.cache.persistence.GridCacheDatabaseSharedManager;
 import org.apache.ignite.internal.processors.cache.persistence.file.FilePageStoreManager;
@@ -53,12 +51,14 @@ import org.apache.ignite.internal.util.future.GridFinishedFuture;
 import org.apache.ignite.internal.util.future.GridFutureAdapter;
 import org.apache.ignite.internal.util.typedef.X;
 import org.apache.ignite.internal.util.typedef.internal.U;
+import org.apache.ignite.thread.IgniteThreadPoolExecutor;
+import org.apache.ignite.thread.OomExceptionHandler;
 
 import static org.apache.ignite.IgniteSystemProperties.IGNITE_REENCRYPTION_BATCH_SIZE;
 import static org.apache.ignite.IgniteSystemProperties.IGNITE_REENCRYPTION_DISABLED;
 import static org.apache.ignite.IgniteSystemProperties.IGNITE_REENCRYPTION_THREAD_POOL_SIZE;
 import static org.apache.ignite.IgniteSystemProperties.IGNITE_REENCRYPTION_THROTTLE;
-import static org.apache.ignite.configuration.IgniteConfiguration.DFLT_THREAD_KEEP_ALIVE_TIME;
+import static org.apache.ignite.internal.managers.communication.GridIoPolicy.SYSTEM_POOL;
 import static org.apache.ignite.internal.pagemem.PageIdAllocator.INDEX_PARTITION;
 
 /**
@@ -97,14 +97,22 @@ public class CacheEncryptionTask implements DbCheckpointListener {
     private boolean stopped;
 
     /** */
-    private final ExecutorService execSvc = new ThreadPoolExecutor(threadsCnt, threadsCnt, DFLT_THREAD_KEEP_ALIVE_TIME,
-        TimeUnit.MILLISECONDS, new LinkedBlockingQueue<>());
+    private final ExecutorService execSvc;
 
     /**
      * @param ctx Grid kernal context.
      */
     public CacheEncryptionTask(GridKernalContext ctx) {
         this.ctx = ctx;
+
+        execSvc = new IgniteThreadPoolExecutor("reencrypt",
+            ctx.igniteInstanceName(),
+            threadsCnt,
+            threadsCnt,
+            IgniteConfiguration.DFLT_THREAD_KEEP_ALIVE_TIME,
+            new LinkedBlockingQueue<>(),
+            SYSTEM_POOL,
+            new OomExceptionHandler(ctx));
 
         log = ctx.log(getClass());
     }
@@ -337,6 +345,7 @@ public class CacheEncryptionTask implements DbCheckpointListener {
         public void initialize(CacheGroupContext grp) throws IgniteCheckedException {
             schedulePartition(INDEX_PARTITION);
 
+            // todo inactive parttitions also!
             for (GridDhtLocalPartition part : grp.topology().currentLocalPartitions())
                 schedulePartition(part.id());
 
@@ -349,24 +358,21 @@ public class CacheEncryptionTask implements DbCheckpointListener {
 
         private final int partId;
 
-        private final int cnt;
-
-        private final int off;
-
-        private final PageStore store;
-
         private final Object cancelMux = new Object();
 
         private final BooleanSupplier cpFinished;
+
+        private final PageStore store;
 
         public PageStoreScanner(int grpId, int partId, PageStore store, BooleanSupplier cpFinished) {
             this.grpId = grpId;
             this.partId = partId;
             this.store = store;
             this.cpFinished = cpFinished;
+//            this.store = store;
 
-            cnt = store.encryptedPagesCount();
-            off = store.encryptedPagesOffset();
+//            cnt = store.encryptedPagesCount();
+//            off = store.encryptedPagesOffset();
         }
 
         /** {@inheritDoc} */
@@ -390,20 +396,24 @@ public class CacheEncryptionTask implements DbCheckpointListener {
 
                 GridDhtLocalPartition part = null;
 
-                if (partId != INDEX_PARTITION) {
-                    part = grp.topology().localPartition(partId);
+//                private final int cnt;
+//
+//                private final int off;
 
-                    if (part == null || part.state() == GridDhtPartitionState.EVICTED) {
-                        if (log.isDebugEnabled())
-                            log.debug("Partition re-encryption skipped [grp=" + grpId + ", p=" + partId + "]");
-
-                        store.encryptedPagesOffset(cnt);
-
-                        onDone();
-
-                        return;
-                    }
-                }
+//                if (partId != INDEX_PARTITION) {
+//                    part = grp.topology().localPartition(partId);
+//
+//                    if (part == null || part.state() == GridDhtPartitionState.EVICTED) {
+//                        if (log.isDebugEnabled())
+//                            log.debug("Partition re-encryption skipped [grp=" + grpId + ", p=" + partId + "]");
+//
+//                        store.encryptedPagesOffset(cnt);
+//
+//                        onDone();
+//
+//                        return;
+//                    }
+//                }
 
                 PageMemoryEx pageMem = (PageMemoryEx)grp.dataRegion().pageMemory();
 
@@ -411,20 +421,25 @@ public class CacheEncryptionTask implements DbCheckpointListener {
 
                 int pageSize = pageMem.realPageSize(grpId);
 
-                int pageNum = off;
+                int pageNum = store.encryptedPagesOffset();
+
+                IgniteWriteAheadLogManager wal = ctx.cache().context().wal();
+
+                int cnt = store.encryptedPagesCount();
 
                 if (log.isDebugEnabled()) {
                     log.debug("Partition re-encryption is started [" +
                         "p=" + partId + ", remain=" + (cnt - pageNum) + ", total=" + cnt + "]");
                 }
 
-                IgniteWriteAheadLogManager wal = ctx.cache().context().wal();
-
                 while (pageNum < cnt) {
                     synchronized (cancelMux) {
                         ctx.cache().context().database().checkpointReadLock();
 
                         try {
+                            if (isDone() || store.encryptedPagesCount() == 0)
+                                break;
+
                             int end = Math.min(pageNum + batchSize, cnt);
 
                             do {
@@ -467,10 +482,10 @@ public class CacheEncryptionTask implements DbCheckpointListener {
 
                     store.encryptedPagesOffset(pageNum);
 
-                    if (isDone())
-                        break;
+//                    if (isDone())
+//                        break;
 
-                    if (timeoutBetweenBatches != 0)
+                    if (timeoutBetweenBatches != 0 && !isDone())
                         U.sleep(timeoutBetweenBatches);
                 }
 

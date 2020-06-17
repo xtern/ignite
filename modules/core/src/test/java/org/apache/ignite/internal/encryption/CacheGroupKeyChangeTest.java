@@ -113,9 +113,7 @@ public class CacheGroupKeyChangeTest extends AbstractEncryptionTest {
         return cfg.setAffinity(new RendezvousAffinityFunction(false, 8));
     }
 
-    /**
-     * @throws Exception If failed.
-     */
+    /** @throws Exception If failed. */
     @Test
     public void testRejectNodeJoinDuringRotation() throws Exception {
         T2<IgniteEx, IgniteEx> grids = startTestGrids(true);
@@ -145,9 +143,7 @@ public class CacheGroupKeyChangeTest extends AbstractEncryptionTest {
         checkEncryptedCaches(grids.get1(), grids.get2());
     }
 
-    /**
-     * @throws Exception If failed.
-     */
+    /** @throws Exception If failed. */
     @Test
     public void testRejectWhenNotAllBltNodesPresent() throws Exception {
         startTestGrids(true);
@@ -161,73 +157,58 @@ public class CacheGroupKeyChangeTest extends AbstractEncryptionTest {
         }, IgniteException.class, "Not all baseline nodes online [total=2, online=1]");
     }
 
-    /**
-     * @throws Exception If failed.
-     */
+    /** @throws Exception If failed. */
     @Test
     public void testNodeFailsBeforePrepare() throws Exception {
         checkNodeFailsDuringRotation(false, true, true);
     }
 
-    /**
-     * @throws Exception If failed.
-     */
+    /** @throws Exception If failed. */
     @Test
     public void testCrdFailsBeforePrepare() throws Exception {
         checkNodeFailsDuringRotation(true, true, true);
     }
 
-    /**
-     * @throws Exception If failed.
-     */
+    /** @throws Exception If failed. */
     @Test
     public void testNodeFailsBeforePerform() throws Exception {
         checkNodeFailsDuringRotation(false, false, true);
     }
 
-    /**
-     * @throws Exception If failed.
-     */
+    /** @throws Exception If failed. */
     @Test
     public void testCrdFailsBeforePerform() throws Exception {
         checkNodeFailsDuringRotation(true, false, true);
     }
 
-    /**
-     * @throws Exception If failed.
-     */
+    /** @throws Exception If failed. */
     @Test
     public void testNodeFailsAfterPrepare() throws Exception {
         checkNodeFailsDuringRotation(false, true, false);
     }
 
-    /**
-     * @throws Exception If failed.
-     */
+    /** @throws Exception If failed. */
     @Test
     public void testCrdFailsAfterPrepare() throws Exception {
         checkNodeFailsDuringRotation(true, true, false);
     }
 
-    /**
-     * @throws Exception If failed.
-     */
+    /** @throws Exception If failed. */
     @Test
     public void testNodeFailsAfterPerform() throws Exception {
         checkNodeFailsDuringRotation(false, false, false);
     }
 
-    /**
-     * @throws Exception If failed.
-     */
+    /** @throws Exception If failed. */
     @Test
     public void testCrdFailsAfterPerform() throws Exception {
         checkNodeFailsDuringRotation(true, false, false);
     }
 
     /**
-     * @param stopCrd {@code True} if stop coordinator.
-     * @param prepare {@code True} if stop on the prepare phase. {@code False} if stop on the perform phase.
+     * @param stopCrd {@code True} to stop coordinator.
+     * @param prepare {@code True} to stop on the prepare phase. {@code False} to stop on the perform phase.
+     * @param discoBlock  {@code True} to block discovery, {@code False} to block communication SPI.
      */
     private void checkNodeFailsDuringRotation(boolean stopCrd, boolean prepare, boolean discoBlock) throws Exception {
         CountDownLatch discoLatch = new CountDownLatch(discoBlock ? 1 : 0);
