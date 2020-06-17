@@ -306,8 +306,8 @@ public class CacheGroupReencryptionTest extends AbstractEncryptionTest {
      */
     @Test
     @WithSystemProperty(key = IGNITE_REENCRYPTION_THROTTLE, value = "50")
-    @WithSystemProperty(key = IGNITE_REENCRYPTION_BATCH_SIZE, value = "10")
-    @WithSystemProperty(key= IGNITE_REENCRYPTION_THREAD_POOL_SIZE, value = "1")
+    @WithSystemProperty(key = IGNITE_REENCRYPTION_BATCH_SIZE, value = "1")
+    @WithSystemProperty(key= IGNITE_REENCRYPTION_THREAD_POOL_SIZE, value = "3")
     public void testPartitionFileDestroy() throws Exception {
         backups = 1;
 

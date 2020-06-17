@@ -383,6 +383,9 @@ public class FilePageStore implements PageStore {
         lock.writeLock().lock();
 
         try {
+//            encPagesCnt = 0;
+//            encPagesOff = 0;
+
             this.tag = tag;
 
             fileIO.clear();

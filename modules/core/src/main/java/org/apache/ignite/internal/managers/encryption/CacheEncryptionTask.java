@@ -372,7 +372,8 @@ public class CacheEncryptionTask implements DbCheckpointListener {
         /** {@inheritDoc} */
         @Override public boolean cancel() throws IgniteCheckedException {
             synchronized (cancelMux) {
-                return onDone(null, null, true);
+                // todo cancel properly
+                return onDone();
             }
         }
 
