@@ -121,7 +121,7 @@ public class CacheGroupReencryptionTest extends AbstractEncryptionTest {
     public void testPhysicalRecovery() throws Exception {
         T2<IgniteEx, IgniteEx> nodes = startTestGrids(true);
 
-        createEncryptedCache(nodes.get1(), nodes.get2() ,cacheName(), null);
+        createEncryptedCache(nodes.get1(), nodes.get2(), cacheName(), null);
 
         IgniteInternalFuture fut = GridTestUtils.runAsync(() -> loadData(100_000));
 
@@ -133,7 +133,7 @@ public class CacheGroupReencryptionTest extends AbstractEncryptionTest {
 
         nodes.get1().encryption().changeGroupKey(Collections.singleton(cacheName())).get();
 
-        awaitEncryption(G.allGrids(), grpId).get();
+        awaitEncryption(G.allGrids(), grpId, MAX_AWAIT_MILLIS);
 
         fut.get();
 
@@ -151,18 +151,18 @@ public class CacheGroupReencryptionTest extends AbstractEncryptionTest {
 
         checkEncryptedCaches(nodes.get1(), nodes.get2());
 
-        checkGroupKey(grpId, 1);
+        checkGroupKey(grpId, 1, MAX_AWAIT_MILLIS);
     }
 
     /** @throws Exception If failed. */
     @Test
     @WithSystemProperty(key = IGNITE_REENCRYPTION_THROTTLE, value = "10")
     @WithSystemProperty(key = IGNITE_REENCRYPTION_BATCH_SIZE, value = "50")
-    @WithSystemProperty(key= IGNITE_REENCRYPTION_THREAD_POOL_SIZE, value = "1")
+    @WithSystemProperty(key = IGNITE_REENCRYPTION_THREAD_POOL_SIZE, value = "1")
     public void testPhysicalRecoveryWithUpdates() throws Exception {
         T2<IgniteEx, IgniteEx> nodes = startTestGrids(true);
 
-        createEncryptedCache(nodes.get1(), nodes.get2() ,cacheName(), null);
+        createEncryptedCache(nodes.get1(), nodes.get2(), cacheName(), null);
 
         loadData(50_000);
 
@@ -190,7 +190,7 @@ public class CacheGroupReencryptionTest extends AbstractEncryptionTest {
 
         failing.set(true);
 
-        awaitEncryption(G.allGrids(), grpId).get();
+        awaitEncryption(G.allGrids(), grpId, MAX_AWAIT_MILLIS);
 
         addFut.get();
         updateFut.cancel();
@@ -209,7 +209,7 @@ public class CacheGroupReencryptionTest extends AbstractEncryptionTest {
 
         checkEncryptedCaches(nodes.get1(), nodes.get2());
 
-        checkGroupKey(grpId, 1);
+        checkGroupKey(grpId, 1, MAX_AWAIT_MILLIS);
     }
 
     /** @throws Exception If failed. */
@@ -219,7 +219,7 @@ public class CacheGroupReencryptionTest extends AbstractEncryptionTest {
     public void testCacheStopDuringReencryption() throws Exception {
         T2<IgniteEx, IgniteEx> nodes = startTestGrids(true);
 
-        createEncryptedCache(nodes.get1(), nodes.get2() ,cacheName(), null);
+        createEncryptedCache(nodes.get1(), nodes.get2(), cacheName(), null);
 
         loadData(100_000);
 
@@ -229,9 +229,10 @@ public class CacheGroupReencryptionTest extends AbstractEncryptionTest {
 
         node0.encryption().changeGroupKey(Collections.singleton(cacheName())).get();
 
-        IgniteInternalFuture<Void> fut0 = node0.context().encryption().encryptionStateTask(CU.cacheId(cacheName()));
+        IgniteInternalFuture<Void> fut0 = node0.context().encryption().encryptionTask(CU.cacheId(cacheName()));
 
         assertFalse(fut0.isDone());
+        assertTrue(isReencryptionInProgress(node0, CU.cacheId(cacheName())));
 
         cache.destroy();
 
@@ -287,9 +288,7 @@ public class CacheGroupReencryptionTest extends AbstractEncryptionTest {
 
         startTestGrids(false);
 
-        awaitEncryption(G.allGrids(), grpId);
-
-        checkGroupKey(grpId, 1);
+        checkGroupKey(grpId, 1, MAX_AWAIT_MILLIS);
     }
 
     /**
@@ -299,8 +298,8 @@ public class CacheGroupReencryptionTest extends AbstractEncryptionTest {
      */
     @Test
     @WithSystemProperty(key = IGNITE_REENCRYPTION_THROTTLE, value = "50")
-    @WithSystemProperty(key = IGNITE_REENCRYPTION_BATCH_SIZE, value = "1")
-    @WithSystemProperty(key= IGNITE_REENCRYPTION_THREAD_POOL_SIZE, value = "3")
+    @WithSystemProperty(key = IGNITE_REENCRYPTION_BATCH_SIZE, value = "2")
+    @WithSystemProperty(key = IGNITE_REENCRYPTION_THREAD_POOL_SIZE, value = "2")
     public void testPartitionFileDestroy() throws Exception {
         backups = 1;
 
@@ -323,7 +322,7 @@ public class CacheGroupReencryptionTest extends AbstractEncryptionTest {
 
         forceCheckpoint();
 
-        checkGroupKey(CU.cacheId(cacheName()), 1);
+        checkGroupKey(CU.cacheId(cacheName()), 1, getTestTimeout());
     }
 
     /**
@@ -334,7 +333,7 @@ public class CacheGroupReencryptionTest extends AbstractEncryptionTest {
     @Test
     @WithSystemProperty(key = IGNITE_REENCRYPTION_THROTTLE, value = "50")
     @WithSystemProperty(key = IGNITE_REENCRYPTION_BATCH_SIZE, value = "50")
-    @WithSystemProperty(key= IGNITE_REENCRYPTION_THREAD_POOL_SIZE, value = "1")
+    @WithSystemProperty(key = IGNITE_REENCRYPTION_THREAD_POOL_SIZE, value = "1")
     public void testPartitionFileDestroyAndRecreate() throws Exception {
         backups = 1;
 
@@ -376,7 +375,7 @@ public class CacheGroupReencryptionTest extends AbstractEncryptionTest {
 
         checkEncryptedCaches(nodes.get1(), nodes.get2());
 
-        checkGroupKey(CU.cacheId(cacheName()), 1);
+        checkGroupKey(CU.cacheId(cacheName()), 1, MAX_AWAIT_MILLIS);
     }
 
     /**
@@ -403,7 +402,7 @@ public class CacheGroupReencryptionTest extends AbstractEncryptionTest {
 
         node0.encryption().changeGroupKey(Collections.singleton(cacheName())).get();
 
-        awaitEncryption(G.allGrids(), grpId).get();
+        awaitEncryption(G.allGrids(), grpId, MAX_AWAIT_MILLIS);
 
         assertEquals(1, node0.context().encryption().groupKey(grpId).id());
         assertEquals(1, node1.context().encryption().groupKey(grpId).id());
@@ -422,7 +421,7 @@ public class CacheGroupReencryptionTest extends AbstractEncryptionTest {
 
         startTestGrids(false);
 
-        checkGroupKey(grpId, 1);
+        checkGroupKey(grpId, 1, MAX_AWAIT_MILLIS);
     }
 
     /**
@@ -453,8 +452,8 @@ public class CacheGroupReencryptionTest extends AbstractEncryptionTest {
         node0 = nodes.get1();
         node1 = nodes.get2();
 
-        assertFalse(node0.context().encryption().encryptionStateTask(grpId).isDone());
-        assertFalse(node1.context().encryption().encryptionStateTask(grpId).isDone());
+        assertTrue(isReencryptionInProgress(node0, grpId));
+        assertTrue(isReencryptionInProgress(node1, grpId));
 
         stopAllGrids();
 
@@ -462,7 +461,7 @@ public class CacheGroupReencryptionTest extends AbstractEncryptionTest {
 
         startTestGrids(false);
 
-        awaitEncryption(G.allGrids(), grpId).get(MAX_AWAIT_MILLIS);
+        awaitEncryption(G.allGrids(), grpId, MAX_AWAIT_MILLIS);
     }
 
     /** @throws Exception If failed. */
@@ -489,7 +488,7 @@ public class CacheGroupReencryptionTest extends AbstractEncryptionTest {
 
         walSegments.add(node1.context().cache().context().wal().currentSegment());
 
-        awaitEncryption(G.allGrids(), grpId).get();
+        awaitEncryption(G.allGrids(), grpId, MAX_AWAIT_MILLIS);
 
         // Simulate that wal was removed.
         for (long segment : walSegments)
@@ -507,7 +506,7 @@ public class CacheGroupReencryptionTest extends AbstractEncryptionTest {
 
         checkEncryptedCaches(node0, node1);
 
-        checkGroupKey(grpId, 1);
+        checkGroupKey(grpId, 1, MAX_AWAIT_MILLIS);
     }
 
     /** */

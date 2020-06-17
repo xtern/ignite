@@ -106,7 +106,6 @@ import static org.apache.ignite.internal.IgniteFeatures.GROUP_KEY_CHANGE;
 import static org.apache.ignite.internal.IgniteFeatures.MASTER_KEY_CHANGE;
 import static org.apache.ignite.internal.managers.communication.GridIoPolicy.SYSTEM_POOL;
 import static org.apache.ignite.internal.pagemem.PageIdAllocator.INDEX_PARTITION;
-import static org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtPartitionState.EVICTED;
 import static org.apache.ignite.internal.util.distributed.DistributedProcess.DistributedProcessType.GROUP_KEY_CHANGE_FINISH;
 import static org.apache.ignite.internal.util.distributed.DistributedProcess.DistributedProcessType.GROUP_KEY_CHANGE_PREPARE;
 import static org.apache.ignite.internal.util.distributed.DistributedProcess.DistributedProcessType.MASTER_KEY_CHANGE_FINISH;
@@ -220,7 +219,7 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
     private volatile boolean recoveryMasterKeyName;
 
     /** Master key change future. Not {@code null} on request initiator. */
-    private KeyChangeFuture masterKeyChangeFut;
+    private MasterKeyChangeFuture masterKeyChangeFut;
 
     /** Pending master key request or {@code null} if there is no ongoing master key change process. */
     private volatile MasterKeyChangeRequest masterKeyChangeRequest;
@@ -248,7 +247,7 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
     // todo walidx -> <grp -> keyIds>
     private final Map<Long, Map<Integer, Set<Integer>>> walSegments = new ConcurrentHashMap<>();
 
-    // since we don;t have delta record - we should start re-encryption manually.
+    // todo since we don;t have delta record - we should start re-encryption manually.
     private volatile EncryptionStatusRecord rec;
 
     /**
@@ -510,7 +509,7 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
 
             //We can store keys to the disk, because we are on a coordinator.
             for (Map.Entry<Integer, byte[]> entry : newEncKeys.entrySet()) {
-                groupKey(entry.getKey(), entry.getValue());
+                groupKey(entry.getKey(), entry.getValue(), 0);
 
                 U.quietAndInfo(log, "Added encryption key on local join [grpId=" + entry.getKey() + "]");
             }
@@ -634,7 +633,7 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
                 U.quietAndInfo(log, "Store group key received from joining node [node=" +
                         data.joiningNodeId() + ", grp=" + entry.getKey() + "]");
 
-                groupKey(entry.getKey(), entry.getValue());
+                groupKey(entry.getKey(), entry.getValue(), 0);
             }
             else {
                 U.quietAndInfo(log, "Skip group key received from joining node. Already exists. [node=" +
@@ -754,15 +753,8 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
      *
      * @param grpId Group id.
      * @param encGrpKey Encrypted group key.
+     * @param keyId Key identifier.
      */
-    private void groupKey(int grpId, byte[] encGrpKey) {
-        try {
-            replaceKey(grpId, encGrpKey, 0, true);
-        } catch (IgniteCheckedException e) {
-            throw new IgniteException("Failed to write cache group encryption key [grpId=" + grpId + ']', e);
-        }
-    }
-
     private void groupKey(int grpId, byte[] encGrpKey, int keyId) {
         try {
             replaceKey(grpId, encGrpKey, keyId, true);
@@ -787,7 +779,6 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
                 grpEncKeys.put(grpId, keys);
             }
 
-            // todo key identifier
             keys.put(keyId, encKey);
 
             if (activateKey) {
@@ -858,7 +849,12 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
                     "The previous change was not completed."));
             }
 
-            masterKeyChangeFut = new KeyChangeFuture(request.requestId());
+            if (!groupKeyChangeProcess.finished()) {
+                return new IgniteFinishedFutureImpl<>(new IgniteException("Master key change was rejected. " +
+                    "Cache encryption key change is in progress."));
+            }
+
+            masterKeyChangeFut = new MasterKeyChangeFuture(request.requestId());
 
             prepareMKChangeProc.start(request.requestId(), request);
 
@@ -909,7 +905,7 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
             }
 
             if (!encryptionTask(grp.groupId()).isDone())
-                throw new IgniteException("Encryption is in progress [grp=" + cacheOrGroupName + "]");
+                throw new IgniteException("Reencryption is in progress [grp=" + cacheOrGroupName + "]");
 
             groups[n] = grp.groupId();
             keys[n] = getSpi().encryptKey(getSpi().create());
@@ -932,8 +928,6 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
 
     public void onDestroyPartitionStore(int grpId, int partId) {
         try {
-            log.info(">xxx> On destroy partition store [grp=" + grpId + ", p=" + partId + "]");
-
             if (!encryptTask.cancel(grpId, partId))
                 return;
 
@@ -945,34 +939,8 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
             pageStore.encryptedPagesCount(0);
         }
         catch (IgniteCheckedException e) {
-            log.warning("Unable to cancel re-encryption [grpId=" + grpId + ", partId=" + partId + "]");
+            log.error("Unable to cancel re-encryption [grpId=" + grpId + ", partId=" + partId + "]", e);
         }
-    }
-
-    /**
-     * @param grpId Cache group ID.
-     * @param partId Partition ID.
-     * @return Encryption status.
-     */
-    public boolean onPartitionClearing(int grpId, int partId) {
-//        try {
-//            if (!encryptTask.cancel(grpId, partId))
-//                return false;
-//
-//            FilePageStoreManager mgr = (FilePageStoreManager)ctx.cache().context().pageStore();
-//
-//            PageStore pageStore = mgr.getStore(grpId, partId);
-//
-//            pageStore.encryptedPagesOffset(0);
-//            pageStore.encryptedPagesCount(0);
-//
-//            return true;
-//        }
-//        catch (IgniteCheckedException e) {
-//            log.warning("Unable to cancel re-encryption [grpId=" + grpId + ", partId=" + partId + "]");
-//        }
-
-        return false;
     }
 
     /**
@@ -980,12 +948,6 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
      * @return Encryption status.
      */
     public IgniteInternalFuture<Void> encryptionTask(Integer grpId) {
-        // todo
-        return encryptTask.encryptionCpFuture(grpId);
-    }
-
-    public IgniteInternalFuture<Void> encryptionStateTask(Integer grpId) {
-        // todo
         return encryptTask.encryptionFuture(grpId);
     }
 
@@ -1034,7 +996,7 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
         if (encKey == null || ctx.clientNode())
             return;
 
-        groupKey(grpId, encKey);
+        groupKey(grpId, encKey, 0);
     }
 
     /**
@@ -1208,7 +1170,7 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
         synchronized (metaStorageMux) {
             this.metaStorage = metaStorage;
 
-            applyEncryptionStatus();
+            applyEncryptionStatusIfExists();
 
             writeToMetaStoreEnabled = true;
 
@@ -1256,8 +1218,6 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
     }
 
     private void cleanupKeys(int grpId) throws IgniteCheckedException {
-        log.info("try cleanup keys");
-
         int activeKey = grpEncActiveKeys.get(grpId);
 
         Set<Integer> rmvKeys = new HashSet<>(grpEncKeys.get(grpId).keySet());
@@ -1289,9 +1249,6 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
         } finally {
             ctx.cache().context().database().checkpointReadUnlock();
         }
-
-        if (log.isInfoEnabled())
-            log.info("Cache group reencryption is finished [grp=" + grpId + "]");
     }
 
     /** {@inheritDoc} */
@@ -1611,7 +1568,8 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
         this.rec = rec;
     }
 
-    private void applyEncryptionStatus() throws IgniteCheckedException {
+    // todo
+    private void applyEncryptionStatusIfExists() throws IgniteCheckedException {
         if (rec == null)
             return;
 
@@ -1653,6 +1611,11 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
         if (masterKeyChangeRequest != null) {
             return new GridFinishedFuture<>(new IgniteException("Master key change was rejected. " +
                 "The previous change was not completed."));
+        }
+
+        if (groupKeyChangeProcess.inProgress()) {
+            return new GridFinishedFuture<>(new IgniteException("Master key change was rejected. " +
+                "Cache encryption key change is in progress."));
         }
 
         masterKeyChangeRequest = req;
@@ -1749,7 +1712,7 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
         }
     }
 
-    private boolean completeKeyChangeFuture(UUID reqId, Map<UUID, Exception> err, KeyChangeFuture fut) {
+    private boolean completeKeyChangeFuture(UUID reqId, Map<UUID, Exception> err, MasterKeyChangeFuture fut) {
         boolean isInitiator = fut != null && fut.id().equals(reqId);
 
         if (!isInitiator || fut.isDone())
@@ -1903,20 +1866,35 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
      * Two phase distributed process, that performs encryption group key change.
      */
     private class GroupKeyChangeProcess {
-        private GroupKeyChangeFuture prepareGroupKeyChangeFut;
+        /** Group key change future. */
+        private GroupKeyChangeFuture grpKeyChangeFut;
 
         /** */
-        private volatile ChangeCacheEncryptionRequest groupKeyChangeRequest;
+        private volatile ChangeCacheEncryptionRequest grpKeyChangeReq;
 
+        /** Cache group encyption key change prepare phase. */
         DistributedProcess<ChangeCacheEncryptionRequest, EmptyResult> prepareGKChangeProc =
             new DistributedProcess<>(ctx, GROUP_KEY_CHANGE_PREPARE, this::prepare, this::finishPrepare,
                 (id, req) -> new InitMessage<>(id, GROUP_KEY_CHANGE_PREPARE, req), true);
 
+        /** Cache group encyption key change perform phase. */
         DistributedProcess<ChangeCacheEncryptionRequest, EmptyResult> performGKChangeProc =
             new DistributedProcess<>(ctx, GROUP_KEY_CHANGE_FINISH, this::perform, this::finishPerform);
 
-        private boolean inProgress() {
-            return groupKeyChangeRequest != null;
+        /**
+         * @return {@code True} if operation is still in progress.
+         */
+        public boolean inProgress() {
+            return grpKeyChangeReq != null;
+        }
+
+        /**
+         * @return {@code True} if operation is not finished.
+         */
+        public boolean finished() {
+            GroupKeyChangeFuture fut = grpKeyChangeFut;
+
+            return fut == null || fut.isDone();
         }
 
         /**
@@ -1942,7 +1920,8 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
             if (ptr != null) {
                 ctx.cache().context().wal().flush(ptr, false);
 
-                log.info("Added record for recovery [walIdx=" + ((FileWALPointer)ptr).index());
+                if (log.isDebugEnabled())
+                    log.debug("Added record for recovery [walIdx=" + ((FileWALPointer)ptr).index() + "]");
             }
 
             for (int grpId : groups) {
@@ -1979,32 +1958,42 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
                     "Node is stopping."));
             }
 
-            if (prepareGroupKeyChangeFut != null && !prepareGroupKeyChangeFut.isDone()) {
+            if (!finished()) {
                 return new IgniteFinishedFutureImpl<>(new IgniteException("Group key change was rejected. " +
                     "The previous change was not completed."));
             }
 
-            prepareGroupKeyChangeFut = new GroupKeyChangeFuture(req);
+            if (masterKeyChangeFut != null && !masterKeyChangeFut.isDone()) {
+                return new IgniteFinishedFutureImpl<>(new IgniteException("Group key change was rejected. " +
+                    "The previous master key change was not completed."));
+            }
+
+            grpKeyChangeFut = new GroupKeyChangeFuture(req);
 
             // todo
             prepareGKChangeProc.start(req.requestId(), req);
 
-            return new IgniteFutureImpl<>(prepareGroupKeyChangeFut);
+            return new IgniteFutureImpl<>(grpKeyChangeFut);
         }
 
         /**
-         * Prepares master key change. Checks master key consistency.
+         * Validates existing keys and adds new encryption key as inactive.
          *
          * @param req Request.
          * @return Result future.
          */
         private IgniteInternalFuture<EmptyResult> prepare(ChangeCacheEncryptionRequest req) {
-            if (groupKeyChangeRequest != null) {
+            if (inProgress()) {
                 return new GridFinishedFuture<>(new IgniteException("Group key change was rejected. " +
                     "The previous change was not completed."));
             }
 
-            groupKeyChangeRequest = req;
+            if (isMasterKeyChangeInProgress()) {
+                return new GridFinishedFuture<>(new IgniteException("Group key change was rejected. " +
+                    "The previous master key change was not completed."));
+            }
+
+            grpKeyChangeReq = req;
 
             if (ctx.clientNode())
                 return new GridFinishedFuture<>();
@@ -2013,11 +2002,10 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
                 int n = 0;
 
                 for (int grpId : req.groups()) {
-                    // todo if we don't preventing continious reencryption - cancel them
                     if (!encryptionTask(grpId).isDone())
-                        return new GridFinishedFuture<>(new IgniteException("Encryption in progress [grpId=" + grpId + "]"));
+                        return new GridFinishedFuture<>(
+                            new IgniteException("Reencryption is in progress [grpId=" + grpId + "]"));
 
-                    // todo max key
                     int newKeyId = req.keyIdentifiers()[n] & 0xff;
 
                     if (grpEncKeys.get(grpId).containsKey(newKeyId) && grpEncActiveKeys.get(grpId) >= newKeyId) {
@@ -2049,7 +2037,7 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
         }
 
         /**
-         * Starts master key change process if there are no errors.
+         * Starts group key change if there are no errors.
          *
          * @param id Request id.
          * @param res Results.
@@ -2057,25 +2045,31 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
          */
         private void finishPrepare(UUID id, Map<UUID, EmptyResult> res, Map<UUID, Exception> err) {
             if (!err.isEmpty()) {
-                if (groupKeyChangeRequest != null && groupKeyChangeRequest.requestId().equals(id))
-                    groupKeyChangeRequest = null;
+                if (grpKeyChangeReq != null && grpKeyChangeReq.requestId().equals(id))
+                    grpKeyChangeReq = null;
 
                 synchronized (opsMux) {
-                    completeKeyChangeFuture(id, err, prepareGroupKeyChangeFut);
+                    completeKeyChangeFuture(id, err, grpKeyChangeFut);
 
-                    prepareGroupKeyChangeFut = null;
+                    grpKeyChangeFut = null;
                 }
             }
             else if (isCoordinator())
-                performGKChangeProc.start(id, groupKeyChangeRequest);
+                performGKChangeProc.start(id, grpKeyChangeReq);
         }
 
+        /**
+         * Sets new encrpytion key as active (for writing) and starts background re-encryption.
+         *
+         * @param req Request.
+         * @return Result future.
+         */
         private IgniteInternalFuture<EmptyResult> perform(ChangeCacheEncryptionRequest req) {
-            if (groupKeyChangeRequest == null || !groupKeyChangeRequest.equals(req))
+            if (grpKeyChangeReq == null || !grpKeyChangeReq.equals(req))
                 return new GridFinishedFuture<>(new IgniteException("Unknown group key change was rejected."));
 
             if (!ctx.state().clusterState().active()) {
-                groupKeyChangeRequest = null;
+                grpKeyChangeReq = null;
 
                 return new GridFinishedFuture<>(new IgniteException("Group key change was rejected. " +
                     "The cluster is inactive."));
@@ -2088,7 +2082,7 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
                     doChangeGroupKeys(req.groups());
                 }
 
-                groupKeyChangeRequest = null;
+                grpKeyChangeReq = null;
 
                 return new GridFinishedFuture<>(new EmptyResult());
             } catch (IgniteCheckedException e) {
@@ -2097,32 +2091,18 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
         }
 
         /**
-         * @param groups Cache group identifiers.
-         * @param keys Cache group encryption keys.
-         * @param keyIds Cache group encryption key identifiers.
-         * @param active {@code True} to set new key for writing.
+         * Finishes cache encryption key rotation.
+         *
+         * @param id Request id.
+         * @param res Results.
+         * @param err Errors.
          */
-        void addNewKeys(int[] groups, byte[][] keys, byte[] keyIds, boolean active) throws IgniteCheckedException {
-            for (int i = 0; i < groups.length; i++) {
-                int grpId = groups[i];
-
-                int keyId = keyIds[i] & 0xff;
-
-                replaceKey(grpId, keys[i], keyId, active);
-
-                if (log.isInfoEnabled()) {
-                    log.info("New encryption key for cache group added [" +
-                        "grp=" + grpId + ", id=" + keyId + ", active=" + active + "]");
-                }
-            }
-        }
-
         private void finishPerform(UUID id, Map<UUID, EmptyResult> res, Map<UUID, Exception> err) {
             synchronized (opsMux) {
-                GroupKeyChangeFuture fut = prepareGroupKeyChangeFut;
+                GroupKeyChangeFuture fut = grpKeyChangeFut;
 
                 if (completeKeyChangeFuture(id, err, fut)) {
-                    prepareGroupKeyChangeFut = null;
+                    grpKeyChangeFut = null;
 
                     ChangeCacheEncryptionRequest req = fut.request();
 
@@ -2146,6 +2126,27 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
                             ", grps=" + Arrays.toString(req.groups()) +
                             ", keyIds=" + Arrays.toString(keyIds) + "]");
                     }
+                }
+            }
+        }
+
+        /**
+         * @param groups Cache group identifiers.
+         * @param keys Cache group encryption keys.
+         * @param keyIds Cache group encryption key identifiers.
+         * @param active {@code True} to set new key for writing.
+         */
+        void addNewKeys(int[] groups, byte[][] keys, byte[] keyIds, boolean active) throws IgniteCheckedException {
+            for (int i = 0; i < groups.length; i++) {
+                int grpId = groups[i];
+
+                int keyId = keyIds[i] & 0xff;
+
+                replaceKey(grpId, keys[i], keyId, active);
+
+                if (log.isInfoEnabled()) {
+                    log.info("New encryption key for cache group added [" +
+                        "grp=" + grpId + ", id=" + keyId + ", active=" + active + "]");
                 }
             }
         }
@@ -2245,6 +2246,7 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
             if (F.isEmpty(knownKeysWithIds))
                 return;
 
+            // For backward compatibilty store key identifiers into separate field.
             knownKeys = U.newHashMap(knownKeysWithIds.size());
             knownKeyIds = U.newHashMap(knownKeysWithIds.size());
 
@@ -2263,6 +2265,7 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
         /** Master key digest. */
         byte[] masterKeyDigest;
 
+        /** Identifiers for known keys. */
         Map<Integer, Byte> knownKeyIds;
     }
 
@@ -2324,12 +2327,12 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
     }
 
     /** Master key change future. */
-    private static class KeyChangeFuture extends GridFutureAdapter<Void> {
+    private static class MasterKeyChangeFuture extends GridFutureAdapter<Void> {
         /** Request ID. */
         private final UUID id;
 
         /** @param id Request ID. */
-        private KeyChangeFuture(UUID id) {
+        private MasterKeyChangeFuture(UUID id) {
             this.id = id;
         }
 
@@ -2340,13 +2343,18 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
 
         /** {@inheritDoc} */
         @Override public String toString() {
-            return S.toString(KeyChangeFuture.class, this);
+            return S.toString(MasterKeyChangeFuture.class, this);
         }
     }
 
-    private static class GroupKeyChangeFuture extends KeyChangeFuture {
+    /** Group key change future. */
+    private static class GroupKeyChangeFuture extends MasterKeyChangeFuture {
+        /** Request. */
         private final ChangeCacheEncryptionRequest req;
 
+        /**
+         * @param req Request.
+         */
         private GroupKeyChangeFuture(ChangeCacheEncryptionRequest req) {
             super(req.requestId());
 

@@ -961,7 +961,8 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
     public void destroyPartitionStore(int grpId, int partId) throws IgniteCheckedException {
         PageMemoryEx pageMemory = (PageMemoryEx)grp.dataRegion().pageMemory();
 
-        ctx.kernalContext().encryption().onDestroyPartitionStore(grpId, partId);
+        if (grp.config().isEncryptionEnabled())
+            ctx.kernalContext().encryption().onDestroyPartitionStore(grpId, partId);
 
         int tag = pageMemory.invalidate(grp.groupId(), partId);
 

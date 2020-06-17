@@ -23,6 +23,7 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
+import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.security.KeyStore;
 import java.util.HashSet;
@@ -36,6 +37,7 @@ import org.apache.ignite.Ignite;
 import org.apache.ignite.IgniteCache;
 import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.IgniteDataStreamer;
+import org.apache.ignite.IgniteException;
 import org.apache.ignite.configuration.CacheConfiguration;
 import org.apache.ignite.configuration.DataRegionConfiguration;
 import org.apache.ignite.configuration.DataStorageConfiguration;
@@ -47,9 +49,9 @@ import org.apache.ignite.internal.managers.encryption.GridEncryptionManager;
 import org.apache.ignite.internal.managers.encryption.GroupKey;
 import org.apache.ignite.internal.pagemem.PageIdAllocator;
 import org.apache.ignite.internal.pagemem.PageIdUtils;
+import org.apache.ignite.internal.pagemem.store.PageStore;
 import org.apache.ignite.internal.processors.cache.CacheGroupContext;
 import org.apache.ignite.internal.processors.cache.IgniteInternalCache;
-import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtLocalPartition;
 import org.apache.ignite.internal.processors.cache.persistence.file.FilePageStore;
 import org.apache.ignite.internal.processors.cache.persistence.file.FilePageStoreManager;
 import org.apache.ignite.internal.util.IgniteUtils;
@@ -320,109 +322,120 @@ public abstract class AbstractEncryptionTest extends GridCommonAbstractTest {
         info("Load data finished");
     }
 
-    protected void validateKeyIdentifier(CacheGroupContext grp, int keyId) throws IgniteCheckedException, IOException {
-        int grpId = grp.groupId();
+    protected void checkGroupKey(int grpId, int keyId, long timeout) throws IgniteCheckedException, IOException {
+        awaitEncryption(G.allGrids(), grpId, timeout);
 
-        int realPageSize = grp.dataRegion().pageMemory().realPageSize(grpId);
-
-        int encryptionBlockSize = grp.shared().kernalContext().config().getEncryptionSpi().blockSize();
-
-        List<Integer> parts = IntStream.range(0, grp.shared().affinity().affinity(grpId).partitions())
-            .boxed().collect(Collectors.toList());
-
-        parts.add(INDEX_PARTITION);
-
-        for (int p : parts) {
-            FilePageStore pageStore =
-                (FilePageStore)((FilePageStoreManager)grp.shared().pageStore()).getStore(grpId, p);
-
-            if (!pageStore.exists())
-                continue;
-
-            GridDhtLocalPartition part = p == INDEX_PARTITION ? null : grp.topology().localPartition(p);
-
-            if (part == null)
-                System.out.println(">>> part is null [p=" + p + "]");
-            else
-                System.out.println(">>> validate partition [p=" + p + ", state=" + part.state() + "]");
-
-            assertEquals("p=" + p, pageStore.encryptedPagesCount(), pageStore.encryptedPagesOffset());
-
-            assertEquals(0, pageStore.encryptedPagesCount());
-            assertEquals(0, pageStore.encryptedPagesOffset());
-
-            long metaPageId = PageIdUtils.pageId(p, PageIdAllocator.FLAG_DATA, 0);
-
-            scanFileStore(pageStore, metaPageId, realPageSize, encryptionBlockSize, keyId);
-        }
-    }
-
-    private void scanFileStore(
-        FilePageStore pageStore,
-        long startPageId,
-        int realPageSize,
-        int blockSize,
-        int expKeyIdentifier
-    ) throws IOException {
-        int pagesCnt = pageStore.pages();
-        int pageSize = pageStore.getPageSize();
-
-        ByteBuffer pageBuf = ByteBuffer.allocate(pageSize);
-
-        try (FileChannel ch = FileChannel.open( new File(pageStore.getFileAbsolutePath()).toPath(), StandardOpenOption.READ)) {
-            for (int n = 0; n < pagesCnt; n++) {
-                long pageId = startPageId + n;
-
-                long pageOffset = pageStore.pageOffset(pageId);
-
-                pageBuf.position(0);
-
-                ch.position(pageOffset);
-                ch.read(pageBuf);
-
-                // todo ENSURE that page is not empty!!!
-                pageBuf.position(realPageSize + blockSize);
-
-                int crc = pageBuf.getInt();
-
-                if (crc != 0)
-                    assertEquals(pageStore.getFileAbsolutePath() + " page = " + n + ", crc=" + crc, expKeyIdentifier, pageBuf.get() & 0xff);
-            }
-        }
-    }
-
-    protected void checkGroupKey(int grpId, int keyId) throws IgniteCheckedException, IOException {
         for (Ignite g : G.allGrids()) {
             IgniteEx grid = (IgniteEx)g;
 
             if (grid.context().clientNode())
                 continue;
 
-            GridEncryptionManager encrMgr = grid.context().encryption();
+            GridEncryptionManager encryption = grid.context().encryption();
 
-            assertEquals(grid.localNode().id().toString(), (byte)keyId, encrMgr.groupKey(grpId).id());
+            assertEquals(grid.localNode().id().toString(), (byte)keyId, encryption.groupKey(grpId).id());
 
-            encrMgr.encryptionStateTask(grpId).get();
-
-            // todo check after restart without checkpoint.
             forceCheckpoint(g);
 
-            encrMgr.encryptionTask(grpId).get();
+            encryption.encryptionTask(grpId).get();
 
             info("Validating page store [node=" + g.cluster().localNode().id() + ", grp=" + grpId + "]");
 
-            validateKeyIdentifier(grid.context().cache().cacheGroup(grpId), keyId);
+            CacheGroupContext grp = grid.context().cache().cacheGroup(grpId);
+
+            List<Integer> parts = IntStream.range(0, grp.shared().affinity().affinity(grpId).partitions())
+                .boxed().collect(Collectors.toList());
+
+            parts.add(INDEX_PARTITION);
+
+            int realPageSize = grp.dataRegion().pageMemory().realPageSize(grpId);
+            int encryptionBlockSize = grp.shared().kernalContext().config().getEncryptionSpi().blockSize();
+
+            for (int p : parts) {
+                FilePageStore pageStore =
+                    (FilePageStore)((FilePageStoreManager)grp.shared().pageStore()).getStore(grpId, p);
+
+                if (!pageStore.exists())
+                    continue;
+
+                String msg = String.format("p=%d, off=%d, total=%d",
+                    p, pageStore.encryptedPagesOffset(), pageStore.encryptedPagesCount());
+
+                assertEquals(msg, 0, pageStore.encryptedPagesCount());
+                assertEquals(msg, 0, pageStore.encryptedPagesOffset());
+
+                long startPageId = PageIdUtils.pageId(p, PageIdAllocator.FLAG_DATA, 0);
+
+                int pagesCnt = pageStore.pages();
+                int pageSize = pageStore.getPageSize();
+
+                ByteBuffer pageBuf = ByteBuffer.allocate(pageSize);
+
+                Path path = new File(pageStore.getFileAbsolutePath()).toPath();
+
+                try (FileChannel ch = FileChannel.open(path, StandardOpenOption.READ)) {
+                    for (int n = 0; n < pagesCnt; n++) {
+                        long pageId = startPageId + n;
+                        long pageOffset = pageStore.pageOffset(pageId);
+
+                        pageBuf.position(0);
+
+                        ch.position(pageOffset);
+                        ch.read(pageBuf);
+
+                        // todo ensure that page is not empty?
+                        pageBuf.position(realPageSize + encryptionBlockSize);
+
+                        // If crc present
+                        if (pageBuf.getInt() != 0) {
+                            msg = String.format("Path=%s, page=%d", pageStore.getFileAbsolutePath(), n);
+
+                            assertEquals(msg, keyId, pageBuf.get() & 0xff);
+                        }
+                    }
+                }
+            }
         }
     }
 
-    protected IgniteInternalFuture awaitEncryption(List<Ignite> grids, int grpId) {
-        GridCompoundFuture fut = new GridCompoundFuture();
+    protected void awaitEncryption(List<Ignite> grids, int grpId, long timeout) throws IgniteCheckedException {
+        GridCompoundFuture<Void, ?> fut = new GridCompoundFuture<>();
 
-        for (Ignite grid : grids)
-            fut.add(((IgniteEx)grid).context().encryption().encryptionStateTask(grpId));
+        for (Ignite node : grids) {
+            IgniteEx grid = (IgniteEx)node;
+
+            if (grid.context().clientNode())
+                continue;
+
+            IgniteInternalFuture<Void> fut0 = GridTestUtils.runAsync(() -> {
+                boolean success =
+                    GridTestUtils.waitForCondition(() -> !isReencryptionInProgress(grid, grpId), timeout);
+
+                assertTrue(success);
+
+                return null;
+            });
+
+            fut.add(fut0);
+        }
 
         fut.markInitialized();
 
-        return fut;
+        fut.get(timeout);
+    }
+
+    protected boolean isReencryptionInProgress(IgniteEx node, int grpId) {
+        FilePageStoreManager pageStoreMgr = ((FilePageStoreManager)node.context().cache().context().pageStore());
+
+        try {
+            for (PageStore pageStore : pageStoreMgr.getStores(grpId)) {
+                if (pageStore.encryptedPagesOffset() != pageStore.encryptedPagesCount())
+                    return true;
+            }
+        } catch (IgniteCheckedException e) {
+            throw new IgniteException(e);
+        }
+
+        return false;
     }
 }

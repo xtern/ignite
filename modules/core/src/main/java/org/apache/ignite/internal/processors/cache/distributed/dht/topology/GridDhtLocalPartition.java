@@ -717,13 +717,9 @@ public class GridDhtLocalPartition extends GridCacheConcurrentMapImpl implements
         if (!reinitialized)
             return;
 
-        if (grp.persistenceEnabled()) {
-            // Reset the initial update counter value to prevent historical rebalancing on this partition.
+        // Reset the initial update counter value to prevent historical rebalancing on this partition.
+        if (grp.persistenceEnabled())
             store.resetInitialUpdateCounter();
-
-            if (grp.config().isEncryptionEnabled())
-                ctx.kernalContext().encryption().onPartitionClearing(grp.groupId(), id);
-        }
 
         // Make sure current rebalance future is finished before start clearing
         // to avoid clearing currently rebalancing partition (except "initial" dummy rebalance).
@@ -927,8 +923,6 @@ public class GridDhtLocalPartition extends GridCacheConcurrentMapImpl implements
     public boolean tryClear(EvictionContext evictionCtx) throws NodeStoppingException {
         if (clearFuture.isDone())
             return true;
-
-        log.info("Evicting [p=" + id + "]");
 
         long state = this.state.get();
 
