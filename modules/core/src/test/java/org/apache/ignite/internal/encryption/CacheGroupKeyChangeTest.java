@@ -24,6 +24,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.apache.ignite.Ignite;
+import org.apache.ignite.IgniteCache;
 import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.IgniteDataStreamer;
 import org.apache.ignite.IgniteException;
@@ -62,9 +63,13 @@ import static org.apache.ignite.testframework.GridTestUtils.runAsync;
  *
  */
 public class CacheGroupKeyChangeTest extends AbstractEncryptionTest {
+    /** Timeout. */
     private static final long MAX_AWAIT_MILLIS = 15_000;
+
+    /** */
     private static final String GRID_2 = "grid-2";
 
+    /** Discovery hook for distributed process. */
     private DiscoveryHook discoveryHook;
 
     /** {@inheritDoc} */
@@ -108,7 +113,9 @@ public class CacheGroupKeyChangeTest extends AbstractEncryptionTest {
         return cfg.setAffinity(new RendezvousAffinityFunction(false, 8));
     }
 
-    /** @throws Exception If failed. */
+    /**
+     * @throws Exception If failed.
+     */
     @Test
     public void testRejectNodeJoinDuringRotation() throws Exception {
         T2<IgniteEx, IgniteEx> grids = startTestGrids(true);
@@ -138,6 +145,9 @@ public class CacheGroupKeyChangeTest extends AbstractEncryptionTest {
         checkEncryptedCaches(grids.get1(), grids.get2());
     }
 
+    /**
+     * @throws Exception If failed.
+     */
     @Test
     public void testRejectWhenNotAllBltNodesPresent() throws Exception {
         startTestGrids(true);
@@ -151,41 +161,65 @@ public class CacheGroupKeyChangeTest extends AbstractEncryptionTest {
         }, IgniteException.class, "Not all baseline nodes online [total=2, online=1]");
     }
 
+    /**
+     * @throws Exception If failed.
+     */
     @Test
     public void testNodeFailsBeforePrepare() throws Exception {
         checkNodeFailsDuringRotation(false, true, true);
     }
 
+    /**
+     * @throws Exception If failed.
+     */
     @Test
     public void testCrdFailsBeforePrepare() throws Exception {
         checkNodeFailsDuringRotation(true, true, true);
     }
 
+    /**
+     * @throws Exception If failed.
+     */
     @Test
     public void testNodeFailsBeforePerform() throws Exception {
         checkNodeFailsDuringRotation(false, false, true);
     }
 
+    /**
+     * @throws Exception If failed.
+     */
     @Test
     public void testCrdFailsBeforePerform() throws Exception {
         checkNodeFailsDuringRotation(true, false, true);
     }
 
+    /**
+     * @throws Exception If failed.
+     */
     @Test
     public void testNodeFailsAfterPrepare() throws Exception {
         checkNodeFailsDuringRotation(false, true, false);
     }
 
+    /**
+     * @throws Exception If failed.
+     */
     @Test
     public void testCrdFailsAfterPrepare() throws Exception {
         checkNodeFailsDuringRotation(true, true, false);
     }
 
+    /**
+     * @throws Exception If failed.
+     */
     @Test
     public void testNodeFailsAfterPerform() throws Exception {
         checkNodeFailsDuringRotation(false, false, false);
     }
 
+    /**
+     * @throws Exception If failed.
+     */
     @Test
     public void testCrdFailsAfterPerform() throws Exception {
         checkNodeFailsDuringRotation(true, false, false);
@@ -311,6 +345,11 @@ public class CacheGroupKeyChangeTest extends AbstractEncryptionTest {
         }
     }
 
+    /**
+     * Ensures that we can rotate the key more than 255 times.
+     *
+     * @throws Exception If failed.
+     */
     @Test
     public void testKeyIdentifierOverflow() throws Exception {
         startTestGrids(true);
@@ -337,6 +376,11 @@ public class CacheGroupKeyChangeTest extends AbstractEncryptionTest {
         checkGroupKey(grpId, (byte)maxItrs & 0xff);
     }
 
+    /**
+     * Ensures that after rotation, the node has correct key identifier.
+     *
+     * @throws Exception If failed.
+     */
     @Test
     public void testNodeJoinAfterChange() throws Exception {
         startTestGrids(true);
@@ -350,9 +394,79 @@ public class CacheGroupKeyChangeTest extends AbstractEncryptionTest {
 
         startGrid(GRID_2);
 
+        resetBaselineTopology();
+
+        awaitPartitionMapExchange();
+
         checkGroupKey(CU.cacheId(cacheName()), 1);
     }
 
+    /**
+     * @throws Exception If failed.
+     */
+    @Test
+    public void testCacheStartDuringRotation() throws Exception {
+        T2<IgniteEx, IgniteEx> grids = startTestGrids(true);
+
+        createEncryptedCache(grids.get1(), grids.get2(), cacheName(), null);
+
+        TestRecordingCommunicationSpi commSpi = TestRecordingCommunicationSpi.spi(grids.get2());
+
+        commSpi.blockMessages((node, msg) -> msg instanceof SingleNodeMessage);
+
+        IgniteFuture<Void> fut = grids.get1().encryption().changeGroupKey(Collections.singleton(cacheName()));
+
+        commSpi.waitForBlocked();
+
+        IgniteCache<Integer, Integer> cache = grids.get1().createCache(cacheConfiguration("cache1", null));
+
+        for (int i = 0; i < 100; i++)
+            cache.put(i, i);
+
+        commSpi.stopBlock();
+
+        fut.get();
+
+        checkGroupKey(CU.cacheId(cacheName()), 1);
+
+        checkGroupKey(CU.cacheId("cache1"), 0);
+    }
+
+    /**
+     * @throws Exception If failed.
+     */
+    @Test
+    public void testCacheStartSameGroupDuringRotation() throws Exception {
+        T2<IgniteEx, IgniteEx> grids = startTestGrids(true);
+
+        String grpName = "shared";
+
+        createEncryptedCache(grids.get1(), grids.get2(), cacheName(), grpName);
+
+        TestRecordingCommunicationSpi commSpi = TestRecordingCommunicationSpi.spi(grids.get2());
+
+        commSpi.blockMessages((node, msg) -> msg instanceof SingleNodeMessage);
+
+        IgniteFuture<Void> fut = grids.get1().encryption().changeGroupKey(Collections.singleton(grpName));
+
+        commSpi.waitForBlocked();
+
+        IgniteCache<Integer, Integer> cache =
+            grids.get1().createCache(cacheConfiguration("cache1", grpName));
+
+        commSpi.stopBlock();
+
+        for (int i = 0; i < 100; i++)
+            cache.put(i, i);
+
+        fut.get();
+
+        checkGroupKey(CU.cacheId(grpName), 1);
+    }
+
+    /**
+     * @throws Exception If failed.
+     */
     @Test
     public void testBasicChangeUnderLoad() throws Exception {
         startTestGrids(true);
@@ -444,6 +558,9 @@ public class CacheGroupKeyChangeTest extends AbstractEncryptionTest {
         assertEquals(1, node2.context().encryption().groupKeysInfo(grpId).size());
     }
 
+    /**
+     * @throws Exception If failed.
+     */
     @Test
     public void testChangeKeyDuringRebalancing() throws Exception {
         T2<IgniteEx, IgniteEx> grids = startTestGrids(true);
@@ -455,7 +572,7 @@ public class CacheGroupKeyChangeTest extends AbstractEncryptionTest {
 
         loadData(500_000);
 
-        IgniteEx node2 = startGrid("grid-2");
+        IgniteEx node2 = startGrid(GRID_2);
 
         node0.cluster().setBaselineTopology(node0.context().discovery().topologyVersion());
 
@@ -469,7 +586,7 @@ public class CacheGroupKeyChangeTest extends AbstractEncryptionTest {
 
         startGrid(GRID_0);
         startGrid(GRID_1);
-        startGrid("grid-2");
+        startGrid(GRID_2);
 
         grid(GRID_0).cluster().state(ClusterState.ACTIVE);
 
@@ -478,6 +595,9 @@ public class CacheGroupKeyChangeTest extends AbstractEncryptionTest {
         checkGroupKey(grpId, 1);
     }
 
+    /**
+     * @throws Exception If failed.
+     */
     @Test
     public void testBasicChange() throws Exception {
         startTestGrids(true);
@@ -538,10 +658,24 @@ public class CacheGroupKeyChangeTest extends AbstractEncryptionTest {
         assertEquals(1, node2.context().encryption().groupKeysInfo(grpId).size());
     }
 
+    /**
+     * Custom discovery hook to block distributed process.
+     */
     private static class InitMessageDiscoHook extends DiscoveryHook {
+        /**
+         * Latch to sync execution.
+         */
         private final CountDownLatch discoLatch;
+
+        /**
+         * Distributed process type.
+         */
         private final DistributedProcessType type;
 
+        /**
+         * @param discoLatch Latch to sync execution.
+         * @param type Distributed process type.
+         */
         private InitMessageDiscoHook(CountDownLatch discoLatch, DistributedProcessType type) {
             this.discoLatch = discoLatch;
             this.type = type;
