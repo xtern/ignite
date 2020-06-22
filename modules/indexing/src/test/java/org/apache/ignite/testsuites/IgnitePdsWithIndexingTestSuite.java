@@ -17,6 +17,7 @@
 
 package org.apache.ignite.testsuites;
 
+import org.apache.ignite.internal.encryption.CacheGroupReencryptionTest;
 import org.apache.ignite.internal.processors.cache.IgnitePdsSingleNodeWithIndexingAndGroupPutGetPersistenceSelfTest;
 import org.apache.ignite.internal.processors.cache.IgnitePdsSingleNodeWithIndexingPutGetPersistenceTest;
 import org.apache.ignite.internal.processors.cache.persistence.db.IgniteTcBotInitNewPageTest;
@@ -50,7 +51,8 @@ import org.junit.runners.Suite;
     IndexingMultithreadedLoadContinuousRestartTest.class,
     LongDestroyDurableBackgroundTaskTest.class,
     RebuildIndexTest.class,
-    IgniteClusterSnapshotWithIndexesTest.class
+    IgniteClusterSnapshotWithIndexesTest.class,
+    CacheGroupReencryptionTest.class
 })
 public class IgnitePdsWithIndexingTestSuite {
 }
