@@ -1037,6 +1037,8 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
 
                         pageStore.encryptPageCount(encrPageCnt);
                         pageStore.encryptPageIndex(pageIO.getEncryptPageIndex(pageAddr));
+
+                        ctx.kernalContext().encryption().markForReencryption(grpId);
                     }
 
                     System.out.println("init meta " + grpId + " p=" + PageIdAllocator.INDEX_PARTITION + " pagesCnt=" + encrPageCnt);
@@ -2038,8 +2040,11 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
 
                                     pageStore.encryptPageCount(encrPageCnt);
                                     pageStore.encryptPageIndex(io.getEncryptPageIndex(pageAddr));
+
+                                    ctx.kernalContext().encryption().markForReencryption(grpId);
                                 }
 
+                                // todo remove
                                 if (log.isInfoEnabled())
                                     log.info("init meta " + grp.name() + " p=" + partId + " encrPageCnt=" + encrPageCnt);
 
