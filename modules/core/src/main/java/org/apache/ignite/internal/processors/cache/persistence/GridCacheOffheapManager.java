@@ -76,7 +76,6 @@ import org.apache.ignite.internal.processors.cache.distributed.dht.topology.Grid
 import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtPartitionState;
 import org.apache.ignite.internal.processors.cache.mvcc.MvccSnapshot;
 import org.apache.ignite.internal.processors.cache.mvcc.MvccVersion;
-import org.apache.ignite.internal.processors.cache.persistence.file.FilePageStore;
 import org.apache.ignite.internal.processors.cache.persistence.file.FilePageStoreManager;
 import org.apache.ignite.internal.processors.cache.persistence.freelist.AbstractFreeList;
 import org.apache.ignite.internal.processors.cache.persistence.freelist.CacheFreeList;
@@ -1031,8 +1030,6 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
                         ctx.kernalContext().encryption().markForReencryption(grpId);
                     }
 
-                    System.out.println("init meta " + grpId + " p=" + PageIdAllocator.INDEX_PARTITION + " pagesCnt=" + encrPageCnt);
-
                     assert reuseListRoot != 0L;
                 }
 
@@ -1280,10 +1277,6 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
             return false;
 
         boolean changed = false;
-
-        // todo remove
-        if (log.isInfoEnabled())
-            log.info("(save meta) update status [off=" + off + ", cnt=" + cnt + ", path=" + ((FilePageStore)pageStore).getFileAbsolutePath() + "]");
 
         if (off == cnt) {
             off = 0;
@@ -2013,10 +2006,6 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
 
                                     ctx.kernalContext().encryption().markForReencryption(grpId);
                                 }
-
-                                // todo remove
-                                if (log.isInfoEnabled())
-                                    log.info("init meta " + grp.name() + " p=" + partId + " encrPageCnt=" + encrPageCnt);
 
                                 globalRemoveId().setIfGreater(io.getGlobalRemoveId(pageAddr));
                             }
