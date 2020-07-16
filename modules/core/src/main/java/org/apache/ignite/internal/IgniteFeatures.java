@@ -115,11 +115,12 @@ public enum IgniteFeatures {
     /** Remove metadata from cluster for specified type. */
     REMOVE_METADATA(39),
 
-    /** Cache encryption key change. See {@link IgniteEncryption#changeCacheGroupKey(Collection)}. */
-    CACHE_GROUP_KEY_CHANGE(40),
-
     /** Support policy of shutdown. */
-    SHUTDOWN_POLICY(41);
+    SHUTDOWN_POLICY(40),
+
+    /** Cache encryption key change. See {@link IgniteEncryption#changeCacheGroupKey(Collection)}. */
+    CACHE_GROUP_KEY_CHANGE(41);
+
     /**
      * Unique feature identifier.
      */
