@@ -25,6 +25,7 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.ReentrantLock;
 import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.IgniteLogger;
@@ -52,7 +53,7 @@ import org.apache.ignite.thread.OomExceptionHandler;
 import static org.apache.ignite.IgniteSystemProperties.IGNITE_REENCRYPTION_BATCH_SIZE;
 import static org.apache.ignite.IgniteSystemProperties.IGNITE_REENCRYPTION_DISABLED;
 import static org.apache.ignite.IgniteSystemProperties.IGNITE_REENCRYPTION_THREAD_POOL_SIZE;
-import static org.apache.ignite.IgniteSystemProperties.IGNITE_REENCRYPTION_THROTTLE;
+import static org.apache.ignite.IgniteSystemProperties.IGNITE_REENCRYPTION_RATE;
 
 /**
  * Cache group page stores scanner.
@@ -66,7 +67,7 @@ public class CacheGroupPageScanner implements DbCheckpointListener {
     private final int batchSize = IgniteSystemProperties.getInteger(IGNITE_REENCRYPTION_BATCH_SIZE, 1_000);
 
     /** Timeout between batches. */
-    private final long timeoutBetweenBatches = IgniteSystemProperties.getLong(IGNITE_REENCRYPTION_THROTTLE, 0);
+    private final long ratePerSecods = IgniteSystemProperties.getLong(IGNITE_REENCRYPTION_RATE, 20);
 
     /** Disable background pages scanning. */
     private final boolean disabled = IgniteSystemProperties.getBoolean(IGNITE_REENCRYPTION_DISABLED, false);
@@ -96,6 +97,8 @@ public class CacheGroupPageScanner implements DbCheckpointListener {
     /** Stop flag. */
     private boolean stopped;
 
+    private SmoothRateLimiter limiter;
+
     /**
      * @param ctx Grid kernal context.
      */
@@ -114,6 +117,10 @@ public class CacheGroupPageScanner implements DbCheckpointListener {
             new OomExceptionHandler(ctx));
 
         execSvc.allowCoreThreadTimeOut(true);
+
+        int pagesInMb = 1024 * 1024 / ctx.config().getDataStorageConfiguration().getPageSize();
+
+        limiter = SmoothRateLimiter.create(ratePerSecods * pagesInMb, 1, TimeUnit.SECONDS);
     }
 
     /** {@inheritDoc} */
@@ -498,6 +505,8 @@ public class CacheGroupPageScanner implements DbCheckpointListener {
                         if (isDone())
                             break;
 
+                        limiter.acquire(Math.min(batchSize, cnt - off));
+
                         ctx.cache().context().database().checkpointReadLock();
 
                         try {
@@ -510,8 +519,8 @@ public class CacheGroupPageScanner implements DbCheckpointListener {
 
                     ctx.encryption().setEncryptionState(grpId, partId, off, cnt);
 
-                    if (timeoutBetweenBatches != 0 && !isDone())
-                        U.sleep(timeoutBetweenBatches);
+//                    if (timeoutBetweenBatches != 0 && !isDone())
+//                        U.sleep(timeoutBetweenBatches);
                 }
 
                 if (log.isDebugEnabled()) {

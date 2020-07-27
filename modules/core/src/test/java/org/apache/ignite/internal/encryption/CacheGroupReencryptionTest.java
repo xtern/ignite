@@ -60,7 +60,7 @@ import org.junit.Test;
 import static org.apache.ignite.IgniteSystemProperties.IGNITE_REENCRYPTION_BATCH_SIZE;
 import static org.apache.ignite.IgniteSystemProperties.IGNITE_REENCRYPTION_DISABLED;
 import static org.apache.ignite.IgniteSystemProperties.IGNITE_REENCRYPTION_THREAD_POOL_SIZE;
-import static org.apache.ignite.IgniteSystemProperties.IGNITE_REENCRYPTION_THROTTLE;
+import static org.apache.ignite.IgniteSystemProperties.IGNITE_REENCRYPTION_RATE;
 import static org.apache.ignite.configuration.WALMode.LOG_ONLY;
 import static org.apache.ignite.internal.managers.encryption.GridEncryptionManager.INITIAL_KEY_ID;
 import static org.apache.ignite.internal.processors.metric.impl.MetricUtils.metricName;
@@ -182,7 +182,7 @@ public class CacheGroupReencryptionTest extends AbstractEncryptionTest {
 
     /** @throws Exception If failed. */
     @Test
-    @WithSystemProperty(key = IGNITE_REENCRYPTION_THROTTLE, value = "10")
+    @WithSystemProperty(key = IGNITE_REENCRYPTION_RATE, value = "1")
     @WithSystemProperty(key = IGNITE_REENCRYPTION_BATCH_SIZE, value = "50")
     @WithSystemProperty(key = IGNITE_REENCRYPTION_THREAD_POOL_SIZE, value = "1")
     public void testPhysicalRecoveryWithUpdates() throws Exception {
@@ -286,7 +286,7 @@ public class CacheGroupReencryptionTest extends AbstractEncryptionTest {
 
     /** @throws Exception If failed. */
     @Test
-    @WithSystemProperty(key = IGNITE_REENCRYPTION_THROTTLE, value = "500")
+    @WithSystemProperty(key = IGNITE_REENCRYPTION_RATE, value = "1")
     @WithSystemProperty(key = IGNITE_REENCRYPTION_BATCH_SIZE, value = "100")
     public void testCacheStopDuringReencryption() throws Exception {
         T2<IgniteEx, IgniteEx> nodes = startTestGrids(true);
@@ -326,7 +326,7 @@ public class CacheGroupReencryptionTest extends AbstractEncryptionTest {
 
     /** @throws Exception If failed. */
     @Test
-    @WithSystemProperty(key = IGNITE_REENCRYPTION_THROTTLE, value = "500")
+    @WithSystemProperty(key = IGNITE_REENCRYPTION_RATE, value = "500")
     @WithSystemProperty(key = IGNITE_REENCRYPTION_BATCH_SIZE, value = "100")
     public void testPartitionEvictionDuringReencryption() throws Exception {
         backups = 1;
@@ -364,7 +364,7 @@ public class CacheGroupReencryptionTest extends AbstractEncryptionTest {
 
         stopAllGrids();
 
-        System.setProperty(IGNITE_REENCRYPTION_THROTTLE, "0");
+        System.setProperty(IGNITE_REENCRYPTION_RATE, "0");
 
         startTestGrids(false);
 
@@ -377,7 +377,7 @@ public class CacheGroupReencryptionTest extends AbstractEncryptionTest {
      * @throws Exception If failed.
      */
     @Test
-    @WithSystemProperty(key = IGNITE_REENCRYPTION_THROTTLE, value = "50")
+    @WithSystemProperty(key = IGNITE_REENCRYPTION_RATE, value = "50")
     @WithSystemProperty(key = IGNITE_REENCRYPTION_BATCH_SIZE, value = "10")
     @WithSystemProperty(key = IGNITE_REENCRYPTION_THREAD_POOL_SIZE, value = "2")
     public void testPartitionFileDestroy() throws Exception {
@@ -413,7 +413,7 @@ public class CacheGroupReencryptionTest extends AbstractEncryptionTest {
      * @throws Exception If failed.
      */
     @Test
-    @WithSystemProperty(key = IGNITE_REENCRYPTION_THROTTLE, value = "50")
+    @WithSystemProperty(key = IGNITE_REENCRYPTION_RATE, value = "50")
     @WithSystemProperty(key = IGNITE_REENCRYPTION_BATCH_SIZE, value = "50")
     @WithSystemProperty(key = IGNITE_REENCRYPTION_THREAD_POOL_SIZE, value = "1")
     public void testPartitionFileDestroyAndRecreate() throws Exception {
@@ -467,7 +467,7 @@ public class CacheGroupReencryptionTest extends AbstractEncryptionTest {
      * @throws Exception If failed.
      */
     @Test
-    @WithSystemProperty(key = IGNITE_REENCRYPTION_THROTTLE, value = "50")
+    @WithSystemProperty(key = IGNITE_REENCRYPTION_RATE, value = "50")
     @WithSystemProperty(key = IGNITE_REENCRYPTION_BATCH_SIZE, value = "10")
     @WithSystemProperty(key = IGNITE_REENCRYPTION_THREAD_POOL_SIZE, value = "2")
     public void testNotBltNodeJoin() throws Exception {
@@ -564,7 +564,7 @@ public class CacheGroupReencryptionTest extends AbstractEncryptionTest {
      * @throws Exception If failed.
      */
     @Test
-    @WithSystemProperty(key = IGNITE_REENCRYPTION_THROTTLE, value = "50")
+    @WithSystemProperty(key = IGNITE_REENCRYPTION_RATE, value = "50")
     @WithSystemProperty(key = IGNITE_REENCRYPTION_BATCH_SIZE, value = "50")
     @WithSystemProperty(key = IGNITE_REENCRYPTION_THREAD_POOL_SIZE, value = "1")
     public void testReencryptionOnUnstableTopology() throws Exception {
@@ -622,7 +622,7 @@ public class CacheGroupReencryptionTest extends AbstractEncryptionTest {
      * @throws Exception If failed.
      */
     @Test
-    @WithSystemProperty(key = IGNITE_REENCRYPTION_THROTTLE, value = "50")
+    @WithSystemProperty(key = IGNITE_REENCRYPTION_RATE, value = "50")
     @WithSystemProperty(key = IGNITE_REENCRYPTION_BATCH_SIZE, value = "50")
     @WithSystemProperty(key = IGNITE_REENCRYPTION_THREAD_POOL_SIZE, value = "1")
     public void testChangeBaseline() throws Exception {

@@ -1319,9 +1319,9 @@ public final class IgniteSystemProperties {
     public static final String IGNITE_REENCRYPTION_DISABLED = "IGNITE_REENCRYPTION_DISABLED";
 
     /**
-     * Defines the delay in milliseconds between batches during a partition scanning.
+     * todo Defines the delay in milliseconds between batches during a partition scanning.
      */
-    public static final String IGNITE_REENCRYPTION_THROTTLE = "IGNITE_REENCRYPTION_THROTTLE";
+    public static final String IGNITE_REENCRYPTION_RATE = "IGNITE_REENCRYPTION_RATE";
 
     /**
      * Enables extended logging of indexes create/rebuild process. Default {@code false}.
