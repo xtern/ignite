@@ -105,7 +105,26 @@ public class SmoothRateLimiter {
         A.ensure(permitsPerSecond > 0.0 && !Double.isNaN(permitsPerSecond), "rate must be positive");
 
         synchronized (mux) {
-            doSetRate(permitsPerSecond, readMicros());
+            resync(readMicros());
+
+            double stableIntervalMicros = SECONDS.toMicros(1L) / permitsPerSecond;
+
+            this.stableIntervalMicros = stableIntervalMicros;
+
+            double oldMaxPermits = maxPermits;
+            double coldIntervalMicros = stableIntervalMicros * coldFactor;
+            thresholdPermits = 0.5 * warmupPeriodMicros / stableIntervalMicros;
+            maxPermits = thresholdPermits + 2.0 * warmupPeriodMicros / (stableIntervalMicros + coldIntervalMicros);
+            slope = (coldIntervalMicros - stableIntervalMicros) / (maxPermits - thresholdPermits);
+            if (oldMaxPermits == Double.POSITIVE_INFINITY) {
+                // if we don't special-case this, we would get storedPermits == NaN, below
+                storedPermits = 0.0;
+            } else {
+                storedPermits =
+                    (oldMaxPermits == 0.0)
+                        ? maxPermits // initial state is cold
+                        : storedPermits * maxPermits / oldMaxPermits;
+            }
         }
     }
 
@@ -160,30 +179,6 @@ public class SmoothRateLimiter {
             long momentAvailable = reserveEarliestAvailable(permits, nowMicros);
 
             return max(momentAvailable - nowMicros, 0);
-        }
-    }
-
-    final void doSetRate(double permitsPerSecond, long nowMicros) {
-        resync(nowMicros);
-
-        double stableIntervalMicros = SECONDS.toMicros(1L) / permitsPerSecond;
-
-        this.stableIntervalMicros = stableIntervalMicros;
-
-        double oldMaxPermits = maxPermits;
-        double coldIntervalMicros = stableIntervalMicros * coldFactor;
-        thresholdPermits = 0.5 * warmupPeriodMicros / stableIntervalMicros;
-        maxPermits =
-            thresholdPermits + 2.0 * warmupPeriodMicros / (stableIntervalMicros + coldIntervalMicros);
-        slope = (coldIntervalMicros - stableIntervalMicros) / (maxPermits - thresholdPermits);
-        if (oldMaxPermits == Double.POSITIVE_INFINITY) {
-            // if we don't special-case this, we would get storedPermits == NaN, below
-            storedPermits = 0.0;
-        } else {
-            storedPermits =
-                (oldMaxPermits == 0.0)
-                    ? maxPermits // initial state is cold
-                    : storedPermits * maxPermits / oldMaxPermits;
         }
     }
 
