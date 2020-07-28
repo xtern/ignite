@@ -492,7 +492,7 @@ public class CacheGroupPageScanner implements DbCheckpointListener {
                 long metaPageId = pageMem.partitionMetaPageId(grpId, partId);
                 long state = ctx.encryption().getEncryptionState(grpId, partId);
 
-                int off = (int)(state >> 32);
+                int off = (int)(state >> Integer.SIZE);
                 int cnt = (int)state;
 
                 if (log.isDebugEnabled()) {

@@ -17,7 +17,6 @@
 
 package org.apache.ignite.internal.managers.encryption;
 
-import java.time.Duration;
 import java.util.Locale;
 import java.util.concurrent.TimeUnit;
 import org.jetbrains.annotations.Nullable;
@@ -34,17 +33,16 @@ abstract class SmoothRateLimiter {
      * object to facilitate testing.
      */
     private final SleepingStopwatch stopwatch;
-    // Can't be initialized in the constructor because mocks don't call the constructor.
-    private volatile Object mutexDoNotUseDirectly;
+
+    private final Object mux = new Object();
 
     public static SmoothRateLimiter create(double permitsPerSecond, long warmupPeriod, TimeUnit unit) {
         checkArgument(warmupPeriod >= 0, "warmupPeriod must not be negative: %s", warmupPeriod);
-        return create(
-            permitsPerSecond, warmupPeriod, unit, 3.0, new SleepingStopwatch());
+        return create(permitsPerSecond, warmupPeriod, unit, 3.0, new SleepingStopwatch());
     }
 
-    public static void checkArgument(boolean b, @Nullable String errorMessageTemplate, Object ... objs) {
-        if (!b)
+    public static void checkArgument(boolean flag, @Nullable String errorMessageTemplate, Object ... objs) {
+        if (!flag)
             throw new IllegalArgumentException(String.format(errorMessageTemplate, objs));
     }
 
@@ -59,44 +57,9 @@ abstract class SmoothRateLimiter {
         return rateLimiter;
     }
 
-    private static void sleepUninterruptibly(long sleepFor, TimeUnit unit) {
-        boolean interrupted = false;
-        try {
-            long remainingNanos = unit.toNanos(sleepFor);
-            long end = System.nanoTime() + remainingNanos;
-            while (true) {
-                try {
-                    // TimeUnit.sleep() treats negative timeouts just like zero.
-                    NANOSECONDS.sleep(remainingNanos);
-                    return;
-                } catch (InterruptedException e) {
-                    interrupted = true;
-                    remainingNanos = end - System.nanoTime();
-                }
-            }
-        } finally {
-            if (interrupted) {
-                Thread.currentThread().interrupt();
-            }
-        }
-    }
-
     private static void checkPermits(int permits) {
         if (permits <= 0)
             throw new IllegalStateException("Requested permits (" + permits + ") must be positive");
-    }
-
-    private Object mutex() {
-        Object mutex = mutexDoNotUseDirectly;
-        if (mutex == null) {
-            synchronized (this) {
-                mutex = mutexDoNotUseDirectly;
-                if (mutex == null) {
-                    mutexDoNotUseDirectly = mutex = new Object();
-                }
-            }
-        }
-        return mutex;
     }
 
     /**
@@ -120,7 +83,7 @@ abstract class SmoothRateLimiter {
     public final void setRate(double permitsPerSecond) {
         checkArgument(
             permitsPerSecond > 0.0 && !Double.isNaN(permitsPerSecond), "rate must be positive");
-        synchronized (mutex()) {
+        synchronized (mux) {
             doSetRate(permitsPerSecond, stopwatch.readMicros());
         }
     }
@@ -132,22 +95,9 @@ abstract class SmoothRateLimiter {
      * after invocations to {@linkplain #setRate}.
      */
     public final double getRate() {
-        synchronized (mutex()) {
+        synchronized (mux) {
             return doGetRate();
         }
-    }
-
-    /**
-     * Acquires a single permit from this {@code RateLimiter}, blocking until the request can be
-     * granted. Tells the amount of time slept, if any.
-     *
-     * <p>This method is equivalent to {@code acquire(1)}.
-     *
-     * @return time spent sleeping to enforce rate, in seconds; 0.0 if not rate-limited
-     * @since 16.0 (present in 13.0 with {@code void} return type})
-     */
-    public double acquire() {
-        return acquire(1);
     }
 
     /**
@@ -161,7 +111,9 @@ abstract class SmoothRateLimiter {
      */
     public double acquire(int permits) {
         long microsToWait = reserve(permits);
+
         stopwatch.sleepMicrosUninterruptibly(microsToWait);
+
         return 1.0 * microsToWait / SECONDS.toMicros(1L);
     }
 
@@ -173,93 +125,14 @@ abstract class SmoothRateLimiter {
      */
     final long reserve(int permits) {
         checkPermits(permits);
-        synchronized (mutex()) {
-            return reserveAndGetWaitLength(permits, stopwatch.readMicros());
-        }
-    }
 
-    /**
-     * Acquires a permit from this {@code RateLimiter} if it can be obtained without exceeding the
-     * specified {@code timeout}, or returns {@code false} immediately (without waiting) if the permit
-     * would not have been granted before the timeout expired.
-     *
-     * <p>This method is equivalent to {@code tryAcquire(1, timeout, unit)}.
-     *
-     * @param timeout the maximum time to wait for the permit. Negative values are treated as zero.
-     * @param unit the time unit of the timeout argument
-     * @return {@code true} if the permit was acquired, {@code false} otherwise
-     * @throws IllegalArgumentException if the requested number of permits is negative or zero
-     */
-    public boolean tryAcquire(long timeout, TimeUnit unit) {
-        return tryAcquire(1, timeout, unit);
-    }
-
-    /**
-     * Acquires permits from this {@link SmoothRateLimiter} if it can be acquired immediately without delay.
-     *
-     * <p>This method is equivalent to {@code tryAcquire(permits, 0, anyUnit)}.
-     *
-     * @param permits the number of permits to acquire
-     * @return {@code true} if the permits were acquired, {@code false} otherwise
-     * @throws IllegalArgumentException if the requested number of permits is negative or zero
-     * @since 14.0
-     */
-    public boolean tryAcquire(int permits) {
-        return tryAcquire(permits, 0, MICROSECONDS);
-    }
-
-    /**
-     * Acquires a permit from this {@link SmoothRateLimiter} if it can be acquired immediately without
-     * delay.
-     *
-     * <p>This method is equivalent to {@code tryAcquire(1)}.
-     *
-     * @return {@code true} if the permit was acquired, {@code false} otherwise
-     * @since 14.0
-     */
-    public boolean tryAcquire() {
-        return tryAcquire(1, 0, MICROSECONDS);
-    }
-
-    /**
-     * Acquires the given number of permits from this {@code RateLimiter} if it can be obtained
-     * without exceeding the specified {@code timeout}, or returns {@code false} immediately (without
-     * waiting) if the permits would not have been granted before the timeout expired.
-     *
-     * @param permits the number of permits to acquire
-     * @param timeout the maximum time to wait for the permits. Negative values are treated as zero.
-     * @param unit the time unit of the timeout argument
-     * @return {@code true} if the permits were acquired, {@code false} otherwise
-     * @throws IllegalArgumentException if the requested number of permits is negative or zero
-     */
-    public boolean tryAcquire(int permits, long timeout, TimeUnit unit) {
-        long timeoutMicros = max(unit.toMicros(timeout), 0);
-        checkPermits(permits);
-        long microsToWait;
-        synchronized (mutex()) {
+        synchronized (mux) {
             long nowMicros = stopwatch.readMicros();
-            if (!canAcquire(nowMicros, timeoutMicros)) {
-                return false;
-            } else {
-                microsToWait = reserveAndGetWaitLength(permits, nowMicros);
-            }
+
+            long momentAvailable = reserveEarliestAvailable(permits, nowMicros);
+
+            return max(momentAvailable - nowMicros, 0);
         }
-        stopwatch.sleepMicrosUninterruptibly(microsToWait);
-        return true;
-    }
-
-    private boolean canAcquire(long nowMicros, long timeoutMicros) {
-        return queryEarliestAvailable(nowMicros) - timeoutMicros <= nowMicros;
-    }
-
-    /**
-     * Reserves next ticket and returns the wait time that the caller must wait for.
-     *
-     * @return the required wait time, never negative
-     */
-    final long reserveAndGetWaitLength(int permits, long nowMicros) {
-        long momentAvailable = reserveEarliestAvailable(permits, nowMicros);
-        return max(momentAvailable - nowMicros, 0);
     }
 
     @Override
@@ -327,8 +200,7 @@ abstract class SmoothRateLimiter {
             return stableIntervalMicros + permits * slope;
         }
 
-        @Override
-        double coolDownIntervalMicros() {
+        @Override double coolDownIntervalMicros() {
             return warmupPeriodMicros / maxPermits;
         }
     }
@@ -424,7 +296,7 @@ abstract class SmoothRateLimiter {
     }
 
     private static class SleepingStopwatch {
-        final Stopwatch stopwatch = Stopwatch.createStarted();
+        final Stopwatch stopwatch = new Stopwatch().start();
 
         /*
          * We always hold the mutex when calling this. TODO(cpovirk): Is that important? Perhaps we need
@@ -432,12 +304,36 @@ abstract class SmoothRateLimiter {
          * Also, is it OK that we don't hold the mutex when sleeping?
          */
         protected long readMicros() {
-            return stopwatch.elapsed(MICROSECONDS);
+            return MICROSECONDS.convert(stopwatch.elapsedNanos(), NANOSECONDS);
         }
 
         protected void sleepMicrosUninterruptibly(long micros) {
-            if (micros > 0)
-                sleepUninterruptibly(micros, MICROSECONDS);
+            if (micros <= 0)
+                return;
+
+            boolean interrupted = false;
+
+            try {
+                long remainingNanos = MICROSECONDS.toNanos(micros);
+
+                long end = System.nanoTime() + remainingNanos;
+
+                while (true) {
+                    try {
+                        // TimeUnit.sleep() treats negative timeouts just like zero.
+                        NANOSECONDS.sleep(remainingNanos);
+
+                        return;
+                    } catch (InterruptedException e) {
+                        interrupted = true;
+
+                        remainingNanos = end - System.nanoTime();
+                    }
+                }
+            } finally {
+                if (interrupted)
+                    Thread.currentThread().interrupt();
+            }
         }
     }
 
@@ -445,15 +341,6 @@ abstract class SmoothRateLimiter {
         private boolean isRunning;
         private long elapsedNanos;
         private long startTick;
-
-        /**
-         * Creates (and starts) a new stopwatch using {@link System#nanoTime} as its time source.
-         *
-         * @since 15.0
-         */
-        public static Stopwatch createStarted() {
-            return new Stopwatch().start();
-        }
 
         /**
          * Starts the stopwatch.
@@ -479,41 +366,28 @@ abstract class SmoothRateLimiter {
         public Stopwatch stop() {
             assert isRunning : "This stopwatch is already stopped.";
 
-            long tick = System.nanoTime();
             isRunning = false;
-            elapsedNanos += tick - startTick;
+
+            elapsedNanos += System.nanoTime() - startTick;
+
             return this;
         }
 
         private long elapsedNanos() {
             return isRunning ? System.nanoTime() - startTick + elapsedNanos : elapsedNanos;
         }
+    }
 
-        /**
-         * Returns the current elapsed time shown on this stopwatch, expressed in the desired time unit,
-         * with any fraction rounded down.
-         *
-         * <p><b>Note:</b> the overhead of measurement can be more than a microsecond, so it is generally
-         * not useful to specify {@link TimeUnit#NANOSECONDS} precision here.
-         *
-         * <p>It is generally not a good idea to use an ambiguous, unitless {@code long} to represent
-         * elapsed time. Therefore, we recommend using {@link #elapsed()} instead, which returns a
-         * strongly-typed {@link Duration} instance.
-         *
-         * @since 14.0 (since 10.0 as {@code elapsedTime()})
-         */
-        public long elapsed(TimeUnit desiredUnit) {
-            return desiredUnit.convert(elapsedNanos(), NANOSECONDS);
-        }
+    public static void main(String[] args) throws InterruptedException {
+        SmoothRateLimiter limiter = create(10, 1, TimeUnit.SECONDS);
 
-        /**
-         * Returns the current elapsed time shown on this stopwatch as a {@link Duration}. Unlike {@link
-         * #elapsed(TimeUnit)}, this method does not lose any precision due to rounding.
-         *
-         * @since 22.0
-         */
-        public Duration elapsed() {
-            return Duration.ofNanos(elapsedNanos());
+        for (int i = 0; i < 100; i++) {
+            limiter.acquire(1);
+
+            System.out.println(">>> " + i);
+
+            if (i == 50)
+                Thread.sleep(2_000);
         }
     }
 }
