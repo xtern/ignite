@@ -30,7 +30,7 @@ import static java.util.concurrent.TimeUnit.SECONDS;
 /**
  * Simplified version of guava's smooth RateLimiter.
  *
- * The primary feature of a RateLimiter is its "stable rate", the maximum rate that is should
+ * The primary feature of a BasicRateLimiter is its "stable rate", the maximum rate that is should
  * allow at normal conditions. This is enforced by "throttling" incoming requests as needed, i.e.
  * compute, for an incoming request, the appropriate throttle time, and make the calling thread
  * wait as much.
@@ -43,13 +43,13 @@ import static java.util.concurrent.TimeUnit.SECONDS;
  * (i.e. for an acquire(15) request) naturally takes 3 seconds.
  *
  * It is important to realize that such a RateLimiter has a very superficial memory of the past:
- * it only remembers the last request.
- *
- * @see <a href="https://github.com/google/guava/blob/master/guava/src/com/google/common/util/concurrent/SmoothRateLimiter.java">SmoothRateLimiter.java</a>
+ * it only remembers the last request. if the RateLimiter was unused for a long period of
+ * time, then a request arrived and was immediately granted? This RateLimiter would immediately
+ * forget about that past underutilization.
  */
 public class BasicRateLimiter {
     /** Start timestamp. */
-    private final long startTs = System.nanoTime();
+    private final long startTime = System.nanoTime();
 
     /** Mutex. */
     private final Object mux = new Object();
@@ -128,7 +128,7 @@ public class BasicRateLimiter {
      * @param permits The number of permits.
      * @return time in microseconds to wait until the resource can be acquired, never negative
      */
-    final long reserve(int permits) {
+    private long reserve(int permits) {
         A.ensure(permits > 0, "Requested permits (" + permits + ") must be positive");
 
         synchronized (mux) {
@@ -155,15 +155,19 @@ public class BasicRateLimiter {
         return Long.MAX_VALUE + ((naiveSum >>> (Long.SIZE - 1)) ^ 1);
     }
 
-    /** Updates {@code storedPermits} and {@code nextFreeTicketMicros} based on the current time. */
+    /**
+     * Updates {@code nextFreeTicketMicros} based on the current time.
+     *
+     * @return passed time since start in microseconds.
+     */
     private long resync() {
-        long nowMicros = MICROSECONDS.convert(System.nanoTime() - startTs, NANOSECONDS);
+        long passed = MICROSECONDS.convert(System.nanoTime() - startTime, NANOSECONDS);
 
         // if nextFreeTicket is in the past, resync to now
-        if (nowMicros > nextFreeTicketMicros)
-            nextFreeTicketMicros = nowMicros;
+        if (passed > nextFreeTicketMicros)
+            nextFreeTicketMicros = passed;
 
-        return nowMicros;
+        return passed;
     }
 
     @Override public String toString() {
