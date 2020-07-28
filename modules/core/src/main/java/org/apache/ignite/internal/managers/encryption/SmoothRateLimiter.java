@@ -20,8 +20,8 @@ package org.apache.ignite.internal.managers.encryption;
 import java.util.Locale;
 import java.util.concurrent.TimeUnit;
 import org.apache.ignite.internal.IgniteInterruptedCheckedException;
+import org.apache.ignite.internal.util.typedef.internal.A;
 import org.apache.ignite.internal.util.typedef.internal.U;
-import org.jetbrains.annotations.Nullable;
 
 import static java.lang.Math.max;
 import static java.lang.Math.min;
@@ -30,11 +30,8 @@ import static java.util.concurrent.TimeUnit.NANOSECONDS;
 import static java.util.concurrent.TimeUnit.SECONDS;
 
 public class SmoothRateLimiter {
-    /**
-     * The underlying timer; used both to measure elapsed time and sleep as necessary. A separate
-     * object to facilitate testing.
-     */
-    private final Stopwatch stopwatch;
+    /** Start tick. */
+    private final long startTick = System.nanoTime();
 
     /** Mutex. */
     private final Object mux = new Object();
@@ -49,6 +46,7 @@ public class SmoothRateLimiter {
     private double slope;
 
     private double thresholdPermits;
+
     private double coldFactor;
 
     /** The currently stored permits. */
@@ -69,22 +67,20 @@ public class SmoothRateLimiter {
      */
     private long nextFreeTicketMicros = 0L; // could be either in the past or future
 
-    public static void checkArgument(boolean flag, @Nullable String errorMessageTemplate, Object ... objs) {
-        if (!flag)
-            throw new IllegalArgumentException(String.format(errorMessageTemplate, objs));
+    /*
+     * We always hold the mutex when calling this. TODO(cpovirk): Is that important? Perhaps we need
+     * to guarantee that each call to reserveEarliestAvailable, etc. sees a value >= the previous?
+     * Also, is it OK that we don't hold the mutex when sleeping?
+     */
+    protected long readMicros() {
+        return MICROSECONDS.convert(System.nanoTime() - startTick, NANOSECONDS);
     }
 
     public SmoothRateLimiter(double permitsPerSecond, long warmupPeriod, TimeUnit timeUnit, double coldFactor) {
-        this.stopwatch = new Stopwatch();
         this.coldFactor = coldFactor;
         this.warmupPeriodMicros = timeUnit.toMicros(warmupPeriod);
 
         setRate(permitsPerSecond);
-    }
-
-    private static void checkPermits(int permits) {
-        if (permits <= 0)
-            throw new IllegalStateException("Requested permits (" + permits + ") must be positive");
     }
 
     /**
@@ -105,11 +101,11 @@ public class SmoothRateLimiter {
      * @param permitsPerSecond the new stable rate of this {@code RateLimiter}
      * @throws IllegalArgumentException if {@code permitsPerSecond} is negative or zero
      */
-    public final void setRate(double permitsPerSecond) {
-        checkArgument(
-            permitsPerSecond > 0.0 && !Double.isNaN(permitsPerSecond), "rate must be positive");
+    public void setRate(double permitsPerSecond) {
+        A.ensure(permitsPerSecond > 0.0 && !Double.isNaN(permitsPerSecond), "rate must be positive");
+
         synchronized (mux) {
-            doSetRate(permitsPerSecond, stopwatch.readMicros());
+            doSetRate(permitsPerSecond, readMicros());
         }
     }
 
@@ -119,7 +115,7 @@ public class SmoothRateLimiter {
      * passed in the factory method that produced this {@code RateLimiter}, and it is only updated
      * after invocations to {@linkplain #setRate}.
      */
-    public final double getRate() {
+    public double getRate() {
         synchronized (mux) {
             return SECONDS.toMicros(1L) / stableIntervalMicros;
         }
@@ -156,10 +152,10 @@ public class SmoothRateLimiter {
      * @return time in microseconds to wait until the resource can be acquired, never negative
      */
     final long reserve(int permits) {
-        checkPermits(permits);
+        A.ensure(permits > 0, "Requested permits (" + permits + ") must be positive");
 
         synchronized (mux) {
-            long nowMicros = stopwatch.readMicros();
+            long nowMicros = readMicros();
 
             long momentAvailable = reserveEarliestAvailable(permits, nowMicros);
 
@@ -169,7 +165,9 @@ public class SmoothRateLimiter {
 
     final void doSetRate(double permitsPerSecond, long nowMicros) {
         resync(nowMicros);
+
         double stableIntervalMicros = SECONDS.toMicros(1L) / permitsPerSecond;
+
         this.stableIntervalMicros = stableIntervalMicros;
 
         double oldMaxPermits = maxPermits;
@@ -228,7 +226,7 @@ public class SmoothRateLimiter {
      *
      * <p>This always holds: {@code 0 <= permitsToTake <= storedPermits}
      */
-    long storedPermitsToWaitTime(double storedPermits, double permitsToTake) {
+    private long storedPermitsToWaitTime(double storedPermits, double permitsToTake) {
         double availablePermitsAboveThreshold = storedPermits - thresholdPermits;
         long micros = 0;
         // measuring the integral on the right part of the function (the climbing line)
@@ -253,12 +251,12 @@ public class SmoothRateLimiter {
     /**
      * Returns the number of microseconds during cool down that we have to wait to get a new permit.
      */
-    double coolDownIntervalMicros() {
+    private double coolDownIntervalMicros() {
         return warmupPeriodMicros / maxPermits;
     }
 
     /** Updates {@code storedPermits} and {@code nextFreeTicketMicros} based on the current time. */
-    void resync(long nowMicros) {
+    private void resync(long nowMicros) {
         // if nextFreeTicket is in the past, resync to now
         if (nowMicros > nextFreeTicketMicros) {
             double newPermits = (nowMicros - nextFreeTicketMicros) / coolDownIntervalMicros();
@@ -273,19 +271,6 @@ public class SmoothRateLimiter {
         return String.format(Locale.ROOT, "RateLimiter[stableRate=%3.1fqps]", getRate());
     }
 
-    private static class Stopwatch {
-        private final long startTick = System.nanoTime();
-
-        /*
-         * We always hold the mutex when calling this. TODO(cpovirk): Is that important? Perhaps we need
-         * to guarantee that each call to reserveEarliestAvailable, etc. sees a value >= the previous?
-         * Also, is it OK that we don't hold the mutex when sleeping?
-         */
-        protected long readMicros() {
-            return MICROSECONDS.convert(System.nanoTime() - startTick, NANOSECONDS);
-        }
-    }
-
     public static void main(String[] args) throws IgniteInterruptedCheckedException {
         SmoothRateLimiter limiter = new SmoothRateLimiter(2, 1, TimeUnit.SECONDS, 3.0);
 
@@ -294,10 +279,12 @@ public class SmoothRateLimiter {
 
             System.out.println(">>> " + i);
 
-            if (i == 50)
+            if (i == 50) {
+                limiter.setRate(5);
+
                 U.sleep(2_000);
+            }
+
         }
     }
-
-
 }
