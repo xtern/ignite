@@ -296,15 +296,29 @@ abstract class SmoothRateLimiter {
     }
 
     private static class SleepingStopwatch {
-        final Stopwatch stopwatch = new Stopwatch().start();
-
         /*
          * We always hold the mutex when calling this. TODO(cpovirk): Is that important? Perhaps we need
          * to guarantee that each call to reserveEarliestAvailable, etc. sees a value >= the previous?
          * Also, is it OK that we don't hold the mutex when sleeping?
          */
         protected long readMicros() {
-            return MICROSECONDS.convert(stopwatch.elapsedNanos(), NANOSECONDS);
+            return MICROSECONDS.convert(elapsedNanos(), NANOSECONDS);
+        }
+
+        private final long startTick;
+
+        /**
+         * Starts the stopwatch.
+         *
+         * @return this {@code Stopwatch} instance
+         * @throws IllegalStateException if the stopwatch is already running.
+         */
+        public SleepingStopwatch() {
+            startTick = System.nanoTime();
+        }
+
+        private long elapsedNanos() {
+            return System.nanoTime() - startTick;
         }
 
         protected void sleepMicrosUninterruptibly(long micros) {
@@ -334,47 +348,6 @@ abstract class SmoothRateLimiter {
                 if (interrupted)
                     Thread.currentThread().interrupt();
             }
-        }
-    }
-
-    static final class Stopwatch {
-        private boolean isRunning;
-        private long elapsedNanos;
-        private long startTick;
-
-        /**
-         * Starts the stopwatch.
-         *
-         * @return this {@code Stopwatch} instance
-         * @throws IllegalStateException if the stopwatch is already running.
-         */
-        public Stopwatch start() {
-            assert !isRunning : "This stopwatch is already running.";
-
-            isRunning = true;
-            startTick = System.nanoTime();
-            return this;
-        }
-
-        /**
-         * Stops the stopwatch. Future reads will return the fixed duration that had elapsed up to this
-         * point.
-         *
-         * @return this {@code Stopwatch} instance
-         * @throws IllegalStateException if the stopwatch is already stopped.
-         */
-        public Stopwatch stop() {
-            assert isRunning : "This stopwatch is already stopped.";
-
-            isRunning = false;
-
-            elapsedNanos += System.nanoTime() - startTick;
-
-            return this;
-        }
-
-        private long elapsedNanos() {
-            return isRunning ? System.nanoTime() - startTick + elapsedNanos : elapsedNanos;
         }
     }
 
