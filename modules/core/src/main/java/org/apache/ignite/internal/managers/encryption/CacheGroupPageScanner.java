@@ -120,7 +120,7 @@ public class CacheGroupPageScanner implements DbCheckpointListener {
 
         int pagesInMb = 1024 * 1024 / ctx.config().getDataStorageConfiguration().getPageSize();
 
-        limiter = new SmoothRateLimiter(ratePerSecods * pagesInMb, 1, TimeUnit.SECONDS, 3.0);
+        limiter = new SmoothRateLimiter(ratePerSecods * pagesInMb);
     }
 
     /** {@inheritDoc} */
