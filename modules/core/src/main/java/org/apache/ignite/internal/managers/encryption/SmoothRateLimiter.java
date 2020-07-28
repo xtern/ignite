@@ -54,19 +54,7 @@ public class SmoothRateLimiter {
     }
 
     /**
-     * Updates the stable rate of this {@code RateLimiter}, that is, the {@code permitsPerSecond}
-     * argument provided in the factory method that constructed the {@code RateLimiter}. Currently
-     * throttled threads will <b>not</b> be awakened as a result of this invocation, thus they do not
-     * observe the new rate; only subsequent requests will.
-     *
-     * <p>Note though that, since each request repays (by waiting, if necessary) the cost of the
-     * <i>previous</i> request, this means that the very next request after an invocation to {@code
-     * setRate} will not be affected by the new rate; it will pay the cost of the previous request,
-     * which is in terms of the previous rate.
-     *
-     * <p>The behavior of the {@code RateLimiter} is not modified in any other way, e.g. if the {@code
-     * RateLimiter} was configured with a warmup period of 20 seconds, it still has a warmup period of
-     * 20 seconds after this method invocation.
+     * Updates the stable rate.
      *
      * @param permitsPerSecond the new stable rate of this {@code RateLimiter}
      * @throws IllegalArgumentException if {@code permitsPerSecond} is negative or zero
@@ -82,10 +70,7 @@ public class SmoothRateLimiter {
     }
 
     /**
-     * Returns the stable rate (as {@code permits per seconds}) with which this {@code RateLimiter} is
-     * configured with. The initial value of this is the same as the {@code permitsPerSecond} argument
-     * passed in the factory method that produced this {@code RateLimiter}, and it is only updated
-     * after invocations to {@linkplain #setRate}.
+     * @return The stable rate (as {@code permits per seconds}).
      */
     public double getRate() {
         synchronized (mux) {
@@ -118,9 +103,9 @@ public class SmoothRateLimiter {
     }
 
     /**
-     * Reserves the given number of permits from this {@code RateLimiter} for future use, returning
-     * the number of microseconds until the reservation can be consumed.
+     * Reserves the given number of permits for future use.
      *
+     * @param permits The number of permits.
      * @return time in microseconds to wait until the resource can be acquired, never negative
      */
     final long reserve(int permits) {
