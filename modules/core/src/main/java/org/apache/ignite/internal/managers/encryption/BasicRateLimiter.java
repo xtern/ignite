@@ -27,7 +27,27 @@ import static java.util.concurrent.TimeUnit.MICROSECONDS;
 import static java.util.concurrent.TimeUnit.NANOSECONDS;
 import static java.util.concurrent.TimeUnit.SECONDS;
 
-public class SmoothRateLimiter {
+/**
+ * Simplified version of guava's smooth RateLimiter.
+ *
+ * The primary feature of a RateLimiter is its "stable rate", the maximum rate that is should
+ * allow at normal conditions. This is enforced by "throttling" incoming requests as needed, i.e.
+ * compute, for an incoming request, the appropriate throttle time, and make the calling thread
+ * wait as much.
+ *
+ * The simplest way to maintain a rate of QPS is to keep the timestamp of the last granted
+ * request, and ensure that (1/QPS) seconds have elapsed since then. For example, for a rate of
+ * QPS=5 (5 tokens per second), if we ensure that a request isn't granted earlier than 200ms after
+ * the last one, then we achieve the intended rate. If a request comes and the last request was
+ * granted only 100ms ago, then we wait for another 100ms. At this rate, serving 15 fresh permits
+ * (i.e. for an acquire(15) request) naturally takes 3 seconds.
+ *
+ * It is important to realize that such a RateLimiter has a very superficial memory of the past:
+ * it only remembers the last request.
+ *
+ * @see <a href="https://github.com/google/guava/blob/master/guava/src/com/google/common/util/concurrent/SmoothRateLimiter.java">SmoothRateLimiter.java</a>
+ */
+public class BasicRateLimiter {
     /** Start timestamp. */
     private final long startTs = System.nanoTime();
 
@@ -49,7 +69,7 @@ public class SmoothRateLimiter {
     /**
      * @param permitsPerSecond Estimated number of permits per second.
      */
-    public SmoothRateLimiter(double permitsPerSecond) {
+    public BasicRateLimiter(double permitsPerSecond) {
         setRate(permitsPerSecond);
     }
 
@@ -151,7 +171,7 @@ public class SmoothRateLimiter {
     }
 
     public static void main(String[] args) throws IgniteInterruptedCheckedException {
-        SmoothRateLimiter limiter = new SmoothRateLimiter(2);
+        BasicRateLimiter limiter = new BasicRateLimiter(2);
 
         long start = System.currentTimeMillis();
 

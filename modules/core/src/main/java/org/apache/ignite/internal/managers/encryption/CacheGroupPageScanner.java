@@ -25,7 +25,6 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.LinkedBlockingQueue;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.ReentrantLock;
 import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.IgniteLogger;
@@ -46,7 +45,6 @@ import org.apache.ignite.internal.util.future.GridFinishedFuture;
 import org.apache.ignite.internal.util.future.GridFutureAdapter;
 import org.apache.ignite.internal.util.lang.IgniteInClosureX;
 import org.apache.ignite.internal.util.typedef.X;
-import org.apache.ignite.internal.util.typedef.internal.U;
 import org.apache.ignite.thread.IgniteThreadPoolExecutor;
 import org.apache.ignite.thread.OomExceptionHandler;
 
@@ -97,7 +95,7 @@ public class CacheGroupPageScanner implements DbCheckpointListener {
     /** Stop flag. */
     private boolean stopped;
 
-    private SmoothRateLimiter limiter;
+    private BasicRateLimiter limiter;
 
     /**
      * @param ctx Grid kernal context.
@@ -120,7 +118,7 @@ public class CacheGroupPageScanner implements DbCheckpointListener {
 
         int pagesInMb = 1024 * 1024 / ctx.config().getDataStorageConfiguration().getPageSize();
 
-        limiter = new SmoothRateLimiter(ratePerSecods * pagesInMb);
+        limiter = new BasicRateLimiter(ratePerSecods * pagesInMb);
     }
 
     /** {@inheritDoc} */
