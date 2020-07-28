@@ -107,9 +107,7 @@ public class SmoothRateLimiter {
         synchronized (mux) {
             resync(readMicros());
 
-            double stableIntervalMicros = SECONDS.toMicros(1L) / permitsPerSecond;
-
-            this.stableIntervalMicros = stableIntervalMicros;
+            stableIntervalMicros = SECONDS.toMicros(1L) / permitsPerSecond;
 
             double oldMaxPermits = maxPermits;
             double coldIntervalMicros = stableIntervalMicros * coldFactor;
