@@ -50,7 +50,7 @@ public class SmoothRateLimiter {
     private double coldFactor;
 
     /** The currently stored permits. */
-    private double storedPermits;
+//    private double storedPermits;
 
     /** The maximum number of stored permits. */
     private double maxPermits;
@@ -109,20 +109,20 @@ public class SmoothRateLimiter {
 
             stableIntervalMicros = SECONDS.toMicros(1L) / permitsPerSecond;
 
-            double oldMaxPermits = maxPermits;
+//            double oldMaxPermits = maxPermits;
             double coldIntervalMicros = stableIntervalMicros * coldFactor;
             thresholdPermits = 0.5 * warmupPeriodMicros / stableIntervalMicros;
             maxPermits = thresholdPermits + 2.0 * warmupPeriodMicros / (stableIntervalMicros + coldIntervalMicros);
             slope = (coldIntervalMicros - stableIntervalMicros) / (maxPermits - thresholdPermits);
-            if (oldMaxPermits == Double.POSITIVE_INFINITY) {
-                // if we don't special-case this, we would get storedPermits == NaN, below
-                storedPermits = 0.0;
-            } else {
-                storedPermits =
-                    (oldMaxPermits == 0.0)
-                        ? maxPermits // initial state is cold
-                        : storedPermits * maxPermits / oldMaxPermits;
-            }
+//            if (oldMaxPermits == Double.POSITIVE_INFINITY) {
+//                // if we don't special-case this, we would get storedPermits == NaN, below
+//                storedPermits = 0.0;
+//            } else {
+//                storedPermits =
+//                    (oldMaxPermits == 0.0)
+//                        ? maxPermits // initial state is cold
+//                        : storedPermits * maxPermits / oldMaxPermits;
+//            }
         }
     }
 
@@ -185,16 +185,16 @@ public class SmoothRateLimiter {
 
         long res = nextFreeTicketMicros;
 
-        double storedPermitsToSpend = min(requiredPermits, this.storedPermits);
+        double storedPermitsToSpend = 0;//min(requiredPermits, this.storedPermits);
 
         double freshPermits = requiredPermits - storedPermitsToSpend;
 
         long waitMicros =
-            storedPermitsToWaitTime(this.storedPermits, storedPermitsToSpend)
+            storedPermitsToWaitTime(0, storedPermitsToSpend)
                 + (long) (freshPermits * stableIntervalMicros);
 
         this.nextFreeTicketMicros = saturatedAdd(nextFreeTicketMicros, waitMicros);
-        this.storedPermits -= storedPermitsToSpend;
+        //this.storedPermits -= storedPermitsToSpend;
 
         return res;
     }
@@ -220,18 +220,18 @@ public class SmoothRateLimiter {
      * <p>This always holds: {@code 0 <= permitsToTake <= storedPermits}
      */
     private long storedPermitsToWaitTime(double storedPermits, double permitsToTake) {
-        double availablePermitsAboveThreshold = storedPermits - thresholdPermits;
+//        double availablePermitsAboveThreshold = storedPermits - thresholdPermits;
         long micros = 0;
         // measuring the integral on the right part of the function (the climbing line)
-        if (availablePermitsAboveThreshold > 0.0) {
-            double permitsAboveThresholdToTake = min(availablePermitsAboveThreshold, permitsToTake);
-            // TODO(cpovirk): Figure out a good name for this variable.
-            double length =
-                permitsToTime(availablePermitsAboveThreshold)
-                    + permitsToTime(availablePermitsAboveThreshold - permitsAboveThresholdToTake);
-            micros = (long) (permitsAboveThresholdToTake * length / 2.0);
-            permitsToTake -= permitsAboveThresholdToTake;
-        }
+//        if (availablePermitsAboveThreshold > 0.0) {
+//            double permitsAboveThresholdToTake = min(availablePermitsAboveThreshold, permitsToTake);
+//            // TODO(cpovirk): Figure out a good name for this variable.
+//            double length =
+//                permitsToTime(availablePermitsAboveThreshold)
+//                    + permitsToTime(availablePermitsAboveThreshold - permitsAboveThresholdToTake);
+//            micros = (long) (permitsAboveThresholdToTake * length / 2.0);
+//            permitsToTake -= permitsAboveThresholdToTake;
+//        }
         // measuring the integral on the left part of the function (the horizontal line)
         micros += (long) (stableIntervalMicros * permitsToTake);
         return micros;
@@ -252,9 +252,9 @@ public class SmoothRateLimiter {
     private void resync(long nowMicros) {
         // if nextFreeTicket is in the past, resync to now
         if (nowMicros > nextFreeTicketMicros) {
-            double newPermits = (nowMicros - nextFreeTicketMicros) / coolDownIntervalMicros();
+            //double newPermits = (nowMicros - nextFreeTicketMicros) / coolDownIntervalMicros();
 
-            storedPermits = min(maxPermits, storedPermits + newPermits);
+            //storedPermits = min(maxPermits, storedPermits + newPermits);
 
             nextFreeTicketMicros = nowMicros;
         }
@@ -267,12 +267,12 @@ public class SmoothRateLimiter {
     public static void main(String[] args) throws IgniteInterruptedCheckedException {
         SmoothRateLimiter limiter = new SmoothRateLimiter(2, 1, TimeUnit.SECONDS, 3.0);
 
-        for (int i = 0; i < 100; i++) {
+        for (int i = 0; i < 50; i++) {
             limiter.acquire(1);
 
             System.out.println(">>> " + i);
 
-            if (i == 50) {
+            if (i == 20) {
                 limiter.setRate(5);
 
                 U.sleep(2_000);
