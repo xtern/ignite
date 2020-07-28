@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-package org.apache.ignite.internal.managers.encryption;
+package org.apache.ignite.internal.util;
 
 import java.util.Locale;
 import org.apache.ignite.internal.IgniteInterruptedCheckedException;
@@ -80,7 +80,11 @@ public class BasicRateLimiter {
      * @throws IllegalArgumentException if {@code permitsPerSecond} is negative or zero
      */
     public void setRate(double permitsPerSecond) {
-        A.ensure(permitsPerSecond > 0.0 && !Double.isNaN(permitsPerSecond), "rate must be positive");
+        if (permitsPerSecond == 0) {
+            stableIntervalMicros = Double.NaN;
+
+            return;
+        }
 
         synchronized (mux) {
             resync();
@@ -93,6 +97,9 @@ public class BasicRateLimiter {
      * @return The stable rate (as {@code permits per seconds}).
      */
     public double getRate() {
+        if (Double.isNaN(stableIntervalMicros))
+            return Double.NaN;
+
         synchronized (mux) {
             return SECONDS.toMicros(1L) / stableIntervalMicros;
         }
@@ -103,11 +110,13 @@ public class BasicRateLimiter {
      * can be granted. Tells the amount of time slept, if any.
      *
      * @param permits the number of permits to acquire
-     * @return time spent sleeping to enforce rate, in seconds; 0.0 if not rate-limited
      * @throws IllegalArgumentException if the requested number of permits is negative or zero
      * @since 16.0 (present in 13.0 with {@code void} return type})
      */
-    public double acquire(int permits) throws IgniteInterruptedCheckedException {
+    public void acquire(int permits) throws IgniteInterruptedCheckedException {
+        if (Double.isNaN(stableIntervalMicros))
+            return;
+
         long microsToWait = reserve(permits);
 
         try {
@@ -118,8 +127,6 @@ public class BasicRateLimiter {
 
             throw new IgniteInterruptedCheckedException(e);
         }
-
-        return 1.0 * microsToWait / SECONDS.toMicros(1L);
     }
 
     /**
@@ -136,29 +143,16 @@ public class BasicRateLimiter {
 
             long momentAvailable = nextFreeTicketMicros;
 
-            nextFreeTicketMicros = saturatedAdd(momentAvailable, (long)(permits * stableIntervalMicros));
+            nextFreeTicketMicros = momentAvailable + (long)(permits * stableIntervalMicros);
 
             return max(momentAvailable - nowMicros, 0);
         }
     }
 
-    private static long saturatedAdd(long a, long b) {
-        long naiveSum = a + b;
-
-        if ((a ^ b) < 0 | (a ^ naiveSum) >= 0) {
-            // If a and b have different signs or a has the same sign as the result then there was no
-            // overflow, return.
-            return naiveSum;
-        }
-
-        // we did over/under flow, if the sign is negative we should return MAX otherwise MIN
-        return Long.MAX_VALUE + ((naiveSum >>> (Long.SIZE - 1)) ^ 1);
-    }
-
     /**
      * Updates {@code nextFreeTicketMicros} based on the current time.
      *
-     * @return passed time since start in microseconds.
+     * @return Time passed (since start) in microseconds.
      */
     private long resync() {
         long passed = MICROSECONDS.convert(System.nanoTime() - startTime, NANOSECONDS);
@@ -168,33 +162,5 @@ public class BasicRateLimiter {
             nextFreeTicketMicros = passed;
 
         return passed;
-    }
-
-    @Override public String toString() {
-        return String.format(Locale.ROOT, "RateLimiter[stableRate=%3.1fqps]", getRate());
-    }
-
-    public static void main(String[] args) throws IgniteInterruptedCheckedException {
-        BasicRateLimiter limiter = new BasicRateLimiter(2);
-
-        long start = System.currentTimeMillis();
-
-        for (int i = 0; i < 50; i++) {
-            limiter.acquire(1);
-
-            System.out.println(">>> " + i);
-
-            if (i == 20) {
-                System.out.println("total: " + (System.currentTimeMillis() - start) / 1000);
-
-                limiter.setRate(5);
-
-                U.sleep(2_000);
-
-                start = System.currentTimeMillis();
-            }
-        }
-
-        System.out.println("total: " + (System.currentTimeMillis() - start) / 1000);
     }
 }
