@@ -122,7 +122,7 @@ public enum IgniteFeatures {
     INDEXES_MANIPULATIONS_FROM_CONTROL_SCRIPT(42),
 
     /** Cache encryption key change. See {@link IgniteEncryption#changeCacheGroupKey(Collection)}. */
-    CACHE_GROUP_KEY_CHANGE(41);
+    CACHE_GROUP_KEY_CHANGE(43);
 
     /**
      * Unique feature identifier.
