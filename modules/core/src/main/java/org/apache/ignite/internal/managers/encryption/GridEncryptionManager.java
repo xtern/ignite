@@ -129,8 +129,8 @@ import static org.apache.ignite.internal.util.distributed.DistributedProcess.Dis
  * @see #prepareMKChangeProc
  * @see #performMKChangeProc
  */
-public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> implements MetastorageLifecycleListener,
-    IgniteChangeGlobalStateSupport, IgniteEncryption {
+public class  GridEncryptionManager extends IgniteEncryptionManager implements MetastorageLifecycleListener,
+    IgniteChangeGlobalStateSupport {
     /**
      * Cache encryption introduced in this Ignite version.
      */
@@ -524,13 +524,8 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
         }
     }
 
-    /**
-     * Returns group encryption key.
-     *
-     * @param grpId Group id.
-     * @return Group encryption key.
-     */
-    @Nullable public Serializable groupKey(int grpId) {
+    /** {@inheritDoc} */
+    @Override @Nullable public Serializable groupKey(int grpId) {
         if (grpEncKeys.isEmpty())
             return null;
 
@@ -543,7 +538,7 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
      * @param grpId Group id.
      * @param encGrpKey Encrypted group key.
      */
-    public void groupKey(int grpId, byte[] encGrpKey) {
+    private void groupKey(int grpId, byte[] encGrpKey) {
         assert !grpEncKeys.containsKey(grpId);
 
         Serializable encKey = withMasterKeyChangeReadLock(() -> getSpi().decryptKey(encGrpKey));
@@ -665,11 +660,8 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
         groupKey(grpId, encKey);
     }
 
-    /**
-     * Callback for cache group destroy event.
-     * @param grpId Group id.
-     */
-    public void onCacheGroupDestroyed(int grpId) {
+    /** {@inheritDoc} */
+    @Override public void onCacheGroupDestroyed(int grpId) {
         if (groupKey(grpId) == null)
             return;
 
@@ -747,7 +739,7 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
     }
 
     /** {@inheritDoc} */
-    @Override public void onActivate(GridKernalContext kctx) throws IgniteCheckedException {
+    @Override public void onActivate(GridKernalContext kctx) {
         withMasterKeyChangeReadLock(() -> {
             synchronized (metaStorageMux) {
                 writeToMetaStoreEnabled = metaStorage != null;
@@ -767,11 +759,8 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
         }
     }
 
-    /**
-     * @param keyCnt Count of keys to generate.
-     * @return Future that will contain results of generation.
-     */
-    public IgniteInternalFuture<T2<Collection<byte[]>, byte[]>> generateKeys(int keyCnt) {
+    /** {@inheritDoc} */
+    @Override  public IgniteInternalFuture<T2<Collection<byte[]>, byte[]>> generateKeys(int keyCnt) {
         if (keyCnt == 0 || !ctx.clientNode())
             return new GridFinishedFuture<>(createKeys(keyCnt));
 
@@ -829,12 +818,8 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
         }
     }
 
-    /**
-     * Checks cache encryption supported by all nodes in cluster.
-     *
-     * @throws IgniteCheckedException If check fails.
-     */
-    public void checkEncryptedCacheSupported() throws IgniteCheckedException {
+    /** {@inheritDoc} */
+    @Override public void checkEncryptedCacheSupported() throws IgniteCheckedException {
         Collection<ClusterNode> nodes = ctx.grid().cluster().nodes();
 
         for (ClusterNode node : nodes) {
@@ -986,12 +971,8 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
         assert ptr != null;
     }
 
-    /**
-     * Apply keys from WAL record during the recovery phase.
-     *
-     * @param rec Record.
-     */
-    public void applyKeys(MasterKeyChangeRecord rec) {
+    /** {@inheritDoc} */
+    @Override public void applyKeys(MasterKeyChangeRecord rec) {
         assert !writeToMetaStoreEnabled && !ctx.state().clusterState().active();
 
         log.info("Master key name loaded from WAL [masterKeyName=" + rec.getMasterKeyName() + ']');
@@ -1155,19 +1136,13 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
         }
     }
 
-    /** @return {@code True} if the master key change process in progress. */
-    public boolean isMasterKeyChangeInProgress() {
+    /** {@inheritDoc} */
+    @Override public boolean isMasterKeyChangeInProgress() {
         return masterKeyChangeRequest != null;
     }
 
-    /**
-     * Digest of last changed master key or {@code null} if master key was not changed.
-     * <p>
-     * Used to verify the digest on a client node in case of cache start after master key change.
-     *
-     * @return Digest of last changed master key or {@code null} if master key was not changed.
-     */
-    public byte[] masterKeyDigest() {
+    /** {@inheritDoc} */
+    @Override public byte[] masterKeyDigest() {
         return masterKeyDigest;
     }
 

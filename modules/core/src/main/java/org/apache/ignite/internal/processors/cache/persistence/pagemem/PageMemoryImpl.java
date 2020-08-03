@@ -48,6 +48,7 @@ import org.apache.ignite.failure.FailureContext;
 import org.apache.ignite.failure.FailureType;
 import org.apache.ignite.internal.IgniteInternalFuture;
 import org.apache.ignite.internal.managers.encryption.GridEncryptionManager;
+import org.apache.ignite.internal.managers.encryption.IgniteEncryptionManager;
 import org.apache.ignite.internal.mem.DirectMemoryProvider;
 import org.apache.ignite.internal.mem.DirectMemoryRegion;
 import org.apache.ignite.internal.mem.IgniteOutOfMemoryException;
@@ -200,7 +201,7 @@ public class PageMemoryImpl implements PageMemoryEx {
     private IgniteWriteAheadLogManager walMgr;
 
     /** */
-    private final GridEncryptionManager encMgr;
+    private final IgniteEncryptionManager encMgr;
 
     /** */
     private final boolean encryptionDisabled;
