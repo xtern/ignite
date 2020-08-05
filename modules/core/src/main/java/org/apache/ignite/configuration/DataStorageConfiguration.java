@@ -307,8 +307,7 @@ public class DataStorageConfiguration implements Serializable {
     private Integer walPageCompressionLevel;
 
     /** Encryption configuration. */
-    @SuppressWarnings("TransientFieldNotInitialized")
-    private transient EncryptionConfiguration encrCfg = new EncryptionConfiguration();
+    private EncryptionConfiguration encrCfg = new EncryptionConfiguration();
 
     /**
      * Creates valid durable memory configuration with all default values.
