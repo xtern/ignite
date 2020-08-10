@@ -137,13 +137,9 @@ public class CacheGroupPageScanner implements DbCheckpointListener {
 
                 try {
                     for (GroupScanFuture scanFut : completeCandidates) {
-                        boolean rmv = grps.remove(scanFut.groupId()) != null;
+                        grps.remove(scanFut.groupId());
 
-                        assert rmv : scanFut.groupId();
-
-                        boolean done = scanFut.onDone();
-
-                        assert done : scanFut.groupId();
+                        scanFut.onDone();
 
                         if (log.isInfoEnabled())
                             log.info("Cache group reencryption is finished [grpId=" + scanFut.groupId() + "]");
