@@ -77,7 +77,7 @@ public class CacheGroupPageScanner implements DbCheckpointListener {
     private final Map<Integer, GroupScanFuture> grps = new ConcurrentHashMap<>();
 
     /** Queue of groups waiting for a checkpoint. */
-    private final Queue<Integer> cpWaitGrps = new ConcurrentLinkedQueue<>();
+    private final Queue<GroupScanFuture> cpWaitGrps = new ConcurrentLinkedQueue<>();
 
     /** Executor to start partition scan tasks. */
     private final IgniteThreadPoolExecutor execSvc;
@@ -117,15 +117,16 @@ public class CacheGroupPageScanner implements DbCheckpointListener {
 
     /** {@inheritDoc} */
     @Override public void onCheckpointBegin(Context cpCtx) {
-        Set<Integer> completeCandidates = new HashSet<>();
+        Set<GroupScanFuture> completeCandidates = new HashSet<>();
 
-        Integer grpId;
+        GroupScanFuture grpScanFut;
 
-        while ((grpId = cpWaitGrps.poll()) != null)
-            completeCandidates.add(grpId);
+        while ((grpScanFut = cpWaitGrps.poll()) != null)
+            completeCandidates.add(grpScanFut);
 
         cpCtx.finishedStateFut().listen(
             f -> {
+                // Retry if error occurs.
                 if (f.error() != null || f.isCancelled()) {
                     cpWaitGrps.addAll(completeCandidates);
 
@@ -135,15 +136,17 @@ public class CacheGroupPageScanner implements DbCheckpointListener {
                 lock.lock();
 
                 try {
-                    for (int groupId : completeCandidates) {
-                        GroupScanFuture scanCtx = grps.remove(groupId);
+                    for (GroupScanFuture scanFut : completeCandidates) {
+                        boolean rmv = grps.remove(scanFut.groupId()) != null;
 
-                        boolean finished = scanCtx.onDone();
+                        assert rmv : scanFut.groupId();
 
-                        assert finished : groupId;
+                        boolean done = scanFut.onDone();
+
+                        assert done : scanFut.groupId();
 
                         if (log.isInfoEnabled())
-                            log.info("Cache group reencryption is finished [grpId=" + groupId + "]");
+                            log.info("Cache group reencryption is finished [grpId=" + scanFut.groupId() + "]");
                     }
 
                     if (!grps.isEmpty())
@@ -242,7 +245,7 @@ public class CacheGroupPageScanner implements DbCheckpointListener {
                     return;
                 }
 
-                boolean added = cpWaitGrps.offer(grpId);
+                boolean added = cpWaitGrps.offer(ctx0);
 
                 assert added;
             });
