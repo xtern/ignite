@@ -211,7 +211,7 @@ public class CacheGroupPageScanner implements DbCheckpointListener {
                 return prevState;
             }
 
-            GroupScanFuture ctx0 = new GroupScanFuture(grpId);
+            GroupScanFuture grpScan = new GroupScanFuture(grpId);
 
             forEachPageStore(grp, new IgniteInClosureX<Integer>() {
                 @Override public void applyx(Integer partId) {
@@ -222,26 +222,26 @@ public class CacheGroupPageScanner implements DbCheckpointListener {
                         return;
                     }
 
-                    PageStoreScanTask scanTask = new PageStoreScanTask(ctx0, partId);
+                    PageStoreScanTask scanTask = new PageStoreScanTask(grpScan, partId);
 
-                    ctx0.add(partId, scanTask);
+                    grpScan.add(partId, scanTask);
 
                     execSvc.submit(scanTask);
                 }
             });
 
-            ctx0.initialize().listen(f -> {
+            grpScan.initialize().listen(f -> {
                 Throwable t = f.error();
 
                 if (t != null) {
                     log.error("Reencryption is failed [grpId=" + grpId + "]", t);
 
-                    ctx0.onDone(t);
+                    grpScan.onDone(t);
 
                     return;
                 }
 
-                boolean added = cpWaitGrps.offer(ctx0);
+                boolean added = cpWaitGrps.offer(grpScan);
 
                 assert added;
             });
@@ -249,9 +249,9 @@ public class CacheGroupPageScanner implements DbCheckpointListener {
             if (log.isInfoEnabled())
                 log.info("Scheduled reencryption [grpId=" + grpId + "]");
 
-            grps.put(grpId, ctx0);
+            grps.put(grpId, grpScan);
 
-            return ctx0;
+            return grpScan;
         }
         finally {
             lock.unlock();
