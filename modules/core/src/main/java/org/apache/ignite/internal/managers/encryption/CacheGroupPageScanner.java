@@ -36,11 +36,13 @@ import org.apache.ignite.internal.IgniteInternalFuture;
 import org.apache.ignite.internal.NodeStoppingException;
 import org.apache.ignite.internal.managers.communication.GridIoPolicy;
 import org.apache.ignite.internal.pagemem.PageIdAllocator;
+import org.apache.ignite.internal.pagemem.PageIdUtils;
 import org.apache.ignite.internal.pagemem.store.IgnitePageStoreManager;
 import org.apache.ignite.internal.processors.cache.CacheGroupContext;
 import org.apache.ignite.internal.processors.cache.persistence.DbCheckpointListener;
 import org.apache.ignite.internal.processors.cache.persistence.GridCacheDatabaseSharedManager;
 import org.apache.ignite.internal.processors.cache.persistence.pagemem.PageMemoryEx;
+import org.apache.ignite.internal.processors.cache.persistence.partstate.GroupPartitionId;
 import org.apache.ignite.internal.util.BasicRateLimiter;
 import org.apache.ignite.internal.util.future.GridCompoundFuture;
 import org.apache.ignite.internal.util.future.GridFinishedFuture;
@@ -475,9 +477,14 @@ public class CacheGroupPageScanner implements DbCheckpointListener {
 
         /** {@inheritDoc} */
         @Override public void run() {
-            try {
-                int grpId = scanCtx.groupId();
+            int grpId = scanCtx.groupId();
 
+            long state = ctx.encryption().getEncryptionState(grpId, partId);
+
+            int off = (int)(state >> Integer.SIZE);
+            int cnt = (int)state;
+
+            try {
                 CacheGroupContext grp = ctx.cache().cacheGroup(grpId);
 
                 if (grp == null) {
@@ -487,12 +494,7 @@ public class CacheGroupPageScanner implements DbCheckpointListener {
                 }
 
                 PageMemoryEx pageMem = (PageMemoryEx)grp.dataRegion().pageMemory();
-                long metaPageId = pageMem.partitionMetaPageId(grpId, partId);
-                long state = ctx.encryption().getEncryptionState(grpId, partId);
                 int batchSize = encrCfg.getReencryptionBatchSize();
-
-                int off = (int)(state >> Integer.SIZE);
-                int cnt = (int)state;
 
                 if (log.isDebugEnabled()) {
                     log.debug("Partition reencryption is started [grpId=" + grpId +
@@ -512,7 +514,7 @@ public class CacheGroupPageScanner implements DbCheckpointListener {
                         ctx.cache().context().database().checkpointReadLock();
 
                         try {
-                            off += scanPages(pageMem, metaPageId + off, pagesCnt);
+                            off += scanPages(pageMem, off, pagesCnt);
                         }
                         finally {
                             ctx.cache().context().database().checkpointReadUnlock();
@@ -520,16 +522,6 @@ public class CacheGroupPageScanner implements DbCheckpointListener {
                     }
 
                     ctx.encryption().setEncryptionState(grpId, partId, off, cnt);
-                }
-
-                if (log.isDebugEnabled()) {
-                    log.debug("Partition reencryption is finished " +
-                        "[grpId=" + grpId +
-                        ", p=" + partId +
-                        ", remain=" + (cnt - off) +
-                        ", total=" + cnt +
-                        ", cancelled=" + isCancelled() +
-                        ", failed=" + isFailed() + "]");
                 }
 
                 onDone();
@@ -540,19 +532,32 @@ public class CacheGroupPageScanner implements DbCheckpointListener {
                 else
                     onDone(t);
             }
+            finally {
+                if (log.isDebugEnabled()) {
+                    log.debug("Partition reencryption is finished " +
+                        "[grpId=" + grpId +
+                        ", p=" + partId +
+                        ", remain=" + (cnt - off) +
+                        ", total=" + cnt +
+                        ", cancelled=" + isCancelled() +
+                        ", failed=" + isFailed() + "]");
+                }
+            }
         }
 
         /**
          * @param pageMem Page memory.
-         * @param startPageId Start page ID.
+         * @param off Start page offset.
          * @param cnt Count of pages to scan.
          * @return Count of scanned pages.
          * @throws IgniteCheckedException If failed.
          */
-        private int scanPages(PageMemoryEx pageMem, long startPageId, int cnt) throws IgniteCheckedException {
+        private int scanPages(PageMemoryEx pageMem, final int off, final int cnt) throws IgniteCheckedException {
             int grpId = scanCtx.groupId();
+            byte flag = GroupPartitionId.getFlagByPartId(partId);
 
-            for (long pageId = startPageId; pageId < startPageId + cnt; pageId++) {
+            for (int pageIdx = off; pageIdx < off + cnt; pageIdx++) {
+                long pageId = PageIdUtils.pageId(partId, flag, pageIdx);
                 long page = pageMem.acquirePage(grpId, pageId);
 
                 try {
