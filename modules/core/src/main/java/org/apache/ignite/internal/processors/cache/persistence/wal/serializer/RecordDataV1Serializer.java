@@ -70,7 +70,7 @@ import org.apache.ignite.internal.pagemem.wal.record.delta.MetaPageInitRecord;
 import org.apache.ignite.internal.pagemem.wal.record.delta.MetaPageInitRootInlineFlagsCreatedVersionRecord;
 import org.apache.ignite.internal.pagemem.wal.record.delta.MetaPageInitRootInlineRecord;
 import org.apache.ignite.internal.pagemem.wal.record.delta.MetaPageInitRootRecord;
-import org.apache.ignite.internal.pagemem.wal.record.delta.MetaPageUpdateDataRecord;
+import org.apache.ignite.internal.pagemem.wal.record.delta.MetaPageUpdateIndexDataRecord;
 import org.apache.ignite.internal.pagemem.wal.record.delta.MetaPageUpdateLastAllocatedIndex;
 import org.apache.ignite.internal.pagemem.wal.record.delta.MetaPageUpdateLastSuccessfulFullSnapshotId;
 import org.apache.ignite.internal.pagemem.wal.record.delta.MetaPageUpdateLastSuccessfulSnapshotId;
@@ -635,7 +635,7 @@ public class RecordDataV1Serializer implements RecordDataSerializer {
                 break;
 
             case META_PAGE_DELTA_RECORD:
-                res = new MetaPageUpdateDataRecord(in);
+                res = new MetaPageUpdateIndexDataRecord(in);
 
                 break;
 
@@ -1322,7 +1322,7 @@ public class RecordDataV1Serializer implements RecordDataSerializer {
                 break;
 
             case META_PAGE_DELTA_RECORD:
-                ((MetaPageUpdateDataRecord)rec).toBytes(buf);
+                ((MetaPageUpdateIndexDataRecord)rec).toBytes(buf);
 
                 break;
 
