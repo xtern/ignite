@@ -628,7 +628,7 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
      * @return List of the key identifiers.
      */
     @Nullable public List<Integer> groupKeyIds(int grpId) {
-        return grpKeys.keyIds(grpId);
+         return grpKeys.keyIds(grpId);
     }
 
     /**
@@ -795,6 +795,14 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
         // The method guarantees not only the completion of the re-encryption, but also that the clearing of
         // unused keys is complete.
         return reencryptGroups.containsKey(grpId);
+    }
+
+    public void setReencryptionRate(double rate) {
+        pageScanner.reencryptionRate(rate);
+    }
+
+    public double getReencryptionRate() {
+        return pageScanner.reencryptionRate();
     }
 
     /**
@@ -1121,6 +1129,21 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
         fut.nodeId(rndNode.id());
 
         ctx.io().sendToGridTopic(rndNode.id(), TOPIC_GEN_ENC_KEY, req, SYSTEM_POOL);
+    }
+
+    /**
+     * Forces re-encryption of the cache group.
+     *
+     * @param grpId Cache group ID.
+     */
+    public void resumeReencryption(int grpId) throws IgniteCheckedException {
+        if (grpKeyChangeProc.inProgress())
+            throw new IgniteCheckedException("Cannot force start reencryption during cache group key change.");
+
+        if (!reencryptionRequired(grpId))
+            throw new IgniteCheckedException("Reencryption is not required [grpId=" + grpId +"]");
+
+        startReencryption(Collections.singleton(grpId));
     }
 
     /**
