@@ -18,7 +18,9 @@
 package org.apache.ignite.internal.ducktest.tests;
 
 import com.fasterxml.jackson.databind.JsonNode;
-import org.apache.ignite.IgniteCache;
+import java.util.ArrayList;
+import java.util.List;
+import org.apache.ignite.Ignite;
 import org.apache.ignite.IgniteDataStreamer;
 import org.apache.ignite.internal.ducktest.utils.IgniteAwareApplication;
 
@@ -26,18 +28,86 @@ import org.apache.ignite.internal.ducktest.utils.IgniteAwareApplication;
  *
  */
 public class DataGenerationApplication extends IgniteAwareApplication {
+    /** */
+    private static class Streamer implements Runnable {
+        /** Cache name. */
+        private final String cacheName;
+
+        /** Size. */
+        private final int cnt;
+
+        /** Start index. */
+        private final int startIdx;
+
+        /** Ignite. */
+        private final Ignite ignite;
+
+        /**
+         * @param ignite Ignite.
+         * @param cacheName Cache name.
+         * @param startIdx Start index.
+         * @param cnt Batch size.
+         */
+        public Streamer(Ignite ignite, String cacheName, int startIdx, int cnt) {
+            this.cacheName = cacheName;
+            this.cnt = cnt;
+            this.startIdx = startIdx;
+            this.ignite = ignite;
+        }
+
+        /** {@inheritDoc} */
+        @Override public void run() {
+            try (IgniteDataStreamer<Integer, String> stmr = ignite.dataStreamer(cacheName)) {
+                for (int i = startIdx; i < startIdx + cnt; i++) {
+                    stmr.addData(i, "streamed data-" + i);
+
+                    if (i % 10_000 == 0)
+                        log.info("Streamed " + i + " entries");
+                }
+            }
+        }
+    }
+
     /** {@inheritDoc} */
     @Override protected void run(JsonNode jsonNode) {
         log.info("Creating cache...");
 
-        IgniteCache<Integer, Integer> cache = ignite.createCache(jsonNode.get("cacheName").asText());
+        String cacheName = jsonNode.get("cacheName").asText();
 
-        try (IgniteDataStreamer<Integer, Integer> stmr = ignite.dataStreamer(cache.getName())) {
-            for (int i = 0; i < jsonNode.get("range").asInt(); i++) {
-                stmr.addData(i, i);
+        JsonNode threadsCntNode = jsonNode.get("threads_count");
 
-                if (i % 10_000 == 0)
-                    log.info("Streamed " + i + " entries");
+        int threadCnt = threadsCntNode == null ? 1 : threadsCntNode.asInt();
+
+        ignite.getOrCreateCache(cacheName);
+
+        int maxOps = jsonNode.get("range").asInt() / threadCnt;
+
+        List<Thread> threads = new ArrayList<>(threadCnt - 1);
+
+        int perThreadOps = maxOps / threadCnt;
+
+        for (int i = 0; i < threadCnt; i++) {
+            Streamer streamer = new Streamer(ignite, cacheName, i * perThreadOps, perThreadOps);
+
+            if (i == threadCnt - 1) {
+                streamer.run();
+
+                break;
+            }
+
+            Thread t = new Thread(streamer, "stream-" + i);
+
+            threads.add(t);
+
+            t.start();
+        }
+
+        for (int i = 0; i < threads.size(); i++) {
+            try {
+                threads.get(i).join();
+            }
+            catch (InterruptedException e) {
+                e.printStackTrace();
             }
         }
 
