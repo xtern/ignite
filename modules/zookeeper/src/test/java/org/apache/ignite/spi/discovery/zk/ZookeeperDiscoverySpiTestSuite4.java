@@ -18,6 +18,7 @@
 package org.apache.ignite.spi.discovery.zk;
 
 import org.apache.ignite.internal.ClusterNodeMetricsUpdateTest;
+import org.apache.ignite.internal.encryption.EncryptedCacheNodeJoinTest;
 import org.apache.ignite.internal.processors.cache.distributed.dht.IgniteCachePutRetryAtomicSelfTest;
 import org.apache.ignite.internal.processors.cache.distributed.dht.IgniteCachePutRetryTransactionalSelfTest;
 import org.apache.ignite.internal.processors.cache.distributed.near.GridCacheAtomicMultiNodeFullApiSelfTest;
@@ -34,15 +35,16 @@ import org.junit.runners.Suite;
  */
 @RunWith(Suite.class)
 @Suite.SuiteClasses({
-    ZookeeperDiscoverySuitePreprocessorTest.class,
-    IgniteCachePutRetryAtomicSelfTest.class,
-    IgniteCachePutRetryTransactionalSelfTest.class,
-    ClusterNodeMetricsUpdateTest.class,
-    GridCacheAtomicMultiNodeFullApiSelfTest.class,
-    GridCacheReplicatedAtomicMultiNodeFullApiSelfTest.class,
-    IgniteCacheReplicatedQuerySelfTest.class,
-    DistributedMetaStorageTest.class,
-    DistributedMetaStoragePersistentTest.class
+//    ZookeeperDiscoverySuitePreprocessorTest.class,
+//    IgniteCachePutRetryAtomicSelfTest.class,
+//    IgniteCachePutRetryTransactionalSelfTest.class,
+//    ClusterNodeMetricsUpdateTest.class,
+//    GridCacheAtomicMultiNodeFullApiSelfTest.class,
+//    GridCacheReplicatedAtomicMultiNodeFullApiSelfTest.class,
+//    IgniteCacheReplicatedQuerySelfTest.class,
+//    DistributedMetaStorageTest.class,
+//    DistributedMetaStoragePersistentTest.class,
+    EncryptedCacheNodeJoinTest.class
 })
 public class ZookeeperDiscoverySpiTestSuite4 {
     /** */

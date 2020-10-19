@@ -462,11 +462,19 @@ public class DiscoveryDataPacket implements Serializable {
      * Returns {@link DiscoveryDataBag} aware of components with already initialized common data
      * (e.g. on nodes prior in cluster to the one where this method is called).
      */
-    public DiscoveryDataBag bagForDataCollection() {
+    public DiscoveryDataBag bagForDataCollection(Marshaller marsh, ClassLoader clsLdr, boolean clientNode, IgniteLogger log) {
         DiscoveryDataBag dataBag = new DiscoveryDataBag(joiningNodeId, commonData.keySet(), joiningNodeClient);
 
-        if (unmarshalledJoiningNodeData != null)
+        if (unmarshalledJoiningNodeData != null) {
             dataBag.joiningNodeData(unmarshalledJoiningNodeData);
+
+            try {
+                dataBag.commonData(unmarshalData(commonData, marsh, clsLdr, clientNode, log, true));
+            }
+            catch (IgniteCheckedException e) {
+                log.error("Unable to unmarshal common data", e);
+            }
+        }
 
         return dataBag;
     }

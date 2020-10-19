@@ -24,6 +24,7 @@ import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
@@ -459,46 +460,109 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
 
     /** {@inheritDoc} */
     @Override public void onJoiningNodeDataReceived(JoiningNodeDiscoveryData data) {
+        U.dumpStack("onJoiningNodeDataReceived [start]");
+
+//        try {
+//            U.sleep(1_000);
+//        }
+//        catch (IgniteInterruptedCheckedException e) {
+//            e.printStackTrace();
+//        }
+
         NodeEncryptionKeys nodeEncryptionKeys = (NodeEncryptionKeys)data.joiningNodeData();
 
         if (nodeEncryptionKeys == null || nodeEncryptionKeys.newKeys == null || ctx.clientNode())
             return;
 
         for (Map.Entry<Integer, byte[]> entry : nodeEncryptionKeys.newKeys.entrySet()) {
-            if (groupKey(entry.getKey()) == null) {
+            if (groupKey(entry.getKey()) == null && entry.getValue() != null) {
                 U.quietAndInfo(log, "Store group key received from joining node [node=" +
                         data.joiningNodeId() + ", grp=" + entry.getKey() + "]");
 
                 groupKey(entry.getKey(), entry.getValue());
             }
+//            else
+//                if (groupKey(entry.getKey()) == null) {
+//                    groupKey(entry.getKey(), entry)
+//                }
             else {
                 U.quietAndInfo(log, "Skip group key received from joining node. Already exists. [node=" +
                     data.joiningNodeId() + ", grp=" + entry.getKey() + "]");
             }
         }
+
+        log.info("onJoiningNodeDataReceived [end]");
     }
 
     /** {@inheritDoc} */
     @Override public void collectGridNodeData(DiscoveryDataBag dataBag) {
-        if (dataBag.isJoiningNodeClient() || dataBag.commonDataCollectedFor(ENCRYPTION_MGR.ordinal()))
-            return;
+        log.info(">>>>>>>>>>> collectGridNodeData [start] ");
+
+//        try {
+//            U.sleep(2_000);
+//        }
+//        catch (IgniteInterruptedCheckedException e) {
+//            e.printStackTrace();
+//        }
+
+        Set<Integer> missedGrps = new HashSet<>();
+
+        if (dataBag.isJoiningNodeClient() && !ctx.clientNode()) {
+            NodeEncryptionKeys nodeEncryptionKeys = (NodeEncryptionKeys)dataBag.joiningNodeData().get(ENCRYPTION_MGR.ordinal());
+
+            if (nodeEncryptionKeys != null && nodeEncryptionKeys.newKeys != null)
+            for (Map.Entry<Integer, byte[]> e : nodeEncryptionKeys.newKeys.entrySet()) {
+                if (e.getValue() == null && groupKey(e.getKey()) == null) {
+                    missedGrps.add(e.getKey());
+                    //nodeEncryptionKeys.newKeys.put(e.getKey(), getSpi().encryptKey(getSpi().create()));
+                }
+            }
+//            dataBag.joiningNodeId();
+        }
+
+//        if (dataBag.commonDataCollectedFor(ENCRYPTION_MGR.ordinal()))
+//            return;
 
         HashMap<Integer, byte[]> knownEncKeys = knownEncryptionKeys();
 
         HashMap<Integer, byte[]> newKeys =
             newEncryptionKeys(knownEncKeys == null ? Collections.EMPTY_SET : knownEncKeys.keySet());
 
+        for (Integer grpId : missedGrps) {
+            Map<Integer, byte[]> pm = (Map<Integer, byte[]>)dataBag.commonData().get(ENCRYPTION_MGR.ordinal());
+
+//            assert pm == null;
+//            byte[] prev = pm == null ? null : pm.get(grpId);
+//
+//            U.dumpStack("adding missed key");
+//            log.info(">xxx> adding missed key " + grpId  + " prev=" + prev);
+
+            byte[] encKey = pm == null ? null : pm.get(grpId);
+
+            if (encKey == null)
+                encKey = getSpi().encryptKey(getSpi().create());
+
+            if (newKeys != null)
+                newKeys.put(grpId, encKey);
+
+            if (groupKey(grpId) == null)
+                groupKey(grpId, encKey);
+        }
+
         if (knownEncKeys == null)
             knownEncKeys = newKeys;
         else if (newKeys != null) {
             for (Map.Entry<Integer, byte[]> entry : newKeys.entrySet()) {
-                byte[] old = knownEncKeys.putIfAbsent(entry.getKey(), entry.getValue());
+                byte[] old = knownEncKeys.put(entry.getKey(), entry.getValue());
 
                 assert old == null;
             }
         }
+        log.info(">Xxx> dataBag.addGridCommonData " + knownEncKeys);
 
         dataBag.addGridCommonData(ENCRYPTION_MGR.ordinal(), knownEncKeys);
+
+        log.info(">>>>>>>>>>> collectGridNodeData [end] ");
     }
 
     /** {@inheritDoc} */
@@ -891,7 +955,10 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
             if (newKeys == null)
                 newKeys = new HashMap<>();
 
-            newKeys.put(grpDesc.groupId(), getSpi().encryptKey(getSpi().create()));
+            if (ctx.clientNode())
+                System.out.println(">xxx> generate null");
+
+            newKeys.put(grpDesc.groupId(), ctx.clientNode() ? null : getSpi().encryptKey(getSpi().create()));
         }
 
         return newKeys;
