@@ -45,6 +45,7 @@ import org.apache.ignite.failure.FailureContext;
 import org.apache.ignite.internal.GridKernalContext;
 import org.apache.ignite.internal.IgniteFeatures;
 import org.apache.ignite.internal.IgniteInternalFuture;
+import org.apache.ignite.internal.IgniteInterruptedCheckedException;
 import org.apache.ignite.internal.managers.GridManagerAdapter;
 import org.apache.ignite.internal.managers.communication.GridMessageListener;
 import org.apache.ignite.internal.managers.eventstorage.DiscoveryEventListener;
@@ -434,8 +435,8 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
 
     /** {@inheritDoc} */
     @Override public void collectJoiningNodeData(DiscoveryDataBag dataBag) {
-        if (dataBag.isJoiningNodeClient())
-            return;
+//        if (dataBag.isJoiningNodeClient())
+//            return;
 
         HashMap<Integer, byte[]> knownEncKeys = knownEncryptionKeys();
 
@@ -496,7 +497,6 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
 
     /** {@inheritDoc} */
     @Override public void collectGridNodeData(DiscoveryDataBag dataBag) {
-        log.info(">>>>>>>>>>> collectGridNodeData [start] ");
 
 //        try {
 //            U.sleep(2_000);
@@ -508,12 +508,15 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
         Set<Integer> missedGrps = new HashSet<>();
 
         if (dataBag.isJoiningNodeClient() && !ctx.clientNode()) {
+            U.dumpStack(">>>>>>>>>>> collectGridNodeData [start] " + dataBag.joiningNodeData().get(ENCRYPTION_MGR.ordinal()));
+
             NodeEncryptionKeys nodeEncryptionKeys = (NodeEncryptionKeys)dataBag.joiningNodeData().get(ENCRYPTION_MGR.ordinal());
 
             if (nodeEncryptionKeys != null && nodeEncryptionKeys.newKeys != null)
             for (Map.Entry<Integer, byte[]> e : nodeEncryptionKeys.newKeys.entrySet()) {
                 if (e.getValue() == null && groupKey(e.getKey()) == null) {
                     missedGrps.add(e.getKey());
+                    log.info("adding missed grp " + e.getKey());
                     //nodeEncryptionKeys.newKeys.put(e.getKey(), getSpi().encryptKey(getSpi().create()));
                 }
             }
@@ -539,8 +542,11 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
 
             byte[] encKey = pm == null ? null : pm.get(grpId);
 
-            if (encKey == null)
+            if (encKey == null) {
+                log.info("Generate new key for grp " + grpId);
+
                 encKey = getSpi().encryptKey(getSpi().create());
+            }
 
             if (newKeys != null)
                 newKeys.put(grpId, encKey);
@@ -567,8 +573,11 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
 
     /** {@inheritDoc} */
     @Override public void onGridDataReceived(GridDiscoveryData data) {
-        if (ctx.clientNode())
+        if (ctx.clientNode()) {
+            U.dumpStack(">xxx> onGridDataReceived encKeysFromCluster=" + data.commonData());
+
             return;
+        }
 
         Map<Integer, byte[]> encKeysFromCluster = (Map<Integer, byte[]>)data.commonData();
 

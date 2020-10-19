@@ -54,6 +54,8 @@ class ZkJoinEventDataForJoined implements Serializable {
     byte[] discoveryDataForNode(long nodeOrder) {
         assert discoData != null;
 
+        System.out.println("req " + nodeOrder + ", avail = " + discoData.keySet());
+
         byte[] dataBytes = discoData.get(nodeOrder);
 
         if (dataBytes != null)

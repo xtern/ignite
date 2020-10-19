@@ -113,7 +113,7 @@ public class EncryptedCacheNodeJoinTest extends AbstractEncryptionTest {
         CacheConfiguration ccfg = defaultCacheConfiguration();
 
         ccfg.setName(cacheName());
-        ccfg.setEncryptionEnabled(gridName.equals(GRID_0) || gridName.equals(CLIENT) || gridName.equals(GRID_6));
+        ccfg.setEncryptionEnabled(true);
 
         return ccfg;
     }
@@ -276,6 +276,7 @@ public class EncryptedCacheNodeJoinTest extends AbstractEncryptionTest {
 
         startGrid(GRID_0);
         startGrid(GRID_3);
+        startGrid(GRID_4);
 
         IgniteEx client1 = startClientGrid("client1");
 
@@ -283,6 +284,10 @@ public class EncryptedCacheNodeJoinTest extends AbstractEncryptionTest {
 
         if (activateBeforeJoin)
             grid(GRID_0).cluster().state(ClusterState.ACTIVE);
+
+        System.out.println(">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>");
+        System.out.println(">>> start client grid      >>>");
+        System.out.println(">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>");
 
         IgniteEx node = client ? startClientGrid(CLIENT) : startGrid(GRID_6);
 
