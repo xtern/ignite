@@ -381,6 +381,7 @@ public class ZookeeperDiscoverySpi extends IgniteSpiAdapter implements IgniteDis
 
     /** {@inheritDoc} */
     @Override public void setDataExchange(DiscoverySpiDataExchange exchange) {
+        U.dumpStack("setDataExchange " + exchange.getClass());
         this.exchange = exchange;
     }
 

@@ -433,8 +433,8 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
 
     /** {@inheritDoc} */
     @Override public void collectJoiningNodeData(DiscoveryDataBag dataBag) {
-        if (dataBag.isJoiningNodeClient())
-            return;
+//        if (dataBag.isJoiningNodeClient())
+//            return;
 
         HashMap<Integer, byte[]> knownEncKeys = knownEncryptionKeys();
 
@@ -465,6 +465,9 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
             return;
 
         for (Map.Entry<Integer, byte[]> entry : nodeEncryptionKeys.newKeys.entrySet()) {
+            if (entry.getValue() == null)
+                continue;
+
             if (groupKey(entry.getKey()) == null) {
                 U.quietAndInfo(log, "Store group key received from joining node [node=" +
                         data.joiningNodeId() + ", grp=" + entry.getKey() + "]");
@@ -480,13 +483,44 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
 
     /** {@inheritDoc} */
     @Override public void collectGridNodeData(DiscoveryDataBag dataBag) {
-        if (dataBag.isJoiningNodeClient() || dataBag.commonDataCollectedFor(ENCRYPTION_MGR.ordinal()))
-            return;
-
         HashMap<Integer, byte[]> knownEncKeys = knownEncryptionKeys();
 
         HashMap<Integer, byte[]> newKeys =
             newEncryptionKeys(knownEncKeys == null ? Collections.EMPTY_SET : knownEncKeys.keySet());
+
+        NodeEncryptionKeys joiningNodeKeys =
+            (NodeEncryptionKeys)dataBag.joiningNodeData().get(ENCRYPTION_MGR.ordinal());
+
+        assert joiningNodeKeys != null : dataBag.joiningNodeId();
+
+        if (dataBag.isJoiningNodeClient() && !ctx.clientNode() && joiningNodeKeys.newKeys != null) {
+            Map<Integer, byte[]> commonData = (Map<Integer, byte[]>)dataBag.commonData().get(ENCRYPTION_MGR.ordinal());
+
+            for (Map.Entry<Integer, byte[]> e : joiningNodeKeys.newKeys.entrySet()) {
+                int grpId = e.getKey();
+
+                if (groupKey(grpId) == null) {
+                    byte[] encKey = commonData == null ? null : commonData.get(grpId);
+
+                    if (encKey == null) {
+                        U.quietAndInfo(log, "Generating and storing new encryption key for cache group " +
+                            "configured on the client node [grp=" + grpId + ']');
+
+                        encKey = getSpi().encryptKey(getSpi().create());
+                    }
+                    else {
+                        U.quietAndInfo(log, "Storing the new encryption key for cache group " +
+                            "configured on the client node [grp=" + grpId + ']');
+                    }
+
+                    if (newKeys == null)
+                        newKeys = new HashMap<>();
+
+                    newKeys.put(e.getKey(), encKey);
+                    groupKey(e.getKey(), encKey);
+                }
+            }
+        }
 
         if (knownEncKeys == null)
             knownEncKeys = newKeys;
@@ -891,7 +925,7 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
             if (newKeys == null)
                 newKeys = new HashMap<>();
 
-            newKeys.put(grpDesc.groupId(), getSpi().encryptKey(getSpi().create()));
+            newKeys.put(grpDesc.groupId(), ctx.clientNode() ? null : getSpi().encryptKey(getSpi().create()));
         }
 
         return newKeys;
