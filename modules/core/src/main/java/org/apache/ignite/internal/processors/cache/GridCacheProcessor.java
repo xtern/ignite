@@ -5426,7 +5426,7 @@ public class GridCacheProcessor extends GridProcessorAdapter {
                 if (!affinityNode)
                     continue;
 
-                startCacheInRecoveryMode(cacheDescriptor);
+//                startCacheInRecoveryMode(cacheDescriptor);
 
                 querySchemas.put(cacheDescriptor.cacheId(), cacheDescriptor.schema().copy());
             }

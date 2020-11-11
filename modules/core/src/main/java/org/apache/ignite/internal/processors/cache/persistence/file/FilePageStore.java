@@ -566,6 +566,9 @@ public class FilePageStore implements PageStore {
                             try {
                                 File cfgFile = pathProvider.apply().toFile();
 
+                                if (cfgFile.toString().contains("index.bin"))
+                                    U.dumpStack("Create idx part: " + cfgFile);
+
                                 this.fileIO = fileIO = ioFactory.create(cfgFile, CREATE, READ, WRITE);
 
                                 fileExists = true;

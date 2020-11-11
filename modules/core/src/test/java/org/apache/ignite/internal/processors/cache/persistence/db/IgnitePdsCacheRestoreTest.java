@@ -20,6 +20,7 @@ package org.apache.ignite.internal.processors.cache.persistence.db;
 import java.util.Arrays;
 import java.util.List;
 import org.apache.ignite.IgniteCache;
+import org.apache.ignite.cluster.ClusterState;
 import org.apache.ignite.configuration.CacheConfiguration;
 import org.apache.ignite.configuration.DataRegionConfiguration;
 import org.apache.ignite.configuration.DataStorageConfiguration;
@@ -79,7 +80,7 @@ public class IgnitePdsCacheRestoreTest extends GridCommonAbstractTest {
     @Override protected void afterTest() throws Exception {
         stopAllGrids();
 
-        cleanPersistenceDir();
+//        cleanPersistenceDir();
 
         super.afterTest();
     }
@@ -90,6 +91,28 @@ public class IgnitePdsCacheRestoreTest extends GridCommonAbstractTest {
     @Test
     public void testRestoreAndNewCache1() throws Exception {
         restoreAndNewCache(false);
+    }
+
+    /**
+     * @throws Exception If failed.
+     */
+    @Test
+    public void testIdxPartitionInitialization() throws Exception {
+        //restoreAndNewCache(false);
+        ccfgs = configurations1();
+
+        IgniteEx node = startGrid(0);
+
+        node.cluster().state(ClusterState.ACTIVE);
+
+        IgniteCache cache = node.cache("c1");
+
+        cache.put("1", "1");
+
+        forceCheckpoint();
+
+        cache.put("2", "2");
+
     }
 
     /**

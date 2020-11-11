@@ -22,6 +22,7 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import org.apache.ignite.internal.processors.query.h2.opt.GridH2RowDescriptor;
 import org.apache.ignite.internal.processors.query.h2.opt.GridH2Table;
+import org.apache.ignite.internal.util.typedef.internal.U;
 import org.h2.api.TableEngine;
 import org.h2.command.ddl.CreateTableData;
 import org.h2.table.TableBase;
@@ -61,6 +62,8 @@ public class H2TableEngine implements TableEngine {
         tblDesc0 = tblDesc;
 
         try {
+            U.dumpStack(">>>> execute " + sql);
+
             try (Statement s = conn.createStatement()) {
                 s.execute(sql + " engine \"" + H2TableEngine.class.getName() + "\"");
             }
@@ -78,6 +81,8 @@ public class H2TableEngine implements TableEngine {
 
     /** {@inheritDoc} */
     @Override public TableBase createTable(CreateTableData createTblData) {
+        U.dumpStack("createTable " + createTblData.tableName);
+
         resTbl0 = new GridH2Table(createTblData, rowDesc0, tblDesc0, tblDesc0.cacheInfo());
 
         return resTbl0;

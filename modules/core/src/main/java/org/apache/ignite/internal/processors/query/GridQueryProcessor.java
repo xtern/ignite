@@ -63,8 +63,10 @@ import org.apache.ignite.internal.IgniteInternalFuture;
 import org.apache.ignite.internal.NodeStoppingException;
 import org.apache.ignite.internal.binary.BinaryMetadata;
 import org.apache.ignite.internal.managers.communication.GridMessageListener;
+import org.apache.ignite.internal.pagemem.PageIdAllocator;
 import org.apache.ignite.internal.processors.GridProcessorAdapter;
 import org.apache.ignite.internal.processors.affinity.AffinityTopologyVersion;
+import org.apache.ignite.internal.processors.cache.CacheGroupContext;
 import org.apache.ignite.internal.processors.cache.CacheObject;
 import org.apache.ignite.internal.processors.cache.CacheObjectContext;
 import org.apache.ignite.internal.processors.cache.DynamicCacheChangeBatch;
@@ -74,6 +76,7 @@ import org.apache.ignite.internal.processors.cache.ExchangeActions;
 import org.apache.ignite.internal.processors.cache.GridCacheContext;
 import org.apache.ignite.internal.processors.cache.GridCacheContextInfo;
 import org.apache.ignite.internal.processors.cache.IgniteCacheOffheapManager;
+import org.apache.ignite.internal.processors.cache.IgniteInternalCache;
 import org.apache.ignite.internal.processors.cache.KeyCacheObject;
 import org.apache.ignite.internal.processors.cache.QueryCursorImpl;
 import org.apache.ignite.internal.processors.cache.binary.CacheObjectBinaryProcessorImpl;
@@ -2120,6 +2123,8 @@ public class GridQueryProcessor extends GridProcessorAdapter {
             if (idx != null)
                 idx.registerCache(cacheName, schemaName, cacheInfo);
 
+            boolean initIdxPart = idx != null && ctx.cache().context().pageStore().exists(cacheInfo.groupId(), PageIdAllocator.INDEX_PARTITION);
+
             try {
                 for (QueryTypeCandidate cand : cands) {
                     QueryTypeIdKey typeId = cand.typeId();
@@ -2148,7 +2153,7 @@ public class GridQueryProcessor extends GridProcessorAdapter {
                         }
                     }
 
-                    if (idx != null)
+                    if (initIdxPart)
                         idx.registerType(cacheInfo, desc, isSql);
                 }
 
@@ -2158,6 +2163,82 @@ public class GridQueryProcessor extends GridProcessorAdapter {
                 onCacheStop0(cacheInfo, true);
 
                 throw e;
+            }
+        }
+    }
+
+    public void performTypeRegistrationForCaches(CacheGroupContext grp) throws IgniteCheckedException {
+//        if (true)
+//            return;
+
+        if (idx == null)
+            return;
+
+        // todo shared groups
+        if (ctx.cache().context().pageStore().exists(grp.groupId(), PageIdAllocator.INDEX_PARTITION)) {
+//            System.out.println(">xxx> skip " + grp.name());
+
+            return;
+        }
+
+//        //DynamicCacheDescriptor
+        DynamicCacheDescriptor desc = ctx.cache().cacheDescriptor(grp.groupId());
+//
+////        assert desc != null;
+//
+//
+//        String schemaName = QueryUtils.normalizeSchemaName(desc.cacheName(), desc.cacheConfiguration().getSqlSchema());
+//
+//        U.dumpStack("perform registration: " + schemaName);
+//
+//        GridCacheContextInfo cacheInfo = new GridCacheContextInfo(desc);
+//
+//        T3<Collection<QueryTypeCandidate>, Map<String, QueryTypeDescriptorImpl>, Map<String, QueryTypeDescriptorImpl>>
+//            candRes = createQueryCandidates(desc.cacheName(), schemaName, cacheInfo, desc.schema().entities(), desc.cacheConfiguration().isSqlEscapeAll());
+//
+//        // Ensure that candidates has unique index names.
+//        // Otherwise we will not be able to apply pending operations.
+//        Collection<QueryTypeCandidate> cands = candRes.get1();
+//
+//        for (QueryTypeCandidate cand : cands) {
+////                QueryTypeIdKey typeId = cand.typeId();
+////                QueryTypeIdKey altTypeId = cand.alternativeTypeId();
+//            QueryTypeDescriptorImpl desc0 = cand.descriptor();
+//
+//            idx.registerType(cacheInfo, desc0, false);
+//        }
+
+        for (GridCacheContext cctx : grp.caches()) {
+            String schemaName = QueryUtils.normalizeSchemaName(cctx.name(), cctx.config().getSqlSchema());
+
+            U.dumpStack("perform registration: " + schemaName);
+
+//            IgniteInternalCache cache = ctx.cache().cache(desc.cacheName());
+//
+//            assert cache != null : desc.cacheName();
+//            assert cache.context() != null : desc.cacheName();
+//
+//            GridCacheContextInfo cacheInfo = new GridCacheContextInfo(cache.context(), false);
+
+            GridCacheContextInfo cacheInfo = new GridCacheContextInfo(cctx, false);
+
+            CacheConfiguration<?, ?> ccfg = cctx.config();
+
+            Collection<QueryEntity> entities = ccfg.getQueryEntities();
+
+            T3<Collection<QueryTypeCandidate>, Map<String, QueryTypeDescriptorImpl>, Map<String, QueryTypeDescriptorImpl>>
+                candRes = createQueryCandidates(cctx.name(), schemaName, cacheInfo, entities, ccfg.isSqlEscapeAll());
+
+            // Ensure that candidates has unique index names.
+            // Otherwise we will not be able to apply pending operations.
+            Collection<QueryTypeCandidate> cands = candRes.get1();
+
+            for (QueryTypeCandidate cand : cands) {
+//                QueryTypeIdKey typeId = cand.typeId();
+//                QueryTypeIdKey altTypeId = cand.alternativeTypeId();
+                QueryTypeDescriptorImpl desc0 = cand.descriptor();
+
+                idx.registerType(cacheInfo, desc0, false);
             }
         }
     }

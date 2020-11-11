@@ -333,6 +333,8 @@ public class SchemaManager {
 
             schema.add(tblDesc);
 
+//            U.dumpStack("put tbl=" + h2tbl.identifier() + " name = " + h2tbl.cacheName());
+
             if (dataTables.putIfAbsent(h2tbl.identifier(), h2tbl) != null)
                 throw new IllegalStateException("Table already exists: " + h2tbl.identifierString());
         }

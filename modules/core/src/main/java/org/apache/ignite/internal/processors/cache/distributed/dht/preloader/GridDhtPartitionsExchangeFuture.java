@@ -3970,7 +3970,9 @@ public class GridDhtPartitionsExchangeFuture extends GridDhtTopologyFutureAdapte
             }
 
             for (CacheGroupContext grpCtx : cctx.cache().cacheGroups()) {
-                if (!grpCtx.isLocal())
+                cctx.kernalContext().query().performTypeRegistrationForCaches(grpCtx);
+
+                if (grpCtx.isLocal())
                     grpCtx.topology().applyUpdateCounters();
             }
 
@@ -4824,6 +4826,9 @@ public class GridDhtPartitionsExchangeFuture extends GridDhtTopologyFutureAdapte
                     if (grp != null) {
                         CachePartitionFullCountersMap cntrMap = msg.partitionUpdateCounters(grpId,
                             grp.topology().partitions());
+
+                        // todo initialize
+                        cctx.kernalContext().query().performTypeRegistrationForCaches(grp);
 
                         grp.topology().update(resTopVer,
                             msg.partitions().get(grpId),

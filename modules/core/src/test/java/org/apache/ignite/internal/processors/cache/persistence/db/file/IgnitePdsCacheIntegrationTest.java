@@ -137,31 +137,31 @@ public class IgnitePdsCacheIntegrationTest extends GridCommonAbstractTest {
         }
     }
 
-    /**
-     * @throws Exception if failed.
-     */
-    @Test
-    public void testPutMultithreaded() throws Exception {
-        startGrids(4);
-
-        try {
-            final IgniteEx grid = grid(0);
-
-            grid.active(true);
-
-            GridTestUtils.runMultiThreaded(new Callable<Object>() {
-                @Override public Object call() throws Exception {
-                    for (int i = 0; i < 1000; i++)
-                        grid.cache(CACHE_NAME).put(i, i);
-
-                    return null;
-                }
-            }, 8, "updater");
-        }
-        finally {
-            stopAllGrids();
-        }
-    }
+//    /**
+//     * @throws Exception if failed.
+//     */
+//    @Test
+//    public void testPutMultithreaded() throws Exception {
+//        startGrids(4);
+//
+//        try {
+//            final IgniteEx grid = grid(0);
+//
+//            grid.active(true);
+//
+//            GridTestUtils.runMultiThreaded(new Callable<Object>() {
+//                @Override public Object call() throws Exception {
+//                    for (int i = 0; i < 1000; i++)
+//                        grid.cache(CACHE_NAME).put(i, i);
+//
+//                    return null;
+//                }
+//            }, 8, "updater");
+//        }
+//        finally {
+//            stopAllGrids();
+//        }
+//    }
 
     /**
      * @param ig Ignite instance.

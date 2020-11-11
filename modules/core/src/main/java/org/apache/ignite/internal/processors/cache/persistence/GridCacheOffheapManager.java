@@ -158,10 +158,10 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
         IgniteSystemProperties.IGNITE_UNWIND_THROTTLING_TIMEOUT, DFLT_UNWIND_THROTTLING_TIMEOUT);
 
     /** */
-    private IndexStorage indexStorage;
+    private volatile IndexStorage indexStorage;
 
     /** */
-    private ReuseListImpl reuseList;
+    private volatile ReuseListImpl reuseList;
 
     /** Page list cache limit for data region of this cache group. */
     private AtomicLong pageListCacheLimit;
@@ -179,53 +179,66 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
 
     /** {@inheritDoc} */
     @Override protected void initDataStructures() throws IgniteCheckedException {
-        assert ctx.database().checkpointLockIsHeldByThread();
-
-        Metas metas = getOrAllocateCacheMetas();
-
-        CacheDiagnosticManager diagnosticMgr = ctx.diagnostic();
-
-        String reuseListName = grp.cacheOrGroupName() + "##ReuseList";
-        String indexStorageTreeName = grp.cacheOrGroupName() + "##IndexStorageTree";
-
-        RootPage reuseListRoot = metas.reuseListRoot;
-
         GridCacheDatabaseSharedManager databaseSharedManager = (GridCacheDatabaseSharedManager)ctx.database();
 
+        persStoreMetrics = databaseSharedManager.persistentStoreMetricsImpl();
         pageListCacheLimit = databaseSharedManager.pageListCacheLimitHolder(grp.dataRegion());
 
-        reuseList = new ReuseListImpl(
-            grp.groupId(),
-            grp.cacheOrGroupName(),
-            grp.dataRegion().pageMemory(),
-            ctx.wal(),
-            reuseListRoot.pageId().pageId(),
-            reuseListRoot.isAllocated(),
-            diagnosticMgr.pageLockTracker().createPageLockTracker(reuseListName),
-            ctx.kernalContext(),
-            pageListCacheLimit
-        );
-
-        RootPage metastoreRoot = metas.treeRoot;
-
-        indexStorage = new IndexStorageImpl(
-            grp.dataRegion().pageMemory(),
-            ctx.wal(),
-            globalRemoveId(),
-            grp.groupId(),
-            grp.sharedGroup(),
-            PageIdAllocator.INDEX_PARTITION,
-            PageIdAllocator.FLAG_IDX,
-            reuseList,
-            metastoreRoot.pageId().pageId(),
-            metastoreRoot.isAllocated(),
-            ctx.kernalContext().failure(),
-            diagnosticMgr.pageLockTracker().createPageLockTracker(indexStorageTreeName)
-        );
-
-        persStoreMetrics = databaseSharedManager.persistentStoreMetricsImpl();
+//        initDataStructures0();
 
         databaseSharedManager.addCheckpointListener(this);
+    }
+
+    /** */
+    private final AtomicBoolean initIdx = new AtomicBoolean();
+
+    /** */
+    private final CountDownLatch initIdxlatch = new CountDownLatch(1);
+
+    private void initDataStructures0() throws IgniteCheckedException {
+        if (initIdx.compareAndSet(false, true)) {
+            U.dumpStack("initDataStructures");
+
+            assert ctx.database().checkpointLockIsHeldByThread();
+
+            Metas metas = getOrAllocateCacheMetas();
+
+            CacheDiagnosticManager diagnosticMgr = ctx.diagnostic();
+
+            String reuseListName = grp.cacheOrGroupName() + "##ReuseList";
+            String indexStorageTreeName = grp.cacheOrGroupName() + "##IndexStorageTree";
+
+            RootPage reuseListRoot = metas.reuseListRoot;
+
+            reuseList = new ReuseListImpl(
+                grp.groupId(),
+                grp.cacheOrGroupName(),
+                grp.dataRegion().pageMemory(),
+                ctx.wal(),
+                reuseListRoot.pageId().pageId(),
+                reuseListRoot.isAllocated(),
+                diagnosticMgr.pageLockTracker().createPageLockTracker(reuseListName),
+                ctx.kernalContext(),
+                pageListCacheLimit
+            );
+
+            RootPage metastoreRoot = metas.treeRoot;
+
+            indexStorage = new IndexStorageImpl(
+                grp.dataRegion().pageMemory(),
+                ctx.wal(),
+                globalRemoveId(),
+                grp.groupId(),
+                grp.sharedGroup(),
+                PageIdAllocator.INDEX_PARTITION,
+                PageIdAllocator.FLAG_IDX,
+                reuseList,
+                metastoreRoot.pageId().pageId(),
+                metastoreRoot.isAllocated(),
+                ctx.kernalContext().failure(),
+                diagnosticMgr.pageLockTracker().createPageLockTracker(indexStorageTreeName)
+            );
+        } else U.await(initIdxlatch);
     }
 
     /**
@@ -233,6 +246,15 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
      * See {@link UpgradePendingTreeToPerPartitionTask} for details.
      */
     public IndexStorage getIndexStorage() {
+        if (indexStorage == null) {
+            try {
+                initDataStructures0();
+            }
+            catch (IgniteCheckedException e) {
+                throw new IgniteException(e);
+            }
+        }
+
         return indexStorage;
     }
 
@@ -341,20 +363,23 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
      */
     private void syncMetadata(Context ctx, Executor execSvc, boolean needSnapshot) throws IgniteCheckedException {
         if (execSvc == null) {
-            reuseList.saveMetadata(grp.statisticsHolderData());
+            if (reuseList != null)
+                reuseList.saveMetadata(grp.statisticsHolderData());
 
             for (CacheDataStore store : partDataStores.values())
                 saveStoreMetadata(store, ctx, false, needSnapshot);
         }
         else {
-            execSvc.execute(() -> {
-                try {
-                    reuseList.saveMetadata(grp.statisticsHolderData());
-                }
-                catch (IgniteCheckedException e) {
-                    throw new IgniteException(e);
-                }
-            });
+            if (reuseList != null) {
+                execSvc.execute(() -> {
+                    try {
+                        reuseList.saveMetadata(grp.statisticsHolderData());
+                    }
+                    catch (IgniteCheckedException e) {
+                        throw new IgniteException(e);
+                    }
+                });
+            }
 
             for (CacheDataStore store : partDataStores.values())
                 execSvc.execute(() -> {
@@ -1020,12 +1045,12 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
 
     /** {@inheritDoc} */
     @Override public RootPage rootPageForIndex(int cacheId, String idxName, int segment) throws IgniteCheckedException {
-        return indexStorage.allocateCacheIndex(cacheId, idxName, segment);
+        return getIndexStorage().allocateCacheIndex(cacheId, idxName, segment);
     }
 
     /** {@inheritDoc} */
     @Override public void dropRootPageForIndex(int cacheId, String idxName, int segment) throws IgniteCheckedException {
-        indexStorage.dropCacheIndex(cacheId, idxName, segment);
+        getIndexStorage().dropCacheIndex(cacheId, idxName, segment);
     }
 
     /** {@inheritDoc} */
@@ -1278,12 +1303,14 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
      * @throws IgniteCheckedException If failed.
      */
     public void findAndCleanupLostIndexesForStoppedCache(int cacheId) throws IgniteCheckedException {
-        for (String name : indexStorage.getIndexNames()) {
-            if (indexStorage.nameIsAssosiatedWithCache(name, cacheId)) {
+        IndexStorage indexStorage0 = getIndexStorage();
+
+        for (String name : indexStorage0.getIndexNames()) {
+            if (indexStorage0.nameIsAssosiatedWithCache(name, cacheId)) {
                 ctx.database().checkpointReadLock();
 
                 try {
-                    RootPage page = indexStorage.allocateIndex(name);
+                    RootPage page = indexStorage0.allocateIndex(name);
 
                     ctx.kernalContext().query().getIndexing().destroyOrphanIndex(
                         page,
@@ -1294,7 +1321,7 @@ public class GridCacheOffheapManager extends IgniteCacheOffheapManagerImpl imple
                         grp.mvccEnabled()
                     );
 
-                    indexStorage.dropIndex(name);
+                    indexStorage0.dropIndex(name);
                 }
                 finally {
                     ctx.database().checkpointReadUnlock();
