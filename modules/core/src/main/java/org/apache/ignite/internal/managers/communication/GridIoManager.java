@@ -270,6 +270,9 @@ public class GridIoManager extends GridManagerAdapter<CommunicationSpi<Serializa
     /** Direct protocol version. */
     public static final byte DIRECT_PROTO_VER = 3;
 
+    /** Session timeout which processing files. */
+    private static final int CHANNEL_SESSION_TIMEOUT_MS = 60_000;
+
     /** Current IO policy. */
     private static final ThreadLocal<Byte> CUR_PLC = new ThreadLocal<>();
 
@@ -2802,9 +2805,15 @@ public class GridIoManager extends GridManagerAdapter<CommunicationSpi<Serializa
             rctx.lastState = rctx.lastState == null ?
                 new TransmissionMeta(ex) : rctx.lastState.error(ex);
 
-            rctx.hnd.onException(rctx.rmtNodeId, ex);
+            if (X.hasCause(ex, TransmissionCancelledException.class)) {
+                if (log.isInfoEnabled())
+                    log.info("Transmission receiver has been cancelled [rctx=" + rctx + ']');
+            }
+            else {
+                rctx.hnd.onException(rctx.rmtNodeId, ex);
 
-            U.error(log, "Receiver has been interrupted due to an exception occurred [ctx=" + rctx + ']', ex);
+                U.error(log, "Receiver has been interrupted due to an exception occurred [rctx=" + rctx + ']', ex);
+            }
         }
     }
 
@@ -2858,7 +2867,8 @@ public class GridIoManager extends GridManagerAdapter<CommunicationSpi<Serializa
                     "It's not allowed to process different sessions over the same topic simultaneously. " +
                     "Channel will be closed [initMsg=" + initMsg + ", channel=" + ch + ", nodeId=" + rmtNodeId + ']');
 
-                U.error(log, err);
+                U.error(log, "Error has been sent back to remote node. Receiver holds the local topic " +
+                    "[topic=" + topic + ", rmtNodeId=" + rmtNodeId + ", ctx=" + rcvCtx + ']', err);
 
                 out.writeObject(new TransmissionMeta(err));
 
@@ -2890,8 +2900,6 @@ public class GridIoManager extends GridManagerAdapter<CommunicationSpi<Serializa
             }
         }
         catch (Throwable t) {
-            U.error(log, "Download session cannot be finished due to an unexpected error [ctx=" + rcvCtx + ']', t);
-
             // Do not remove receiver context here, since sender will recconect to get this error.
             interruptRecevier(rcvCtx, new IgniteCheckedException("Channel processing error [nodeId=" + rmtNodeId + ']', t));
         }
@@ -2989,7 +2997,7 @@ public class GridIoManager extends GridManagerAdapter<CommunicationSpi<Serializa
                 }
 
                 @Override public long endTime() {
-                    return startTs + netTimeoutMs;
+                    return startTs + CHANNEL_SESSION_TIMEOUT_MS;
                 }
 
                 @Override public void onTimeout() {
@@ -3266,6 +3274,13 @@ public class GridIoManager extends GridManagerAdapter<CommunicationSpi<Serializa
         }
 
         /**
+         * @return {@code true} if sender's session is currently active.
+         */
+        public boolean opened() {
+            return senderStopFlags.containsKey(sesKey);
+        }
+
+        /**
          * @param file Source file to send to remote.
          * @param params Additional file params.
          * @param plc The policy of handling data on remote.
@@ -3402,6 +3417,11 @@ public class GridIoManager extends GridManagerAdapter<CommunicationSpi<Serializa
 
                 if (stopping)
                     throw new NodeStoppingException("Operation has been cancelled (node is stopping)");
+
+                if (senderStopFlags.get(sesKey) == null)
+                    e.printStackTrace();
+
+                assert senderStopFlags.get(sesKey) != null : "key=" + sesKey + ", flags=" + senderStopFlags.keySet();
 
                 if (senderStopFlags.get(sesKey).get())
                     throw new ClusterTopologyCheckedException("Remote node left the cluster: " + rmtId, e);

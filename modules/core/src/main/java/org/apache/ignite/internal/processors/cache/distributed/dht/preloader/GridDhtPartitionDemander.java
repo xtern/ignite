@@ -367,6 +367,29 @@ public class GridDhtPartitionDemander {
                 return null;
             }
 
+//            if (!grp.localWalEnabled())
+//                fut.listen(new IgniteInClosureX<IgniteInternalFuture<Boolean>>() {
+//                    @Override public void applyx(IgniteInternalFuture<Boolean> future) throws IgniteCheckedException {
+//                        if (future.get()) {
+//                            GridCompoundFuture<Object, ?> idxsFut = new GridCompoundFuture<>();
+//
+//                            for (GridCacheContext ctx : grp.caches()) {
+//                                IgniteInternalFuture<Object> idxFut =
+//                                    (IgniteInternalFuture<Object>)ctx.shared().database().indexRebuildFuture(ctx.cacheId());
+//
+//                                if (idxFut != null)
+//                                    idxsFut.add(idxFut);
+//                            }
+//
+//                            idxsFut.markInitialized();
+//
+//                            idxsFut.listen(f ->
+//                                ctx.walState().onGroupRebalanceFinished(grp.groupId(), assignments.topologyVersion())
+//                            );
+//                        }
+//                    }
+//                });
+
             // Check if ongoing rebalancing is compatible with a new assignment.
             if (!force && (!oldFut.isDone() || oldFut.result()) && oldFut.compatibleWith(assignments)) {
                 if (!oldFut.isDone())

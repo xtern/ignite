@@ -72,6 +72,15 @@ public interface GridCachePreloader {
     public boolean rebalanceRequired(GridDhtPartitionsExchangeFuture exchFut);
 
     /**
+     * Set rebalance version to {@link AffinityTopologyVersion#NONE} if rebalancing should be restarted.
+     *
+     * @param exchFut Exchange future.
+     * @param resVer Exchange result version.
+     * @return {@code True} if the version has been updated or it's already set to {@link AffinityTopologyVersion#NONE}.
+     */
+    public boolean updateRebalanceVersion(GridDhtPartitionsExchangeFuture exchFut, AffinityTopologyVersion resVer);
+
+    /**
      * @param exchId Exchange ID.
      * @param exchFut Completed exchange future. Can be {@code null} if forced or reassigned generation occurs.
      * @return Partition assignments which will be requested from supplier nodes.

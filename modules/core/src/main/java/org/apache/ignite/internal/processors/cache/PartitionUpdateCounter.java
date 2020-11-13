@@ -148,4 +148,9 @@ public interface PartitionUpdateCounter extends Iterable<long[]> {
      * @return A deep copy of current instance.
      */
     public PartitionUpdateCounter copy();
+
+    /**
+     * @return Highest applied counter.
+     */
+    public long highestAppliedCounter();
 }

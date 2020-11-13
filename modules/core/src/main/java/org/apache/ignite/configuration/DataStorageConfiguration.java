@@ -83,6 +83,9 @@ public class DataStorageConfiguration implements Serializable {
         (long)(DFLT_DATA_REGION_FRACTION * U.getTotalMemoryAvailable()),
         DFLT_DATA_REGION_INITIAL_SIZE);
 
+    /** Default working directory for a snapshot final result. */
+    public static final String DFLT_LOCAL_SNAPSHOT_DIRECTORY = "snapshots";
+
     /** Default initial size of a memory chunk for the system cache (40 MB). */
     private static final long DFLT_SYS_REG_INIT_SIZE = 40L * 1024 * 1024;
 
@@ -167,6 +170,9 @@ public class DataStorageConfiguration implements Serializable {
     /** Default path (relative to working directory) of marshaller mappings folder */
     public static final String DFLT_MARSHALLER_PATH = "db/marshaller";
 
+    /** Default working directory for backup temporary files. */
+    public static final String DFLT_BACKUP_DIRECTORY = "db/backup";
+
     /** Default write throttling enabled. */
     public static final boolean DFLT_WRITE_THROTTLING_ENABLED = false;
 
@@ -204,6 +210,9 @@ public class DataStorageConfiguration implements Serializable {
 
     /** Directory where index and partition files are stored. */
     private String storagePath;
+
+    /** Directory where will be stored all results of snapshot operations. */
+    private String locSnapshotPath = DFLT_LOCAL_SNAPSHOT_DIRECTORY;
 
     /** Checkpoint frequency. */
     private long checkpointFreq = DFLT_CHECKPOINT_FREQ;
@@ -485,6 +494,24 @@ public class DataStorageConfiguration implements Serializable {
      */
     public DataStorageConfiguration setStoragePath(String persistenceStorePath) {
         this.storagePath = persistenceStorePath;
+
+        return this;
+    }
+
+    /**
+     * @return Relative path where will be stored all local snapshot results.
+     */
+    public String getLocalSnapshotPath() {
+        return locSnapshotPath;
+    }
+
+    /**
+     * @param locSnapshotPath Relative path to store all local snapshot results. By default
+     * {@code DFLT_LOCAL_SNAPSHOT_DIRECTORY} is used.
+     * @return Data storage configurations for chaining.
+     */
+    public DataStorageConfiguration setLocalSnapshotPath(String locSnapshotPath) {
+        this.locSnapshotPath = locSnapshotPath;
 
         return this;
     }

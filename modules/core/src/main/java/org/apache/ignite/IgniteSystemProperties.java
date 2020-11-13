@@ -1117,6 +1117,16 @@ public final class IgniteSystemProperties {
         "This property is intended for integration or performance tests")
     public static final String IGNITE_PREFER_WAL_REBALANCE = "IGNITE_PREFER_WAL_REBALANCE";
 
+    /**
+     * Flag to enable file rebalancing.
+     */
+    public static final String IGNITE_FILE_REBALANCE_ENABLED = "IGNITE_FILE_REBALANCE_ENABLED";
+
+    /**
+     * File rebalancing is applicable only if the number of entries in the partition is greater than this threshold.
+     */
+    public static final String IGNITE_FILE_REBALANCE_THRESHOLD = "IGNITE_PDS_FILE_REBALANCE_THRESHOLD";
+
     /** Ignite page memory concurrency level. */
     @SystemProperty(value = "Ignite page memory concurrency level", type = Integer.class)
     public static final String IGNITE_OFFHEAP_LOCK_CONCURRENCY_LEVEL = "IGNITE_OFFHEAP_LOCK_CONCURRENCY_LEVEL";
