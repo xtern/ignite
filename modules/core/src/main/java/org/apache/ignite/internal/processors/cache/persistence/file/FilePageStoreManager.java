@@ -608,10 +608,13 @@ public class FilePageStoreManager extends GridCacheSharedManagerAdapter implemen
     }
 
     /** {@inheritDoc} */
-    @Override public boolean exists(int grpId, int partId) throws IgniteCheckedException {
-        PageStore store = getStore(grpId, partId);
-
-        return store.exists();
+    @Override public boolean exists(int grpId, int partId) {
+        try {
+            return getStore(grpId, partId).exists();
+        }
+        catch (IgniteCheckedException ignore) {
+            return false;
+        }
     }
 
     /** {@inheritDoc} */
@@ -1283,6 +1286,46 @@ public class FilePageStoreManager extends GridCacheSharedManagerAdapter implemen
                 "(partition has not been created) [grpId=" + grpId + ", partId=" + partId + ']');
 
         return store;
+    }
+
+//    /** {@inheritDoc} */
+//    @Override public void beforeCacheGroupStart(CacheGroupDescriptor grpDesc) {
+//        if (grpDesc.persistenceEnabled()) {
+//            boolean localEnabled = cctx.database().walEnabled(grpDesc.groupId(), true);
+//            boolean globalEnabled = cctx.database().walEnabled(grpDesc.groupId(), false);
+//
+//            if (!localEnabled || !globalEnabled) {
+//                File dir = cacheWorkDir(grpDesc.config());
+//
+//                assert dir.exists();
+//
+//                boolean res = IgniteUtils.delete(dir);
+//
+//                assert res;
+//
+//                if (!globalEnabled)
+//                    grpDesc.walEnabled(false);
+//            }
+//        }
+//    }
+
+    /** {@inheritDoc} */
+    @Override public void restore(int grpId, int partId, File src) throws IgniteCheckedException {
+        FilePageStore pageStore = (FilePageStore)getStore(grpId, partId);
+
+        File dest = new File(pageStore.getFileAbsolutePath());
+
+        assert !dest.exists() : "dest=" + dest;
+
+        if (log.isDebugEnabled())
+            log.debug("Moving snapshot [from=" + src + " , to=" + dest + " , size=" + src.length() + "]");
+
+        try {
+            Files.move(src.toPath(), dest.toPath());
+        }
+        catch (IOException e) {
+            throw new IgniteCheckedException("Unable to move partition file [from=" + src + ", to=" + dest + "]", e);
+        }
     }
 
     /**

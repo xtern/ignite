@@ -141,6 +141,7 @@ import org.apache.ignite.internal.util.GridCountDownCallback;
 import org.apache.ignite.internal.util.IgniteUtils;
 import org.apache.ignite.internal.util.StripedExecutor;
 import org.apache.ignite.internal.util.TimeBag;
+import org.apache.ignite.internal.util.future.GridFutureAdapter;
 import org.apache.ignite.internal.util.lang.GridInClosure3X;
 import org.apache.ignite.internal.util.typedef.F;
 import org.apache.ignite.internal.util.typedef.T2;
@@ -162,11 +163,13 @@ import org.jetbrains.annotations.Nullable;
 
 import static java.util.Objects.nonNull;
 import static java.util.function.Function.identity;
+import static org.apache.ignite.IgniteSystemProperties.IGNITE_FILE_REBALANCE_THRESHOLD;
 import static org.apache.ignite.IgniteSystemProperties.IGNITE_PDS_WAL_REBALANCE_THRESHOLD;
 import static org.apache.ignite.IgniteSystemProperties.IGNITE_PREFER_WAL_REBALANCE;
 import static org.apache.ignite.IgniteSystemProperties.IGNITE_RECOVERY_SEMAPHORE_PERMITS;
 import static org.apache.ignite.IgniteSystemProperties.getBoolean;
 import static org.apache.ignite.IgniteSystemProperties.getInteger;
+import static org.apache.ignite.IgniteSystemProperties.getLong;
 import static org.apache.ignite.cache.CacheAtomicityMode.TRANSACTIONAL_SNAPSHOT;
 import static org.apache.ignite.internal.pagemem.PageIdUtils.partId;
 import static org.apache.ignite.internal.pagemem.wal.record.WALRecord.RecordType.CHECKPOINT_RECORD;
@@ -226,6 +229,9 @@ public class GridCacheDatabaseSharedManager extends IgniteCacheDatabaseSharedMan
     /** */
     private final int walRebalanceThreshold =
         getInteger(IGNITE_PDS_WAL_REBALANCE_THRESHOLD, DFLT_PDS_WAL_REBALANCE_THRESHOLD);
+
+    private final long fileRebalanceThreshold =
+        getLong(IGNITE_FILE_REBALANCE_THRESHOLD, DFLT_PDS_WAL_REBALANCE_THRESHOLD);
 
     /** Prefer historical rebalance flag. */
     private final boolean preferWalRebalance = getBoolean(IGNITE_PREFER_WAL_REBALANCE);
@@ -1198,6 +1204,24 @@ public class GridCacheDatabaseSharedManager extends IgniteCacheDatabaseSharedMan
            cctx.kernalContext().query().beforeExchange(fut);
     }
 
+//    /**
+//     * Creates a new index rebuild future that should be completed later after exchange is done. The future
+//     * has to be created before exchange is initialized to guarantee that we will capture a correct future
+//     * after activation or restore completes.
+//     * If there was an old future for the given ID, it will be completed.
+//     *
+//     * @param cacheId Cache ID.
+//     */
+//    private GridFutureAdapter<Void> prepareIndexRebuildFuture(int cacheId) {
+//        GridFutureAdapter<Void> newFut = new GridFutureAdapter<>();
+//        GridFutureAdapter<Void> oldFut = idxRebuildFuts.put(cacheId, newFut);
+//
+//        if (oldFut != null)
+//            oldFut.onDone();
+//
+//        return newFut;
+//    }
+
     /** {@inheritDoc} */
     @Override public void rebuildIndexesIfNeeded(GridDhtPartitionsExchangeFuture exchangeFut) {
         rebuildIndexes(cctx.cacheContexts(), (cacheCtx) -> cacheCtx.startTopologyVersion().equals(exchangeFut.initialVersion()));
@@ -1241,6 +1265,44 @@ public class GridCacheDatabaseSharedManager extends IgniteCacheDatabaseSharedMan
                 rebuildIndexesCompleteCntr.countDown(false);
         }
     }
+
+//    /**
+//     * @param grp Cache group.
+//     * @return Future that will be completed when indexes for all caches in the specified group are ready for use.
+//     */
+//    @Override public IgniteInternalFuture<?> rebuildIndexes(CacheGroupContext grp) {
+//        if (!cctx.kernalContext().query().moduleEnabled())
+//            return new GridFinishedFuture<>();
+//
+//        GridCompoundFuture<Object, ?> idxsFut = new GridCompoundFuture<>();
+//
+//        for (GridCacheContext ctx : grp.caches()) {
+//            IgniteInternalFuture<?> fut = cctx.kernalContext().query().rebuildIndexesFromHash(ctx);
+//
+//            if (fut != null) {
+//                idxsFut.add(((IgniteInternalFuture<Object>)fut));
+//
+//                if (log.isInfoEnabled())
+//                    log.info("Starting index rebuild [cache=" + ctx.cache().name() + "]");
+//
+//                GridFutureAdapter<Void> usrFut =
+//                    ((GridCacheDatabaseSharedManager)cctx.database()).prepareIndexRebuildFuture(ctx.cacheId());
+//
+//                fut.listen(f -> {
+//                    assert !f.isCancelled();
+//
+//                    log.info("Finished index rebuild [cache=" + ctx.cache().name() +
+//                        ", success=" + (f.error() == null) + "]");
+//
+//                    usrFut.onDone();
+//                });
+//            }
+//        }
+//
+//        idxsFut.markInitialized();
+//
+//        return idxsFut;
+//    }
 
     /**
      * Return short information about cache.
@@ -1346,7 +1408,7 @@ public class GridCacheDatabaseSharedManager extends IgniteCacheDatabaseSharedMan
     @Override public synchronized Map<Integer, Map<Integer, Long>> reserveHistoryForExchange() {
         assert reservedForExchange == null : reservedForExchange;
 
-        Map</*grpId*/Integer, Set</*partId*/Integer>> applicableGroupsAndPartitions = partitionsApplicableForWalRebalance();
+        Map</*grpId*/Integer, Set</*partId*/Integer>> applicableGroupsAndPartitions = partitionsApplicableForWalOrFileRebalance();
 
         Map</*grpId*/Integer, T2</*reason*/ReservationReason, Map</*partId*/Integer, CheckpointEntry>>> earliestValidCheckpoints;
 
@@ -1448,15 +1510,17 @@ public class GridCacheDatabaseSharedManager extends IgniteCacheDatabaseSharedMan
     /**
      * @return Map of group id -> Set of partitions which can be used as suppliers for WAL rebalance.
      */
-    private Map<Integer, Set<Integer>> partitionsApplicableForWalRebalance() {
+    private Map<Integer, Set<Integer>> partitionsApplicableForWalOrFileRebalance() {
         Map<Integer, Set<Integer>> res = new HashMap<>();
 
         for (CacheGroupContext grp : cctx.cache().cacheGroups()) {
             if (grp.isLocal())
                 continue;
 
+            boolean fileRebalanceSupported = cctx.preloader().supports(grp);
+
             for (GridDhtLocalPartition locPart : grp.topology().currentLocalPartitions()) {
-                if (locPart.state() == OWNING && (preferWalRebalance() || locPart.fullSize() > walRebalanceThreshold))
+                if (locPart.state() == OWNING && (preferWalRebalance() || locPart.fullSize() > walRebalanceThreshold || (fileRebalanceSupported && locPart.fullSize() > fileRebalanceThreshold)))
                     res.computeIfAbsent(grp.groupId(), k -> new HashSet<>()).add(locPart.id());
             }
         }
@@ -1513,6 +1577,9 @@ public class GridCacheDatabaseSharedManager extends IgniteCacheDatabaseSharedMan
 
     /** {@inheritDoc} */
     @Override public void releaseHistoryForPreloading() {
+        if (log.isDebugEnabled())
+            log.debug("Release history for preloading");
+
         releaseHistForPreloadingLock.lock();
 
         try {
@@ -1536,6 +1603,29 @@ public class GridCacheDatabaseSharedManager extends IgniteCacheDatabaseSharedMan
     @Override public WALPointer latestWalPointerReservedForPreloading() {
         return reservedForPreloading;
     }
+
+//    /**
+//     * Get reserved WAL pointer for preloading.
+//     *
+//     * @param grpId Group ID.
+//     * @param partId Part ID.
+//     * @param initCntr Initial update counter.
+//     * @return Reserved WAL pointer for preloading.
+//     */
+//    public WALPointer searchWALPointer(int grpId, int partId, long initCntr) {
+//        assert reservedForPreloading != null;
+//
+//        T2<Long, WALPointer> reserved = reservedForPreloading.get(new T2<>(grpId, partId));
+//
+//        if (reserved == null)
+//            return checkpointHistory().searchPartitionCounter(grpId, partId, initCntr);
+//
+//        long cntr = reserved.get1();
+//
+//        assert cntr <= initCntr : "reserved=" + cntr + ", init=" + initCntr;
+//
+//        return reserved.get2();
+//    }
 
     /**
      *
@@ -1852,7 +1942,7 @@ public class GridCacheDatabaseSharedManager extends IgniteCacheDatabaseSharedMan
 
         long lastArchivedSegment = cctx.wal().lastArchivedSegment();
 
-        WALIterator it = cctx.wal().replay(recPtr, recordTypePredicate);
+        WALIterator it = cctx.wal().replay(recPtr, true, recordTypePredicate);
 
         RestoreBinaryState restoreBinaryState = new RestoreBinaryState(status, it, lastArchivedSegment, cacheGroupsPredicate);
 
@@ -2340,7 +2430,7 @@ public class GridCacheDatabaseSharedManager extends IgniteCacheDatabaseSharedMan
 
         Map<GroupPartitionId, Integer> partitionRecoveryStates = new HashMap<>();
 
-        WALIterator it = cctx.wal().replay(status.startPtr, recordTypePredicate);
+        WALIterator it = cctx.wal().replay(status.startPtr, true, recordTypePredicate);
 
         RestoreLogicalState restoreLogicalState =
             new RestoreLogicalState(status, it, lastArchivedSegment, cacheGroupsPredicate, partitionRecoveryStates);

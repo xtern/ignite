@@ -82,6 +82,7 @@ import org.apache.ignite.internal.processors.cache.persistence.wal.WALPointer;
 import org.apache.ignite.internal.processors.cache.warmup.WarmUpStrategy;
 import org.apache.ignite.internal.processors.cluster.IgniteChangeGlobalStateSupport;
 import org.apache.ignite.internal.util.TimeBag;
+import org.apache.ignite.internal.util.future.GridFinishedFuture;
 import org.apache.ignite.internal.util.typedef.F;
 import org.apache.ignite.internal.util.typedef.T2;
 import org.apache.ignite.internal.util.typedef.internal.CU;
@@ -165,7 +166,6 @@ public class IgniteCacheDatabaseSharedManager extends GridCacheSharedManagerAdap
 
     /** First eviction was warned flag. */
     private volatile boolean firstEvictWarn;
-
 
     /** {@inheritDoc} */
     @Override protected void start0() throws IgniteCheckedException {
@@ -1078,6 +1078,14 @@ public class IgniteCacheDatabaseSharedManager extends GridCacheSharedManagerAdap
      */
     public void forceRebuildIndexes(Collection<GridCacheContext> contexts) {
         // No-op.
+    }
+
+    /**
+     * @param grp Cache group.
+     * @return Future that will be completed when the indexes rebuild for specified cache group is finished.
+     */
+    public IgniteInternalFuture<?> rebuildIndexes(CacheGroupContext grp) {
+        return new GridFinishedFuture<>();
     }
 
     /**

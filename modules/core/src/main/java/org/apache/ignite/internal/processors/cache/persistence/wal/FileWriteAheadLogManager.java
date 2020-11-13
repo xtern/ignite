@@ -944,20 +944,23 @@ public class FileWriteAheadLogManager extends GridCacheSharedManagerAdapter impl
 
     /** {@inheritDoc} */
     @Override public WALIterator replay(WALPointer start) throws IgniteCheckedException, StorageException {
-        return replay(start, null);
+        return replay(start, true, null);
     }
 
     /** {@inheritDoc} */
     @Override public WALIterator replay(
         WALPointer start,
+        boolean limited,
         @Nullable IgniteBiPredicate<WALRecord.RecordType, WALPointer> recordDeserializeFilter
     ) throws IgniteCheckedException, StorageException {
-        FileWriteHandle hnd = currentHandle();
-
         WALPointer end = null;
 
-        if (hnd != null)
-            end = hnd.position();
+        if (limited) {
+            FileWriteHandle hnd = currentHandle();
+
+            if (hnd != null)
+                end = hnd.position();
+        }
 
         RecordsIterator iter = new RecordsIterator(
             cctx,
@@ -1024,13 +1027,14 @@ public class FileWriteAheadLogManager extends GridCacheSharedManagerAdapter impl
 
         String zipSegmentName = segmentName + ZIP_SUFFIX;
 
+        boolean wasInArchive = absIdx <= lastArchivedIndex();
+
         boolean inArchive = new File(walArchiveDir, segmentName).exists() ||
             new File(walArchiveDir, zipSegmentName).exists();
 
         if (inArchive)
             return true;
-
-        if (absIdx <= lastArchivedIndex())
+        else if (wasInArchive)
             return false;
 
         FileWriteHandle cur = currHnd;
@@ -1411,6 +1415,13 @@ public class FileWriteAheadLogManager extends GridCacheSharedManagerAdapter impl
         catch (IOException e) {
             throw new StorageException("Failed to restore WAL write handle: " + curFile.getAbsolutePath(), e);
         }
+    }
+
+    /**
+     * @return WAL working directory.
+     */
+    public File walWorkDir() {
+        return walWorkDir;
     }
 
     /**

@@ -1075,6 +1075,21 @@ public class GridCachePartitionExchangeManager<K, V> extends GridCacheSharedMana
         return exchFuts.readyTopVer();
     }
 
+    /** Rebalance topology version. */
+    private volatile AffinityTopologyVersion rebTopVer = NONE;
+
+    /**
+     * @return Latest rebalance topology version or {@code NONE} if there is no info.
+     */
+    public AffinityTopologyVersion rebalanceTopologyVersion() {
+        return rebTopVer;
+    }
+
+    /** */
+    public void resetRebalanceVersion() {
+        rebTopVer = NONE;
+    }
+
     /**
      * @return Last initialized topology future.
      */
@@ -3269,6 +3284,9 @@ public class GridCachePartitionExchangeManager<K, V> extends GridCacheSharedMana
                     }
 
                     Map<Integer, GridDhtPreloaderAssignments> assignsMap = null;
+//                    busy = true;
+//
+//                    Map<Integer, IgniteInternalFuture<GridDhtPreloaderAssignments>> assignsMap = null;
 
                     boolean forcePreload = false;
 
@@ -3497,9 +3515,7 @@ public class GridCachePartitionExchangeManager<K, V> extends GridCacheSharedMana
 
                         NavigableMap<CacheRebalanceOrder, List<Integer>> orderMap = new TreeMap<>();
 
-                        for (Map.Entry<Integer, GridDhtPreloaderAssignments> e : assignsMap.entrySet()) {
-                            int grpId = e.getKey();
-
+                        for (Integer grpId : assignsMap.keySet()) {
                             CacheGroupContext grp = cctx.cache().cacheGroup(grpId);
 
                             CacheRebalanceOrder order = new CacheRebalanceOrder(
@@ -3510,7 +3526,13 @@ public class GridCachePartitionExchangeManager<K, V> extends GridCacheSharedMana
                                 orderMap.put(order, new ArrayList<Integer>(size));
 
                             orderMap.get(order).add(grpId);
+
+                            if (resVer == null && !grp.isLocal())
+                                resVer = grp.topology().readyTopologyVersion();
                         }
+
+                        if (resVer == null)
+                            resVer = exchId.topologyVersion();
 
                         RebalanceFuture r = null;
 
@@ -3527,6 +3549,7 @@ public class GridCachePartitionExchangeManager<K, V> extends GridCacheSharedMana
                             for (Integer grpId : orderMap.get(order)) {
                                 CacheGroupContext grp = cctx.cache().cacheGroup(grpId);
 
+                                //IgniteInternalFuture<GridDhtPreloaderAssignments> fut = assignsMap.get(grpId);
                                 GridDhtPreloaderAssignments assigns = assignsMap.get(grpId);
 
                                 RebalanceFuture cur = grp.preloader().addAssignments(assigns,

@@ -27,6 +27,7 @@ import org.apache.ignite.internal.processors.cache.persistence.IgnitePdsTxCacheR
 import org.apache.ignite.internal.processors.cache.persistence.IgnitePdsTxHistoricalRebalancingTest;
 import org.apache.ignite.internal.processors.cache.persistence.IgnitePersistenceSequentialCheckpointTest;
 import org.apache.ignite.internal.processors.cache.persistence.IgnitePersistentStoreCacheGroupsTest;
+import org.apache.ignite.internal.processors.cache.persistence.IndexedCacheFileRebalancingTest;
 import org.apache.ignite.internal.processors.cache.persistence.PersistenceDirectoryWarningLoggingTest;
 import org.apache.ignite.internal.processors.cache.persistence.db.IgniteCacheGroupsWithRestartsTest;
 import org.apache.ignite.internal.processors.cache.persistence.db.IgniteLogicalRecoveryTest;
@@ -47,6 +48,7 @@ import org.apache.ignite.internal.processors.cache.persistence.db.wal.WalPathsTe
 import org.apache.ignite.internal.processors.cache.persistence.db.wal.WalRecoveryTxLogicalRecordsTest;
 import org.apache.ignite.internal.processors.cache.persistence.db.wal.WalRolloverRecordLoggingFsyncTest;
 import org.apache.ignite.internal.processors.cache.persistence.db.wal.WalRolloverRecordLoggingLogOnlyTest;
+import org.apache.ignite.internal.processors.cache.persistence.snapshot.IgniteSnapshotManagerSelfTest;
 import org.junit.runner.RunWith;
 import org.junit.runners.Suite;
 
@@ -77,6 +79,7 @@ import org.junit.runners.Suite;
 
     IgnitePdsTxCacheRebalancingTest.class,
     IgnitePdsTxHistoricalRebalancingTest.class,
+    IndexedCacheFileRebalancingTest.class,
 
     IgniteWalRecoveryPPCTest.class,
 
@@ -96,7 +99,9 @@ import org.junit.runners.Suite;
 
     IgniteSequentialNodeCrashRecoveryTest.class,
 
-    IgniteCacheGroupsWithRestartsTest.class
+    IgniteCacheGroupsWithRestartsTest.class,
+
+    IgniteSnapshotManagerSelfTest.class
 })
 public class IgnitePdsWithIndexingCoreTestSuite {
 }

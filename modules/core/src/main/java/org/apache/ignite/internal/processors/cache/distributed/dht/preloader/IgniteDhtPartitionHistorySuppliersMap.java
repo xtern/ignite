@@ -77,7 +77,7 @@ public class IgniteDhtPartitionHistorySuppliersMap implements Serializable {
      * @param nodeId Node ID to check.
      * @return Reservations for the given node.
      */
-    @Nullable public synchronized Map<T2<Integer, Integer>, Long> getReservations(UUID nodeId) {
+    public synchronized @Nullable Map<T2<Integer, Integer>, Long> getReservations(UUID nodeId) {
         if (map == null)
             return null;
 

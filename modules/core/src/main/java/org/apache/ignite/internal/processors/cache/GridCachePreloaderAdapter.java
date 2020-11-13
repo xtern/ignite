@@ -140,6 +140,11 @@ public class GridCachePreloaderAdapter implements GridCachePreloader {
 
     /** {@inheritDoc} */
     @Override public boolean rebalanceRequired(GridDhtPartitionsExchangeFuture exchFut) {
+        return false;
+    }
+
+    /** {@inheritDoc} */
+    @Override public boolean updateRebalanceVersion(GridDhtPartitionsExchangeFuture fut, AffinityTopologyVersion ver) {
         return true;
     }
 

@@ -155,6 +155,10 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
     /** The maximum number of entries that can be preloaded under checkpoint read lock. */
     public static final int PRELOAD_SIZE_UNDER_CHECKPOINT_LOCK = 100;
 
+    /** */
+    protected final boolean failNodeOnPartitionInconsistency = Boolean.getBoolean(
+        IgniteSystemProperties.IGNITE_FAIL_NODE_ON_UNRECOVERABLE_PARTITION_INCONSISTENCY);
+
     /** Batch size for cache removals during destroy. */
     private static final int BATCH_SIZE = 1000;
 
@@ -1310,7 +1314,7 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
     }
 
     /** {@inheritDoc} */
-    @Override public final void destroyCacheDataStore(CacheDataStore store) throws IgniteCheckedException {
+    @Override public final void destroyCacheDataStore(CacheDataStore store) {
         int p = store.partId();
 
         partStoreLock.lock(p);
@@ -1461,7 +1465,7 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
         private final GridSpinBusyLock busyLock;
 
         /** Update counter. */
-        protected final PartitionUpdateCounter pCntr;
+        private final PartitionUpdateCounter pCntr;
 
         /** Partition size. */
         private final AtomicLong storageSize = new AtomicLong();
@@ -3107,6 +3111,40 @@ public class IgniteCacheOffheapManagerImpl implements IgniteCacheOffheapManager 
         /** {@inheritDoc} */
         @Override public PartitionMetaStorage<SimpleDataRow> partStorage() {
             return null;
+        }
+
+        /** {@inheritDoc} */
+        @Override public boolean enable() {
+            throw new UnsupportedOperationException();
+        }
+
+        /** {@inheritDoc} */
+        @Override public boolean disable() {
+            throw new UnsupportedOperationException();
+        }
+
+        /** {@inheritDoc} */
+        @Override public boolean active() {
+            return true;
+        }
+
+        /**
+         * Isolated method to get length of IGFS block.
+         *
+         * @param cctx Cache context.
+         * @param val Value.
+         * @return Length of value.
+         */
+        private int valueLength(GridCacheContext cctx, @Nullable CacheObject val) {
+            if (val == null)
+                return 0;
+
+            byte[] bytes = val.value(cctx.cacheObjectContext(), false);
+
+            if (bytes != null)
+                return bytes.length;
+            else
+                return 0;
         }
 
         /** */

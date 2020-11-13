@@ -1628,6 +1628,19 @@ public class GridDhtPartitionsExchangeFuture extends GridDhtTopologyFutureAdapte
 
         timeBag.finishGlobalStage("Preloading notification");
 
+//        cctx.exchange().exchangerBlockingSectionBegin();
+//
+//        try {
+//            // To correctly rebalance when persistence is enabled, it is necessary to reserve history within exchange.
+//            partHistReserved = cctx.database().reserveHistoryForExchange();
+//        }
+//        finally {
+//            cctx.exchange().exchangerBlockingSectionEnd();
+//        }
+//
+//        clearingPartitions = new HashMap();
+//
+//        timeBag.finishGlobalStage("WAL history reservation");
         // Skipping wait on local join is available when all cluster nodes have the same protocol.
         boolean skipWaitOnLocalJoin = localJoinExchange()
             && cctx.exchange().latch().canSkipJoiningNodes(initialVersion());
@@ -2552,9 +2565,8 @@ public class GridDhtPartitionsExchangeFuture extends GridDhtTopologyFutureAdapte
             if (localReserved != null) {
                 boolean success = cctx.database().reserveHistoryForPreloading(localReserved);
 
-                // TODO: how to handle?
-                if (!success)
-                    err = new IgniteCheckedException("Could not reserve history");
+                // We can't fail here since history is reserved for exchange.
+                assert success : "History was not reserved";
             }
 
             cctx.database().releaseHistoryForExchange();
@@ -3454,6 +3466,19 @@ public class GridDhtPartitionsExchangeFuture extends GridDhtTopologyFutureAdapte
                 else if (cntr == maxCntr.cnt)
                     maxCntr.nodes.add(remoteNodeId);
             }
+
+            // todo
+//            if (nodeCntrs.isEmpty()) {
+//                // We should provide the supplier for file rebalancing even if the counters were not sent.
+//                for (int p = 0; p < top.partitions(); p++) {
+//                    GridDhtPartitionState state = top.partitionState(e.getKey(), p);
+//
+//                    if (state != GridDhtPartitionState.OWNING && state != GridDhtPartitionState.MOVING)
+//                        continue;
+//
+//                    minCntrs.put(p, 0L);
+//                }
+//            }
         }
 
         // Also must process counters from the local node.
@@ -3502,7 +3527,7 @@ public class GridDhtPartitionsExchangeFuture extends GridDhtTopologyFutureAdapte
 
     /**
      * Determine new owners for partitions.
-     * If anyone of OWNING partitions have a counter less than maximum this partition changes state to MOVING forcibly.
+f anyone of OWNING partitions have a counter less than maximum this partition changes state to MOVING forcibly.
      *
      * @param top Topology.
      * @param maxCntrs Max counter partiton map.
@@ -3970,8 +3995,20 @@ public class GridDhtPartitionsExchangeFuture extends GridDhtTopologyFutureAdapte
             }
 
             for (CacheGroupContext grpCtx : cctx.cache().cacheGroups()) {
-                if (!grpCtx.isLocal())
-                    grpCtx.topology().applyUpdateCounters();
+                if (grpCtx.isLocal())
+                    continue;
+
+                boolean rebalanceRequired = grpCtx.preloader().updateRebalanceVersion(this, resTopVer);
+
+                if (rebalanceRequired && grpCtx.persistenceEnabled()) {
+                    CachePartitionFullCountersMap cntrs = grpCtx.topology().fullUpdateCounters();
+
+                    Map<Integer, Long> partSizes = grpCtx.topology().globalPartSizes();
+
+                    cctx.preloader().onExchange(resTopVer, grpCtx, cntrs, partSizes, partHistSuppliers);
+                }
+
+                grpCtx.topology().applyUpdateCounters();
             }
 
             timeBag.finishGlobalStage("Apply update counters");
@@ -4075,6 +4112,23 @@ public class GridDhtPartitionsExchangeFuture extends GridDhtTopologyFutureAdapte
                 }
             }
 
+            boolean hasMoving = !partsToReload.isEmpty();
+
+            Set<Integer> waitGrps = cctx.affinity().waitGroups();
+
+            if (!hasMoving) {
+                for (CacheGroupContext grpCtx : cctx.cache().cacheGroups()) {
+                    if (waitGrps.contains(grpCtx.groupId()) && grpCtx.topology().hasMovingPartitions()) {
+                        hasMoving = true;
+
+                        break;
+                    }
+                }
+            }
+
+            if (!hasMoving)
+                cctx.database().releaseHistoryForPreloading();
+
             if (stateChangeExchange()) {
                 StateChangeRequest req = exchActions.stateChangeRequest();
 
@@ -4087,24 +4141,8 @@ public class GridDhtPartitionsExchangeFuture extends GridDhtTopologyFutureAdapte
 
                     cctx.kernalContext().state().onStateChangeError(exchangeGlobalExceptions, req);
                 }
-                else {
-                    boolean hasMoving = !partsToReload.isEmpty();
-
-                    Set<Integer> waitGrps = cctx.affinity().waitGroups();
-
-                    if (!hasMoving) {
-                        for (CacheGroupContext grpCtx : cctx.cache().cacheGroups()) {
-                            if (waitGrps.contains(grpCtx.groupId()) && grpCtx.topology().hasMovingPartitions()) {
-                                hasMoving = true;
-
-                                break;
-                            }
-
-                        }
-                    }
-
+                else
                     cctx.kernalContext().state().onExchangeFinishedOnCoordinator(this, hasMoving);
-                }
 
                 if (!cctx.kernalContext().state().clusterState().localBaselineAutoAdjustment()) {
                     ClusterState state = stateChangeErr ? ClusterState.INACTIVE : req.state();
@@ -4822,8 +4860,18 @@ public class GridDhtPartitionsExchangeFuture extends GridDhtTopologyFutureAdapte
                     CacheGroupContext grp = cctx.cache().cacheGroup(grpId);
 
                     if (grp != null) {
-                        CachePartitionFullCountersMap cntrMap = msg.partitionUpdateCounters(grpId,
-                            grp.topology().partitions());
+                        boolean rebalanceRequired = grp.preloader().updateRebalanceVersion(this, resTopVer);
+
+                        CachePartitionFullCountersMap cntrMap =
+                            msg.partitionUpdateCounters(grpId, grp.topology().partitions());
+
+                        if (rebalanceRequired && grp.persistenceEnabled()) {
+                            cctx.preloader().onExchange(resTopVer,
+                                grp,
+                                cntrMap,
+                                msg.partitionSizes(cctx).get(grp.groupId()),
+                                partHistSuppliers);
+                        }
 
                         grp.topology().update(resTopVer,
                             msg.partitions().get(grpId),

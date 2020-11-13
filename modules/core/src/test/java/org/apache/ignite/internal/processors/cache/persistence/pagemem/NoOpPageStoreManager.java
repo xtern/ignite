@@ -17,6 +17,7 @@
 
 package org.apache.ignite.internal.processors.cache.persistence.pagemem;
 
+import java.io.File;
 import java.nio.ByteBuffer;
 import java.util.Collections;
 import java.util.Map;
@@ -94,7 +95,7 @@ public class NoOpPageStoreManager implements IgnitePageStoreManager {
     }
 
     /** {@inheritDoc} */
-    @Override public boolean exists(int cacheId, int partId) throws IgniteCheckedException {
+    @Override public boolean exists(int cacheId, int partId) {
         return false;
     }
 
@@ -240,5 +241,10 @@ public class NoOpPageStoreManager implements IgnitePageStoreManager {
     /** {@inheritDoc} */
     @Override public boolean checkAndInitCacheWorkDir(CacheConfiguration cacheCfg) throws IgniteCheckedException {
         return false;
+    }
+
+    /** {@inheritDoc} */
+    @Override public void restore(int grpId, int partId, File src) {
+        // No-op.
     }
 }

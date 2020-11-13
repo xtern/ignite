@@ -91,6 +91,7 @@ import org.apache.ignite.internal.processors.cache.distributed.dht.GridDhtCacheA
 import org.apache.ignite.internal.processors.cache.distributed.dht.IgniteClusterReadOnlyException;
 import org.apache.ignite.internal.processors.cache.distributed.dht.atomic.GridDhtAtomicCache;
 import org.apache.ignite.internal.processors.cache.distributed.dht.colocated.GridDhtColocatedCache;
+import org.apache.ignite.internal.processors.cache.distributed.dht.preloader.IgnitePartitionPreloadManager;
 import org.apache.ignite.internal.processors.cache.distributed.dht.preloader.FinishPreloadingTask;
 import org.apache.ignite.internal.processors.cache.distributed.dht.preloader.StopCachesOnClientReconnectExchangeTask;
 import org.apache.ignite.internal.processors.cache.distributed.dht.topology.PartitionDefferedDeleteQueueCleanupTask;
@@ -210,6 +211,7 @@ import static org.apache.ignite.internal.IgniteComponentType.JTA;
 import static org.apache.ignite.internal.processors.cache.GridCacheUtils.isNearEnabled;
 import static org.apache.ignite.internal.processors.cache.GridCacheUtils.isPersistentCache;
 import static org.apache.ignite.internal.processors.cache.ValidationOnNodeJoinUtils.validateHashIdResolvers;
+import static org.apache.ignite.internal.processors.cache.persistence.IgniteCacheDatabaseSharedManager.INTERNAL_DATA_REGION_NAMES;
 import static org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtLocalPartition.DFLT_CACHE_REMOVE_ENTRIES_TTL;
 import static org.apache.ignite.internal.util.IgniteUtils.doInParallel;
 
@@ -3003,6 +3005,7 @@ public class GridCacheProcessor extends GridProcessorAdapter {
         IgniteCacheDatabaseSharedManager dbMgr;
         IgnitePageStoreManager pageStoreMgr = null;
         IgniteWriteAheadLogManager walMgr = null;
+        IgnitePartitionPreloadManager preloadMgr = null;
 
         if (CU.isPersistenceEnabled(ctx.config()) && !ctx.clientNode()) {
             dbMgr = new GridCacheDatabaseSharedManager(ctx);
@@ -3025,6 +3028,9 @@ public class GridCacheProcessor extends GridProcessorAdapter {
 
             dbMgr = new IgniteCacheDatabaseSharedManager();
         }
+
+        if (!ctx.clientNode())
+            preloadMgr = new IgnitePartitionPreloadManager();
 
         WalStateManager walStateMgr = new WalStateManager(ctx);
 
@@ -3068,7 +3074,8 @@ public class GridCacheProcessor extends GridProcessorAdapter {
             storeSesLsnrs,
             mvccCachingMgr,
             deadlockDetectionMgr,
-            diagnosticMgr
+            diagnosticMgr,
+            preloadMgr
         );
     }
 
@@ -5390,6 +5397,15 @@ public class GridCacheProcessor extends GridProcessorAdapter {
         /** {@inheritDoc} */
         @Override public void onBaselineChange() {
             onKernalStopCaches(true);
+
+            for (DataRegion region : sharedCtx.database().dataRegions()) {
+                if (!region.config().isPersistenceEnabled() ||
+                    INTERNAL_DATA_REGION_NAMES.contains(region.config().getName()))
+                    continue;
+
+                region.pageMemory().stop(false);
+                region.pageMemory().start();
+            }
 
             stopCaches(true);
 

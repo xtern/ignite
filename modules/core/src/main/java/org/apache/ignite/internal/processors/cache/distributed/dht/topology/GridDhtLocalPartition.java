@@ -49,6 +49,7 @@ import org.apache.ignite.internal.processors.cache.GridCacheEntryEx;
 import org.apache.ignite.internal.processors.cache.GridCacheMapEntry;
 import org.apache.ignite.internal.processors.cache.GridCacheMapEntryFactory;
 import org.apache.ignite.internal.processors.cache.GridCacheSharedContext;
+import org.apache.ignite.internal.processors.cache.IgniteCacheOffheapManager.CacheDataStore;
 import org.apache.ignite.internal.processors.cache.KeyCacheObject;
 import org.apache.ignite.internal.processors.cache.distributed.dht.GridDhtCacheEntry;
 import org.apache.ignite.internal.processors.cache.distributed.dht.GridReservable;
@@ -79,7 +80,6 @@ import org.jetbrains.annotations.Nullable;
 import static org.apache.ignite.IgniteSystemProperties.IGNITE_ATOMIC_CACHE_DELETE_HISTORY_SIZE;
 import static org.apache.ignite.IgniteSystemProperties.IGNITE_CACHE_REMOVED_ENTRIES_TTL;
 import static org.apache.ignite.events.EventType.EVT_CACHE_REBALANCE_OBJECT_UNLOADED;
-import static org.apache.ignite.internal.processors.cache.IgniteCacheOffheapManager.CacheDataStore;
 import static org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtPartitionState.EVICTED;
 import static org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtPartitionState.LOST;
 import static org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtPartitionState.MOVING;
@@ -459,6 +459,55 @@ public class GridDhtLocalPartition extends GridCacheConcurrentMapImpl implements
     }
 
     /**
+     * @return {@code True} if data store is in active mode and is processing updates.
+     */
+    public boolean active() {
+        return store.active();
+    }
+
+    /**
+     * Change current cache data store mode.to enable updates on current partition.
+     *
+     * @return {@code True} if partition mode was changed, otherwise updates already enabled.
+     */
+    public boolean enable() {
+        if (store.active())
+            return false;
+
+        if (state() != MOVING)
+            throw new IgniteException("Expected MOVING partition [p=" + id() + ", state=" + state() + "]");
+
+        if (store.enable()) {
+            // Clear all on-heap entries before start processing updates.
+            if (grp.sharedGroup()) {
+                for (GridCacheContext ctx : grp.caches())
+                    entriesMap(ctx).map.clear();
+            }
+            else
+                entriesMap(null).map.clear();
+
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
+     * Change current cache data store mode.to disable updates on current partition.
+     *
+     * @return {@code True} if partition mode was changed, otherwise updates already disabled.
+     */
+    public boolean disable() {
+        if (!store.active())
+            return false;
+
+        if (state() != MOVING)
+            throw new IgniteException("Expected MOVING partition [p=" + id() + ", state=" + state() + "]");
+
+        return store.disable();
+    }
+
+    /**
      * Reserves the partition so it won't be cleared or evicted.
      * Only MOVING, OWNING and LOST partitions can be reserved.
      *
@@ -758,12 +807,48 @@ public class GridDhtLocalPartition extends GridCacheConcurrentMapImpl implements
         return finishFut;
     }
 
+//    /**
+//     * Invalidates all partition group reservations, so they can't be reserved again any more.
+//     *
+//     * @return {@code true} If all group reservations are invalidated (or no such reservations).
+//     */
+//    public void clearAsync() {
+//        assert active() : "grp=" + grp.cacheOrGroupName() + ", p=" + id;
+//
+//        GridDhtPartitionState state0 = state();
+//
+//        if (state0 != MOVING && state0 != RENTING)
+//            return;
+//
+//        clearAsync0(false);
+//    }
+//
+//    /**
+//     * Continues delayed clearing of partition if possible.
+//     * Clearing may be delayed because of existing reservations.
+//     */
+//    public void tryContinueClearing() {
+//        clearAsync0(true);
+//    }
+
     /**
      * Invalidates all partition group reservations, so they can't be reserved again any more.
      *
      * @return {@code true} If all group reservations are invalidated (or no such reservations).
      */
     private boolean tryInvalidateGroupReservations() {
+        for (GridDhtPartitionsReservation reservation : reservations) {
+            if (!reservation.invalidate())
+                return false; // Failed to invalidate reservation -> we are reserved.
+        }
+
+        return true;
+    }
+
+    /**
+     * @return {@code true} If there is a group reservation.
+     */
+    private boolean groupReserved() {
         for (GridDhtPartitionsReservation reservation : reservations) {
             if (!reservation.invalidate())
                 return false; // Failed to invalidate reservation -> we are reserved.

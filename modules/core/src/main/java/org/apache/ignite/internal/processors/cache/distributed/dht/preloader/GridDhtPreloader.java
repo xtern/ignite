@@ -50,6 +50,9 @@ import org.apache.ignite.lang.IgnitePredicate;
 import org.jetbrains.annotations.Nullable;
 
 import static org.apache.ignite.IgniteSystemProperties.IGNITE_DISABLE_REBALANCING_CANCELLATION_OPTIMIZATION;
+import static org.apache.ignite.IgniteSystemProperties.IGNITE_PDS_WAL_REBALANCE_THRESHOLD;
+import static org.apache.ignite.IgniteSystemProperties.getLong;
+import static org.apache.ignite.configuration.IgniteConfiguration.DFLT_PDS_WAL_REBALANCE_THRESHOLD;
 import static org.apache.ignite.events.EventType.EVT_CACHE_REBALANCE_PART_UNLOADED;
 import static org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtPartitionState.LOST;
 import static org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtPartitionState.MOVING;
@@ -65,6 +68,10 @@ public class GridDhtPreloader extends GridCachePreloaderAdapter {
     /** Disable rebalancing cancellation optimization. */
     private final boolean disableRebalancingCancellationOptimization = IgniteSystemProperties.getBoolean(
         IGNITE_DISABLE_REBALANCING_CANCELLATION_OPTIMIZATION);
+
+    /** */
+    private final long walRebalanceThreshold =
+        getLong(IGNITE_PDS_WAL_REBALANCE_THRESHOLD, DFLT_PDS_WAL_REBALANCE_THRESHOLD);
 
     /** */
     private GridDhtPartitionTopology top;
@@ -169,6 +176,28 @@ public class GridDhtPreloader extends GridCachePreloaderAdapter {
         return lastAffChangeTopVer.equals(exchFut.topologyVersion());
     }
 
+//    /** {@inheritDoc} */
+//    @Override public boolean updateRebalanceVersion(
+//        GridDhtPartitionsExchangeFuture exchFut,
+//        AffinityTopologyVersion resVer
+//    ) {
+//        AffinityTopologyVersion rebTopVer = ctx.exchange().rebalanceTopologyVersion();
+//
+//        if (ctx.kernalContext().clientNode())
+//            return false; // No-op.
+//
+//        if (rebTopVer.equals(NONE))
+//            return true;
+//
+//        if (rebalanceRequired(rebTopVer, resVer, exchFut)) {
+//            ctx.exchange().resetRebalanceVersion();
+//
+//            return true;
+//        }
+//
+//        return false;
+//    }
+
     /** {@inheritDoc} */
     @Override public GridDhtPreloaderAssignments generateAssignments(
         GridDhtPartitionExchangeId exchId,
@@ -199,6 +228,8 @@ public class GridDhtPreloader extends GridCachePreloaderAdapter {
         AffinityAssignment aff = grp.affinity().cachedAffinity(topVer);
 
         CachePartitionFullCountersMap countersMap = grp.topology().fullUpdateCounters();
+
+        boolean fileRebalanceSupported = ctx.preloader().supports(grp);
 
         for (int p = 0; p < partitions; p++) {
             if (ctx.exchange().hasPendingServerExchange()) {
@@ -238,6 +269,8 @@ public class GridDhtPreloader extends GridCachePreloaderAdapter {
                 }
 
                 if (histSupplier != null && !exchFut.isClearingPartition(grp, p)) {
+                    assert !part.isEmpty() : "grp=" + grp.cacheOrGroupName() + ", p=" + p;
+                    assert !part.isClearing() : "grp=" + grp.cacheOrGroupName() + ", p=" + p;
                     assert grp.persistenceEnabled();
                     assert remoteOwners(p, topVer).contains(histSupplier) : remoteOwners(p, topVer);
 
@@ -384,6 +417,21 @@ public class GridDhtPreloader extends GridCachePreloaderAdapter {
         @Nullable GridCompoundFuture<Boolean, Boolean> forcedRebFut,
         GridCompoundFuture<Boolean, Boolean> compatibleRebFut
     ) {
+//        if (assignsFut.isDone())
+//            return demander.addAssignments(assignsFut.result(), forceRebalance, rebalanceId, next, forcedRebFut);
+//
+//        return () -> {
+//            assignsFut.listen(f -> {
+//                GridDhtPreloaderAssignments assigns = f.result();
+//
+//                Runnable rebRunner = demander.addAssignments(assigns, forceRebalance, rebalanceId, next, forcedRebFut);
+//
+//                if (rebRunner != null)
+//                    rebRunner.run();
+//                else if (next != null)
+//                    next.run();
+//            });
+//        };
         return demander.addAssignments(assignments, forceRebalance, rebalanceId, next, forcedRebFut, compatibleRebFut);
     }
 

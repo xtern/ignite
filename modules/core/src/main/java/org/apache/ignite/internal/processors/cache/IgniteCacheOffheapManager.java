@@ -1117,5 +1117,24 @@ public interface IgniteCacheOffheapManager {
          * Partition storage.
          */
         public PartitionMetaStorage<SimpleDataRow> partStorage();
+
+        /**
+         * @return {@code True} if data store is in active mode and is processing updates.
+         */
+        public boolean active();
+
+        /**
+         * Change current cache data store mode.to enable updates.
+         *
+         * @return {@code True} if partition mode was changed.
+         */
+        public boolean enable();
+
+        /**
+         * Change current cache data store mode.to disable updates.
+         *
+         * @return {@code True} if partition mode was changed.
+         */
+        public boolean disable();
     }
 }
