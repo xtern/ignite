@@ -20,6 +20,7 @@ package org.apache.ignite.testsuites;
 import org.apache.ignite.ClassPathContentLoggingTest;
 import org.apache.ignite.GridSuppressedExceptionSelfTest;
 import org.apache.ignite.events.ClusterActivationStartedEventTest;
+import org.apache.ignite.failure.ExchangeWorkerWaitingForTaskTest;
 import org.apache.ignite.failure.FailureHandlerTriggeredTest;
 import org.apache.ignite.failure.OomFailureHandlerTest;
 import org.apache.ignite.failure.StopNodeFailureHandlerTest;
@@ -46,6 +47,7 @@ import org.apache.ignite.internal.GridStartStopSelfTest;
 import org.apache.ignite.internal.GridStopWithCancelSelfTest;
 import org.apache.ignite.internal.IgniteLocalNodeMapBeforeStartTest;
 import org.apache.ignite.internal.IgniteSlowClientDetectionSelfTest;
+import org.apache.ignite.internal.IgniteThreadGroupNodeRestartTest;
 import org.apache.ignite.internal.MarshallerContextLockingSelfTest;
 import org.apache.ignite.internal.TransactionsMXBeanImplTest;
 import org.apache.ignite.internal.managers.IgniteDiagnosticMessagesMultipleConnectionsTest;
@@ -72,9 +74,7 @@ import org.apache.ignite.internal.processors.cache.IgniteMarshallerCacheFSRestor
 import org.apache.ignite.internal.processors.cache.RebalanceWithDifferentThreadPoolSizeTest;
 import org.apache.ignite.internal.processors.cache.SetTxTimeoutOnPartitionMapExchangeTest;
 import org.apache.ignite.internal.processors.cache.distributed.IgniteRejectConnectOnNodeStopTest;
-import org.apache.ignite.internal.processors.cache.distributed.dht.topology.DropCacheContextDuringEvictionTest;
 import org.apache.ignite.internal.processors.cache.distributed.dht.topology.EvictPartitionInLogTest;
-import org.apache.ignite.internal.processors.cache.distributed.dht.topology.PartitionsEvictionTaskFailureHandlerTest;
 import org.apache.ignite.internal.processors.cache.persistence.pagemem.PagePoolTest;
 import org.apache.ignite.internal.processors.cache.query.continuous.DiscoveryDataDeserializationFailureHanderTest;
 import org.apache.ignite.internal.processors.cache.transactions.AtomicOperationsInTxTest;
@@ -191,8 +191,6 @@ import org.junit.runners.Suite;
     SetTxTimeoutOnPartitionMapExchangeTest.class,
     DiscoveryDataDeserializationFailureHanderTest.class,
 
-    PartitionsEvictionTaskFailureHandlerTest.class,
-    DropCacheContextDuringEvictionTest.class,
     EvictPartitionInLogTest.class,
 
     IgniteExceptionInNioWorkerSelfTest.class,
@@ -251,6 +249,7 @@ import org.junit.runners.Suite;
     TransactionIntegrityWithSystemWorkerDeathTest.class,
     FailureProcessorLoggingTest.class,
     FailureProcessorThreadDumpThrottlingTest.class,
+    ExchangeWorkerWaitingForTaskTest.class,
 
     AtomicOperationsInTxTest.class,
 
@@ -293,7 +292,9 @@ import org.junit.runners.Suite;
 
     IgniteStandardMXBeanTest.class,
 
-    ClusterActivationStartedEventTest.class
+    ClusterActivationStartedEventTest.class,
+
+    IgniteThreadGroupNodeRestartTest.class,
 })
 public class IgniteBasicTestSuite {
 }

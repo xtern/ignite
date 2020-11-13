@@ -26,7 +26,7 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicLong;
-import org.apache.ignite.configuration.IgniteConfiguration;
+import org.apache.ignite.configuration.SqlConfiguration;
 import org.apache.ignite.internal.GridKernalContext;
 import org.apache.ignite.internal.managers.systemview.walker.SqlQueryHistoryViewWalker;
 import org.apache.ignite.internal.managers.systemview.walker.SqlQueryViewWalker;
@@ -34,6 +34,7 @@ import org.apache.ignite.internal.processors.cache.query.GridCacheQueryType;
 import org.apache.ignite.internal.processors.metric.MetricRegistry;
 import org.apache.ignite.internal.processors.metric.impl.AtomicLongMetric;
 import org.apache.ignite.internal.processors.metric.impl.LongAdderMetric;
+import org.apache.ignite.internal.processors.tracing.Span;
 import org.apache.ignite.internal.util.typedef.internal.S;
 import org.apache.ignite.spi.systemview.view.SqlQueryHistoryView;
 import org.apache.ignite.spi.systemview.view.SqlQueryView;
@@ -42,6 +43,7 @@ import org.jetbrains.annotations.Nullable;
 import static org.apache.ignite.internal.processors.cache.query.GridCacheQueryType.SQL;
 import static org.apache.ignite.internal.processors.cache.query.GridCacheQueryType.SQL_FIELDS;
 import static org.apache.ignite.internal.processors.metric.impl.MetricUtils.metricName;
+import static org.apache.ignite.internal.processors.tracing.SpanTags.ERROR;
 
 /**
  * Keep information about all running queries.
@@ -97,7 +99,7 @@ public class RunningQueryManager {
     public RunningQueryManager(GridKernalContext ctx) {
         localNodeId = ctx.localNodeId();
 
-        histSz = ctx.config().getSqlQueryHistorySize();
+        histSz = ctx.config().getSqlConfiguration().getSqlQueryHistorySize();
 
         qryHistTracker = new QueryHistoryTracker(histSz);
 
@@ -173,23 +175,33 @@ public class RunningQueryManager {
         if (qry == null)
             return;
 
-        //We need to collect query history and metrics only for SQL queries.
-        if (isSqlQuery(qry)) {
-            qry.runningFuture().onDone();
+        Span qrySpan = qry.span();
 
-            qryHistTracker.collectHistory(qry, failed);
+        try {
+            if (failed)
+                qrySpan.addTag(ERROR, failReason::getMessage);
 
-            if (!failed)
-                successQrsCnt.increment();
-            else {
-                failedQrsCnt.increment();
+            //We need to collect query history and metrics only for SQL queries.
+            if (isSqlQuery(qry)) {
+                qry.runningFuture().onDone();
 
-                // We measure cancel metric as "number of times user's queries ended up with query cancelled exception",
-                // not "how many user's KILL QUERY command succeeded". These may be not the same if cancel was issued
-                // right when query failed due to some other reason.
-                if (QueryUtils.wasCancelled(failReason))
-                    canceledQrsCnt.increment();
+                qryHistTracker.collectHistory(qry, failed);
+
+                if (!failed)
+                    successQrsCnt.increment();
+                else {
+                    failedQrsCnt.increment();
+
+                    // We measure cancel metric as "number of times user's queries ended up with query cancelled exception",
+                    // not "how many user's KILL QUERY command succeeded". These may be not the same if cancel was issued
+                    // right when query failed due to some other reason.
+                    if (QueryUtils.wasCancelled(failReason))
+                        canceledQrsCnt.increment();
+                }
             }
+        }
+        finally {
+            qrySpan.end();
         }
     }
 
@@ -272,7 +284,7 @@ public class RunningQueryManager {
 
     /**
      * Gets query history statistics. Size of history could be configured via {@link
-     * IgniteConfiguration#setSqlQueryHistorySize(int)}
+     * SqlConfiguration#setSqlQueryHistorySize(int)}
      *
      * @return Queries history statistics aggregated by query text, schema and local flag.
      */

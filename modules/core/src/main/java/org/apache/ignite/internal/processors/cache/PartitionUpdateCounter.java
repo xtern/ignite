@@ -145,6 +145,11 @@ public interface PartitionUpdateCounter extends Iterable<long[]> {
     public CacheGroupContext context();
 
     /**
+     * @return A deep copy of current instance.
+     */
+    public PartitionUpdateCounter copy();
+
+    /**
      * @return Highest applied counter.
      */
     public long highestAppliedCounter();

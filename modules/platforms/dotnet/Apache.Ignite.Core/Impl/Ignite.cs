@@ -30,6 +30,7 @@ namespace Apache.Ignite.Core.Impl
     using Apache.Ignite.Core.Cluster;
     using Apache.Ignite.Core.Common;
     using Apache.Ignite.Core.Compute;
+    using Apache.Ignite.Core.Configuration;
     using Apache.Ignite.Core.Datastream;
     using Apache.Ignite.Core.DataStructures;
     using Apache.Ignite.Core.Events;
@@ -99,7 +100,8 @@ namespace Apache.Ignite.Core.Impl
             GetBaselineAutoAdjustTimeout = 34,
             SetBaselineAutoAdjustTimeout = 35,
             GetCacheConfig = 36,
-            GetThreadLocal = 37
+            GetThreadLocal = 37,
+            GetOrCreateLock = 38
         }
 
         /** */
@@ -127,7 +129,7 @@ namespace Apache.Ignite.Core.Impl
         private readonly IList<LifecycleHandlerHolder> _lifecycleHandlers;
 
         /** Local node. */
-        private IClusterNode _locNode;
+        private volatile IClusterNode _locNode;
 
         /** Callbacks */
         private readonly UnmanagedCallbacks _cbs;
@@ -994,6 +996,39 @@ namespace Apache.Ignite.Core.Impl
                 s => configuration.Write(BinaryUtils.Marshaller.StartMarshal(s)));
         }
 
+        /** <inheritdoc /> */
+        public IIgniteLock GetOrCreateLock(string name)
+        {
+            IgniteArgumentCheck.NotNullOrEmpty(name, "name");
+
+            var configuration = new LockConfiguration
+            {
+                Name = name
+            };
+            
+            return GetOrCreateLock(configuration, true);
+        }
+
+        /** <inheritdoc /> */
+        public IIgniteLock GetOrCreateLock(LockConfiguration configuration, bool create)
+        {
+            IgniteArgumentCheck.NotNull(configuration, "configuration");
+            IgniteArgumentCheck.NotNullOrEmpty(configuration.Name, "configuration.Name");
+            
+            // Create a copy to ignore modifications from outside.
+            var cfg = new LockConfiguration(configuration);
+
+            var target = DoOutOpObject((int) Op.GetOrCreateLock, w =>
+            {
+                w.WriteString(configuration.Name);
+                w.WriteBoolean(configuration.IsFailoverSafe);
+                w.WriteBoolean(configuration.IsFair);
+                w.WriteBoolean(create);
+            });
+            
+            return target == null ? null : new IgniteLock(target, cfg);
+        }
+
         /// <summary>
         /// Gets or creates near cache.
         /// </summary>
@@ -1121,6 +1156,12 @@ namespace Apache.Ignite.Core.Impl
         /// </summary>
         internal void OnClientDisconnected()
         {
+            // Clear cached node data.
+            // Do not clear _nodes - it is in sync with PlatformContextImpl.sentNodes.
+            _locNode = null;
+            _prj.ClearCachedNodeData();
+
+            // Raise events.
             _clientReconnectTaskCompletionSource = new TaskCompletionSource<bool>();
             
             var handler = ClientDisconnected;

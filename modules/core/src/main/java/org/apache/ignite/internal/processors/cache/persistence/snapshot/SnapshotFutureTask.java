@@ -49,6 +49,7 @@ import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.IgniteLogger;
 import org.apache.ignite.binary.BinaryType;
 import org.apache.ignite.configuration.CacheConfiguration;
+import org.apache.ignite.internal.IgniteFutureCancelledCheckedException;
 import org.apache.ignite.internal.pagemem.PageIdUtils;
 import org.apache.ignite.internal.pagemem.store.PageStore;
 import org.apache.ignite.internal.pagemem.store.PageWriteListener;
@@ -57,8 +58,8 @@ import org.apache.ignite.internal.processors.cache.GridCacheSharedContext;
 import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtLocalPartition;
 import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtPartitionState;
 import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtPartitionTopology;
-import org.apache.ignite.internal.processors.cache.persistence.DbCheckpointListener;
 import org.apache.ignite.internal.processors.cache.persistence.GridCacheDatabaseSharedManager;
+import org.apache.ignite.internal.processors.cache.persistence.checkpoint.CheckpointListener;
 import org.apache.ignite.internal.processors.cache.persistence.file.FileIO;
 import org.apache.ignite.internal.processors.cache.persistence.file.FileIOFactory;
 import org.apache.ignite.internal.processors.cache.persistence.file.FilePageStoreManager;
@@ -86,7 +87,7 @@ import static org.apache.ignite.internal.processors.cache.persistence.snapshot.I
 /**
  *
  */
-class SnapshotFutureTask extends GridFutureAdapter<Boolean> implements DbCheckpointListener {
+class SnapshotFutureTask extends GridFutureAdapter<Boolean> implements CheckpointListener {
     /** Shared context. */
     private final GridCacheSharedContext<?, ?> cctx;
 
@@ -262,7 +263,8 @@ class SnapshotFutureTask extends GridFutureAdapter<Boolean> implements DbCheckpo
 
         startedFut.onDone(th);
 
-        U.warn(log, "Snapshot task has accepted exception to stop: " + th);
+        if (!(th instanceof IgniteFutureCancelledCheckedException))
+            U.error(log, "Snapshot task has accepted exception to stop", th);
     }
 
     /** {@inheritDoc} */
@@ -627,8 +629,8 @@ class SnapshotFutureTask extends GridFutureAdapter<Boolean> implements DbCheckpo
 
     /** {@inheritDoc} */
     @Override public boolean cancel() {
-        acceptException(new IgniteCheckedException("Snapshot operation has been cancelled by external process " +
-            "[snpName=" + snpName + ']'));
+        acceptException(new IgniteFutureCancelledCheckedException("Snapshot operation has been cancelled " +
+            "by external process [snpName=" + snpName + ']'));
 
         try {
             closeAsync().get();

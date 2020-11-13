@@ -17,9 +17,6 @@
 
 package org.apache.ignite.internal.processors.rest.protocols.http.jetty;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.InjectableValues;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.BufferedInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -44,6 +41,9 @@ import javax.servlet.ServletOutputStream;
 import javax.servlet.ServletRequest;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.InjectableValues;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.IgniteLogger;
 import org.apache.ignite.IgniteSystemProperties;
@@ -62,9 +62,11 @@ import org.apache.ignite.internal.processors.rest.request.GridRestChangeStateReq
 import org.apache.ignite.internal.processors.rest.request.GridRestClusterNameRequest;
 import org.apache.ignite.internal.processors.rest.request.GridRestClusterStateRequest;
 import org.apache.ignite.internal.processors.rest.request.GridRestLogRequest;
+import org.apache.ignite.internal.processors.rest.request.GridRestNodeStateBeforeStartRequest;
 import org.apache.ignite.internal.processors.rest.request.GridRestRequest;
 import org.apache.ignite.internal.processors.rest.request.GridRestTaskRequest;
 import org.apache.ignite.internal.processors.rest.request.GridRestTopologyRequest;
+import org.apache.ignite.internal.processors.rest.request.GridRestWarmUpRequest;
 import org.apache.ignite.internal.processors.rest.request.RestQueryRequest;
 import org.apache.ignite.internal.processors.rest.request.RestUserActionRequest;
 import org.apache.ignite.internal.util.typedef.C1;
@@ -892,6 +894,22 @@ public class GridJettyRestHandler extends AbstractHandler {
                     restReq0.queryId(Long.parseLong(qryId));
 
                 restReq0.cacheName(params.get(CACHE_NAME_PARAM));
+
+                restReq = restReq0;
+
+                break;
+            }
+
+            case NODE_STATE_BEFORE_START: {
+                restReq = new GridRestNodeStateBeforeStartRequest();
+
+                break;
+            }
+
+            case WARM_UP: {
+                GridRestWarmUpRequest restReq0 = new GridRestWarmUpRequest();
+
+                restReq0.stopWarmUp(Boolean.parseBoolean(String.valueOf(params.get("stopWarmUp"))));
 
                 restReq = restReq0;
 

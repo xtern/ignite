@@ -39,9 +39,9 @@ import org.apache.ignite.internal.processors.cache.CacheGroupContext;
 import org.apache.ignite.internal.processors.cache.GridCacheSharedContext;
 import org.apache.ignite.internal.processors.cache.PartitionUpdateCounter;
 import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtLocalPartition;
-import org.apache.ignite.internal.processors.cache.persistence.DbCheckpointListener;
 import org.apache.ignite.internal.processors.cache.persistence.GridCacheDatabaseSharedManager;
 import org.apache.ignite.internal.processors.cache.persistence.GridCacheOffheapManager;
+import org.apache.ignite.internal.processors.cache.persistence.checkpoint.CheckpointListener;
 import org.apache.ignite.internal.processors.cache.persistence.partstate.GroupPartitionId;
 import org.apache.ignite.internal.util.GridConcurrentHashSet;
 import org.apache.ignite.internal.util.future.GridCompoundFuture;
@@ -313,8 +313,9 @@ public class PartitionPreloadingRoutine extends GridFutureAdapter<Boolean> {
 
         resFut.onDone(histAssignments);
 
-        if (histAssignments.isEmpty())
-            idxFut.listen(f -> cctx.walState().onGroupRebalanceFinished(grp.groupId(), topVer));
+        // todo
+//        if (histAssignments.isEmpty())
+//            idxFut.listen(f -> cctx.walState().onGroupRebalanceFinished(grp.groupId(), topVer));
 
         boolean finalPreloading = futAssigns.isEmpty() && onDone(true);
 
@@ -335,7 +336,8 @@ public class PartitionPreloadingRoutine extends GridFutureAdapter<Boolean> {
         CacheGroupContext grp,
         Map<UUID, Map<Integer, Long>> cntrs
     ) {
-        GridDhtPreloaderAssignments histAssigns = new GridDhtPreloaderAssignments(exchId, topVer);
+        // todo affinityReassign flag
+        GridDhtPreloaderAssignments histAssigns = new GridDhtPreloaderAssignments(exchId, topVer, false);
 
         int parts = grp.topology().partitions();
 
@@ -427,7 +429,7 @@ public class PartitionPreloadingRoutine extends GridFutureAdapter<Boolean> {
     /**
      *
      */
-    private static class PartitionRestoreHandler implements DbCheckpointListener, LifecycleAware {
+    private static class PartitionRestoreHandler implements CheckpointListener, LifecycleAware {
         /** Cache shared context. */
         private final GridCacheSharedContext cctx;
 
@@ -536,7 +538,8 @@ public class PartitionPreloadingRoutine extends GridFutureAdapter<Boolean> {
 
             partReleaseFut.add(cctx.mvcc().finishAtomicUpdates(infinTopVer));
             partReleaseFut.add(cctx.mvcc().finishDataStreamerUpdates(infinTopVer));
-            partReleaseFut.add(cctx.tm().finishLocalTxs(infinTopVer, null));
+            //partReleaseFut.add(cctx.tm().finishLocalTxs(infinTopVer, null));
+            partReleaseFut.add(cctx.tm().finishLocalTxs(infinTopVer));
 
             partReleaseFut.markInitialized();
 

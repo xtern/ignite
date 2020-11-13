@@ -28,8 +28,8 @@ import org.apache.ignite.plugin.extensions.communication.MessageWriter;
  *
  */
 public class SnapshotResponseMessage extends AbstractSnapshotMessage {
-    /** Snapshot response message type (value is {@code 178}). */
-    public static final short TYPE_CODE = 178;
+    /** Snapshot response message type (value is {@code 179}). */
+    public static final short TYPE_CODE = 179;
 
     /** Serialization version. */
     private static final long serialVersionUID = 0L;

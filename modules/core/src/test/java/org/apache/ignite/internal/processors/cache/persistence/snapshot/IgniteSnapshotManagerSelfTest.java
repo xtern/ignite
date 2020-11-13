@@ -48,8 +48,8 @@ import org.apache.ignite.internal.processors.cache.GridCacheSharedContext;
 import org.apache.ignite.internal.processors.cache.distributed.dht.preloader.GridDhtPartitionDemandMessage;
 import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtPartitionState;
 import org.apache.ignite.internal.processors.cache.persistence.CheckpointState;
-import org.apache.ignite.internal.processors.cache.persistence.DbCheckpointListener;
 import org.apache.ignite.internal.processors.cache.persistence.GridCacheDatabaseSharedManager;
+import org.apache.ignite.internal.processors.cache.persistence.checkpoint.CheckpointListener;
 import org.apache.ignite.internal.processors.cache.persistence.file.FileIO;
 import org.apache.ignite.internal.processors.cache.persistence.file.FileIODecorator;
 import org.apache.ignite.internal.processors.cache.persistence.file.FileIOFactory;
@@ -67,7 +67,7 @@ import org.junit.Test;
 
 import static org.apache.ignite.cluster.ClusterState.ACTIVE;
 import static org.apache.ignite.internal.MarshallerContextImpl.mappingFileStoreWorkDir;
-import static org.apache.ignite.internal.processors.cache.binary.CacheObjectBinaryProcessorImpl.resolveBinaryWorkDir;
+import static org.apache.ignite.internal.processors.cache.binary.CacheObjectBinaryProcessorImpl.binaryWorkDir;
 import static org.apache.ignite.internal.processors.cache.persistence.file.FilePageStoreManager.cacheDirName;
 import static org.apache.ignite.internal.processors.cache.persistence.snapshot.IgniteSnapshotManager.CP_SNAPSHOT_REASON;
 import static org.apache.ignite.internal.processors.cache.persistence.snapshot.IgniteSnapshotManager.databaseRelativePath;
@@ -77,6 +77,17 @@ import static org.apache.ignite.testframework.GridTestUtils.assertThrowsAnyCause
  * Default snapshot manager test.
  */
 public class IgniteSnapshotManagerSelfTest extends AbstractSnapshotSelfTest {
+    /** {@inheritDoc} */
+    @Override protected IgniteConfiguration getConfiguration(String igniteInstanceName) throws Exception {
+        IgniteConfiguration cfg = super.getConfiguration(igniteInstanceName);
+
+        // Disable implicit checkpoints for this test to avoid a race if an implicit cp has been scheduled before
+        // listener registration and calling snpFutTask.start().
+        cfg.getDataStorageConfiguration().setCheckpointFrequency(TimeUnit.DAYS.toMillis(365));
+
+        return cfg;
+    }
+
     /** @throws Exception If fails. */
     @Test
     public void testSnapshotLocalPartitions() throws Exception {
@@ -117,9 +128,9 @@ public class IgniteSnapshotManagerSelfTest extends AbstractSnapshotSelfTest {
         IgniteConfiguration cfg = ig.context().config();
         PdsFolderSettings settings = ig.context().pdsFolderResolver().resolveFolders();
         String nodePath = databaseRelativePath(settings.folderName());
-        File binWorkDir = resolveBinaryWorkDir(cfg.getWorkDirectory(), settings.folderName());
+        File binWorkDir = binaryWorkDir(cfg.getWorkDirectory(), settings.folderName());
         File marshWorkDir = mappingFileStoreWorkDir(U.workDirectory(cfg.getWorkDirectory(), cfg.getIgniteHome()));
-        File snpBinWorkDir = resolveBinaryWorkDir(mgr.snapshotLocalDir(SNAPSHOT_NAME).getAbsolutePath(), settings.folderName());
+        File snpBinWorkDir = binaryWorkDir(mgr.snapshotLocalDir(SNAPSHOT_NAME).getAbsolutePath(), settings.folderName());
         File snpMarshWorkDir = mappingFileStoreWorkDir(mgr.snapshotLocalDir(SNAPSHOT_NAME).getAbsolutePath());
 
         final Map<String, Integer> origPartCRCs = calculateCRC32Partitions(cacheWorkDir);
@@ -196,7 +207,7 @@ public class IgniteSnapshotManagerSelfTest extends AbstractSnapshotSelfTest {
                 }
             });
 
-        db.addCheckpointListener(new DbCheckpointListener() {
+        db.addCheckpointListener(new CheckpointListener() {
             /** {@inheritDoc} */
             @Override public void beforeCheckpointBegin(Context ctx) {
                 // No-op.
@@ -397,7 +408,7 @@ public class IgniteSnapshotManagerSelfTest extends AbstractSnapshotSelfTest {
         Map<String, Integer> rmtPartCRCs = new HashMap<>();
         CountDownLatch cancelLatch = new CountDownLatch(1);
 
-        db1.addCheckpointListener(new DbCheckpointListener() {
+        db1.addCheckpointListener(new CheckpointListener() {
             /** {@inheritDoc} */
             @Override public void beforeCheckpointBegin(Context ctx) {
                 //No-op.
@@ -541,7 +552,7 @@ public class IgniteSnapshotManagerSelfTest extends AbstractSnapshotSelfTest {
         CountDownLatch hold = new CountDownLatch(1);
 
         ((GridCacheDatabaseSharedManager)ig1.context().cache().context().database())
-            .addCheckpointListener(new DbCheckpointListener() {
+            .addCheckpointListener(new CheckpointListener() {
                 /** {@inheritDoc} */
                 @Override public void beforeCheckpointBegin(Context ctx) throws IgniteCheckedException {
                     // Listener will be executed inside the checkpoint thead.
@@ -638,7 +649,7 @@ public class IgniteSnapshotManagerSelfTest extends AbstractSnapshotSelfTest {
         ig0.cluster().setBaselineTopology(ig0.cluster().forServers().nodes());
 
         TestRecordingCommunicationSpi.spi(ig0)
-            .stopBlock(true, obj -> obj.get2().message() instanceof SnapshotRequestMessage);
+            .stopBlock(true, obj -> obj.ioMessage().message() instanceof SnapshotRequestMessage);
 
         snpFut.get();
     }

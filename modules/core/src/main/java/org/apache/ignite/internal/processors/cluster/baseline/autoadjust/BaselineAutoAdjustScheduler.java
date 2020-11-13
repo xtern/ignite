@@ -25,6 +25,7 @@ import org.apache.ignite.lang.IgniteUuid;
 
 import static org.apache.ignite.IgniteSystemProperties.IGNITE_BASELINE_AUTO_ADJUST_LOG_INTERVAL;
 import static org.apache.ignite.IgniteSystemProperties.getLong;
+import static org.apache.ignite.internal.processors.cluster.baseline.autoadjust.ChangeTopologyWatcher.DFLT_BASELINE_AUTO_ADJUST_LOG_INTERVAL;
 
 /**
  * This class able to add task of set baseline with timeout to queue. In one time only one task can be in queue. Every
@@ -94,7 +95,7 @@ class BaselineAutoAdjustScheduler {
     private static class BaselineMultiplyUseTimeoutObject implements GridTimeoutObject {
         /** Interval between logging of info about next baseline auto-adjust. */
         private static final long AUTO_ADJUST_LOG_INTERVAL =
-            getLong(IGNITE_BASELINE_AUTO_ADJUST_LOG_INTERVAL, 60_000);
+            getLong(IGNITE_BASELINE_AUTO_ADJUST_LOG_INTERVAL, DFLT_BASELINE_AUTO_ADJUST_LOG_INTERVAL);
 
         /** Last data for set new baseline. */
         private final BaselineAutoAdjustData baselineAutoAdjustData;
@@ -165,12 +166,14 @@ class BaselineAutoAdjustScheduler {
             long lastScheduledTaskTime = totalEndTime - System.currentTimeMillis();
 
             if (lastScheduledTaskTime <= 0) {
-                log.info("Baseline auto-adjust will be executed right now.");
+                if (log.isInfoEnabled())
+                    log.info("Baseline auto-adjust will be executed right now.");
 
                 baselineAutoAdjustExecutor.execute(baselineAutoAdjustData);
             }
             else {
-                log.info("Baseline auto-adjust will be executed in '" + lastScheduledTaskTime + "' ms.");
+                if (log.isInfoEnabled())
+                    log.info("Baseline auto-adjust will be executed in '" + lastScheduledTaskTime + "' ms.");
 
                 endTime = calculateEndTime(lastScheduledTaskTime);
 
