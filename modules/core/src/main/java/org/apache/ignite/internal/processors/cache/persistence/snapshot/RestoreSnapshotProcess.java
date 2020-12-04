@@ -18,6 +18,7 @@ import org.apache.ignite.internal.util.typedef.internal.S;
 import org.apache.ignite.lang.IgniteFuture;
 
 import static org.apache.ignite.internal.util.distributed.DistributedProcess.DistributedProcessType.END_SNAPSHOT_RESTORE;
+import static org.apache.ignite.internal.util.distributed.DistributedProcess.DistributedProcessType.START_SNAPSHOT_RESTORE;
 
 public class RestoreSnapshotProcess {
     private final GridKernalContext ctx;
@@ -26,14 +27,18 @@ public class RestoreSnapshotProcess {
 
     private volatile RestoreSnapshotFuture fut;
 
-//    private final DistributedProcess<SnapshotRestoreRequest, SnapshotRestoreResponse> prepareRestoreProc;
+    private final DistributedProcess<SnapshotRestoreRequest, SnapshotRestoreResponse> prepareRestoreProc;
     private final DistributedProcess<SnapshotRestoreRequest, SnapshotRestoreResponse> performRestoreProc;
 
     public RestoreSnapshotProcess(GridKernalContext ctx) {
         this.ctx = ctx;
 
-//        prepareRestoreProc = new DistributedProcess<>(ctx, START_SNAPSHOT_RESTORE, this::prepare, this::finishPrepare);
+        prepareRestoreProc = new DistributedProcess<SnapshotRestoreRequest, SnapshotRestoreResponse>(ctx, START_SNAPSHOT_RESTORE, this::prepare, this::finishPrepare);
         performRestoreProc = new DistributedProcess<>(ctx, END_SNAPSHOT_RESTORE, this::perform, this::finishPerform);
+    }
+
+    private IgniteInternalFuture<SnapshotRestoreResponse> prepare(SnapshotRestoreRequest req) {
+        return null;
     }
 
     public IgniteFuture<Void> start(String snpName, Collection<String> cacheOrGrpNames) {
