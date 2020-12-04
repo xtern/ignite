@@ -66,8 +66,10 @@ import org.apache.ignite.internal.cluster.ClusterTopologyCheckedException;
 import org.apache.ignite.internal.events.DiscoveryCustomEvent;
 import org.apache.ignite.internal.managers.eventstorage.DiscoveryEventListener;
 import org.apache.ignite.internal.processors.affinity.AffinityTopologyVersion;
+import org.apache.ignite.internal.processors.cache.CacheGroupContext;
 import org.apache.ignite.internal.processors.cache.CacheGroupDescriptor;
 import org.apache.ignite.internal.processors.cache.CacheType;
+import org.apache.ignite.internal.processors.cache.GridCacheContext;
 import org.apache.ignite.internal.processors.cache.GridCacheSharedManagerAdapter;
 import org.apache.ignite.internal.processors.cache.distributed.dht.preloader.GridDhtPartitionsExchangeFuture;
 import org.apache.ignite.internal.processors.cache.distributed.dht.preloader.PartitionsExchangeAware;
@@ -99,6 +101,7 @@ import org.apache.ignite.internal.util.lang.GridClosureException;
 import org.apache.ignite.internal.util.lang.GridPlainRunnable;
 import org.apache.ignite.internal.util.tostring.GridToStringInclude;
 import org.apache.ignite.internal.util.typedef.F;
+import org.apache.ignite.internal.util.typedef.T2;
 import org.apache.ignite.internal.util.typedef.internal.A;
 import org.apache.ignite.internal.util.typedef.internal.CU;
 import org.apache.ignite.internal.util.typedef.internal.S;
@@ -851,17 +854,14 @@ public class IgniteSnapshotManager extends GridCacheSharedManagerAdapter
         for (String grpName : grpNames) {
             File cacheDir = resolveCacheDir(cctx.igniteInstanceName(), grpName);
 
-            // todo should register cache
-            if (!cacheDir.exists())
-                continue;
+            boolean cacheDirExists = cacheDir.exists();
 
-            //..throw new UnsupportedOperationException("Cache group does not exists [name=" + grpName + "]");
+            if (cacheDirExists) {
+                for (File file : cacheDir.listFiles()) {
+                    boolean rmv = file.delete();
 
-            // f -> f.getName().startsWith(FilePageStoreManager.PART_FILE_PREFIX)
-            for (File file : cacheDir.listFiles()) {
-                boolean rmv = file.delete();
-
-                assert rmv : file;
+                    assert rmv : file;
+                }
             }
 
             File snapshotCacheDir = resolveSnapshotCacheDir(snpName, cctx.kernalContext().config(), grpName);
@@ -870,6 +870,28 @@ public class IgniteSnapshotManager extends GridCacheSharedManagerAdapter
                 log.info("Skipping restore of cache group [snapshot=" + snpName + ", cache=" + grpName + "]");
 
                 continue;
+            }
+
+            // todo should register cache?
+            if (!cacheDirExists)
+                cacheDir.mkdir();
+
+            CacheGroupContext grp = cctx.cache().cacheGroup(CU.cacheId(grpName));
+
+            if (grp != null) {
+                cctx.database().checkpointReadLock();
+
+                try {
+                    for (GridCacheContext<?, ?> cacheCtx : grp.caches())
+                        cctx.cache().prepareCacheStop(cacheCtx.name(), false);
+                }
+                finally {
+                    cctx.database().checkpointReadUnlock();
+                }
+
+                cctx.cache().stopCacheGroup(grp.groupId(), false);
+
+                cctx.database().onCacheGroupsStopped(Collections.singleton(new T2<>(grp, false)));
             }
 
             try {
@@ -884,7 +906,6 @@ public class IgniteSnapshotManager extends GridCacheSharedManagerAdapter
             catch (IOException e) {
                 throw new IgniteCheckedException("Unable to restore file [snapshot=" + snpName + ", grp=" + grpName + ']');
             }
-
         }
     }
 
@@ -894,7 +915,7 @@ public class IgniteSnapshotManager extends GridCacheSharedManagerAdapter
         return new File(workDIr, igniteInstanceName.replaceAll("\\.", "_") + File.separator + "cache-" + cacheName);
     }
 
-    private File resolveSnapshotCacheDir(String snpName, IgniteConfiguration cfg, String cacheName) {
+    protected File resolveSnapshotCacheDir(String snpName, IgniteConfiguration cfg, String cacheName) {
         File workDIr = resolveSnapshotWorkDirectory(cfg);
 
         String subPath = snpName + File.separator + DFLT_STORE_DIR + File.separator + cfg.getIgniteInstanceName().replaceAll("\\.", "_");

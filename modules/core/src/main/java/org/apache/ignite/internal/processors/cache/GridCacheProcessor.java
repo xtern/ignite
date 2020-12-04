@@ -2926,7 +2926,7 @@ public class GridCacheProcessor extends GridProcessorAdapter {
      * @param grpId Group ID.
      * @param destroy Group destroy flag.
      */
-    private void stopCacheGroup(int grpId, boolean destroy) {
+    public void stopCacheGroup(int grpId, boolean destroy) {
         CacheGroupContext grp = cacheGrps.remove(grpId);
 
         if (grp != null)
