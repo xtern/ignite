@@ -128,6 +128,7 @@ import static org.apache.ignite.internal.managers.communication.GridIoPolicy.SYS
 import static org.apache.ignite.internal.pagemem.PageIdAllocator.INDEX_PARTITION;
 import static org.apache.ignite.internal.pagemem.PageIdAllocator.MAX_PARTITION_ID;
 import static org.apache.ignite.internal.processors.cache.binary.CacheObjectBinaryProcessorImpl.binaryWorkDir;
+import static org.apache.ignite.internal.processors.cache.persistence.file.FilePageStoreManager.DFLT_STORE_DIR;
 import static org.apache.ignite.internal.processors.cache.persistence.file.FilePageStoreManager.INDEX_FILE_NAME;
 import static org.apache.ignite.internal.processors.cache.persistence.file.FilePageStoreManager.PART_FILE_TEMPLATE;
 import static org.apache.ignite.internal.processors.cache.persistence.file.FilePageStoreManager.getPartitionFile;
@@ -253,6 +254,8 @@ public class IgniteSnapshotManager extends GridCacheSharedManagerAdapter
     /** Last seen cluster snapshot operation. */
     private volatile ClusterSnapshotFuture lastSeenSnpFut = new ClusterSnapshotFuture();
 
+    private final RestoreSnapshotProcess restoreSnapshotProcess;
+
     /**
      * @param ctx Kernal context.
      */
@@ -266,6 +269,8 @@ public class IgniteSnapshotManager extends GridCacheSharedManagerAdapter
 
         endSnpProc = new DistributedProcess<>(ctx, END_SNAPSHOT, this::initLocalSnapshotEndStage,
             this::processLocalSnapshotEndStageResult);
+
+        restoreSnapshotProcess = new RestoreSnapshotProcess(ctx);
     }
 
     /**
@@ -836,6 +841,65 @@ public class IgniteSnapshotManager extends GridCacheSharedManagerAdapter
 
             return new IgniteFinishedFutureImpl<>(e);
         }
+    }
+
+    public IgniteFuture<Void> restoreCacheGroups(String snpName, Collection<String> grpNames) {
+        return restoreSnapshotProcess.start(snpName, grpNames);
+    }
+
+    protected void restoreCacheGroupsLocal(String snpName, Collection<String> grpNames) throws IgniteCheckedException {
+        for (String grpName : grpNames) {
+            File cacheDir = resolveCacheDir(cctx.igniteInstanceName(), grpName);
+
+            // todo should register cache
+            if (!cacheDir.exists())
+                continue;
+
+            //..throw new UnsupportedOperationException("Cache group does not exists [name=" + grpName + "]");
+
+            // f -> f.getName().startsWith(FilePageStoreManager.PART_FILE_PREFIX)
+            for (File file : cacheDir.listFiles()) {
+                boolean rmv = file.delete();
+
+                assert rmv : file;
+            }
+
+            File snapshotCacheDir = resolveSnapshotCacheDir(snpName, cctx.kernalContext().config(), grpName);
+
+            if (!snapshotCacheDir.exists()) {
+                log.info("Skipping restore of cache group [snapshot=" + snpName + ", cache=" + grpName + "]");
+
+                continue;
+            }
+
+            try {
+                for (File snpFile : snapshotCacheDir.listFiles()) {
+                    File target = new File(cacheDir, snpFile.getName());
+
+                    log.info("Restore file from snapshot [snapshot=" + snpName + ", src=" + snpFile + ", target=" + target + "]");
+
+                    Files.copy(snpFile.toPath(), target.toPath());
+                }
+            }
+            catch (IOException e) {
+                throw new IgniteCheckedException("Unable to restore file [snapshot=" + snpName + ", grp=" + grpName + ']');
+            }
+
+        }
+    }
+
+    private File resolveCacheDir(String igniteInstanceName, String cacheName) throws IgniteCheckedException {
+        File workDIr = U.resolveWorkDirectory(U.defaultWorkDirectory(), DFLT_STORE_DIR, false);
+
+        return new File(workDIr, igniteInstanceName.replaceAll("\\.", "_") + File.separator + "cache-" + cacheName);
+    }
+
+    private File resolveSnapshotCacheDir(String snpName, IgniteConfiguration cfg, String cacheName) {
+        File workDIr = resolveSnapshotWorkDirectory(cfg);
+
+        String subPath = snpName + File.separator + DFLT_STORE_DIR + File.separator + cfg.getIgniteInstanceName().replaceAll("\\.", "_");
+
+        return new File(workDIr, subPath + File.separator + "cache-" + cacheName);
     }
 
     /** {@inheritDoc} */
