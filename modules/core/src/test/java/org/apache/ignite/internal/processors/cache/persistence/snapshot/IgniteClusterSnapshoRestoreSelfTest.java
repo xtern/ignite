@@ -18,6 +18,7 @@
 package org.apache.ignite.internal.processors.cache.persistence.snapshot;
 
 import java.util.Collections;
+import org.apache.ignite.Ignite;
 import org.apache.ignite.IgniteCache;
 import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.IgniteException;
@@ -25,34 +26,44 @@ import org.apache.ignite.cache.CacheAtomicityMode;
 import org.apache.ignite.cache.affinity.rendezvous.RendezvousAffinityFunction;
 import org.apache.ignite.cluster.ClusterState;
 import org.apache.ignite.configuration.CacheConfiguration;
+import org.apache.ignite.configuration.IgniteConfiguration;
 import org.apache.ignite.internal.IgniteEx;
+import org.apache.ignite.internal.TestRecordingCommunicationSpi;
+import org.apache.ignite.internal.util.distributed.SingleNodeMessage;
 import org.apache.ignite.lang.IgniteFuture;
 import org.apache.ignite.testframework.GridTestUtils;
 import org.junit.Before;
 import org.junit.Test;
 
 /**
- * Cluster-wide snapshot test.
+ * Snapshot restore tests.
  */
 public class IgniteClusterSnapshoRestoreSelfTest extends AbstractSnapshotSelfTest {
     /** Timeout. */
     private static final long MAX_AWAIT_MILLIS = 15_000;
 
-    /** Cache configuration for test. */
-    private static final CacheConfiguration<Integer, Integer> atomicCcfg = new CacheConfiguration<Integer, Integer>("atomicCacheName")
-        .setAtomicityMode(CacheAtomicityMode.ATOMIC)
-        .setBackups(2)
-        .setAffinity(new RendezvousAffinityFunction(false, CACHE_PARTS_COUNT));
+//    /** Cache configuration for test. */
+//    private static final CacheConfiguration<Integer, Integer> atomicCcfg = new CacheConfiguration<Integer, Integer>("atomicCacheName")
+//        .setAtomicityMode(CacheAtomicityMode.ATOMIC)
+//        .setBackups(2)
+//        .setAffinity(new RendezvousAffinityFunction(false, CACHE_PARTS_COUNT));
 
-    /** {@code true} if node should be started in separate jvm. */
-    protected volatile boolean jvm;
+//    /** {@code true} if node should be started in separate jvm. */
+//    protected volatile boolean jvm;
+
+//    /** {@inheritDoc} */
+//    @Override protected IgniteConfiguration getConfiguration(String name) throws Exception {
+//        IgniteConfiguration cfg = super.getConfiguration(name);
+//
+//        cfg.setCommunicationSpi(new TestRecordingCommunicationSpi());
+//
+//        return cfg;
+//    }
 
     /** @throws Exception If fails. */
     @Before
     @Override public void beforeTestSnapshot() throws Exception {
         super.beforeTestSnapshot();
-
-        jvm = false;
     }
 
     /** {@inheritDoc} */
@@ -63,9 +74,7 @@ public class IgniteClusterSnapshoRestoreSelfTest extends AbstractSnapshotSelfTes
     /** @throws Exception If fails. */
     @Test
     public void testBasicClusterSnapshotRestore() throws Exception {
-        int nodesCnt = 2;
-
-        IgniteEx ignite = startGridsWithCache(nodesCnt, dfltCacheCfg, CACHE_KEYS_RANGE);
+        IgniteEx ignite = startGridsWithCache(2, dfltCacheCfg, CACHE_KEYS_RANGE);
 
         resetBaselineTopology();
 
@@ -88,9 +97,7 @@ public class IgniteClusterSnapshoRestoreSelfTest extends AbstractSnapshotSelfTes
     /** @throws Exception If fails. */
     @Test
     public void testClusterSnapshotRestoreRejectOnActiveCluster() throws Exception {
-        int nodesCnt = 2;
-
-        IgniteEx ignite = startGridsWithCache(nodesCnt, dfltCacheCfg, CACHE_KEYS_RANGE);
+        IgniteEx ignite = startGridsWithCache(2, dfltCacheCfg, CACHE_KEYS_RANGE);
 
         ignite.snapshot().createSnapshot(SNAPSHOT_NAME).get(MAX_AWAIT_MILLIS);
 
@@ -108,9 +115,7 @@ public class IgniteClusterSnapshoRestoreSelfTest extends AbstractSnapshotSelfTes
     /** @throws Exception If fails. */
     @Test
     public void testRestoreWithMissedPartitions() throws Exception {
-        int nodesCnt = 4;
-
-        IgniteEx ignite = startGridsWithCache(nodesCnt, dfltCacheCfg, CACHE_KEYS_RANGE);
+        IgniteEx ignite = startGridsWithCache(4, dfltCacheCfg, CACHE_KEYS_RANGE);
 
         ignite.snapshot().createSnapshot(SNAPSHOT_NAME).get(MAX_AWAIT_MILLIS);
 
@@ -145,18 +150,18 @@ public class IgniteClusterSnapshoRestoreSelfTest extends AbstractSnapshotSelfTes
     /** @throws Exception If fails. */
     @Test
     public void testBasicClusterSnapshotRestoreDiffTopology() throws Exception {
-        int nodesCnt = 2;
+        int nodesCnt = 4;
 
-        IgniteEx ignite = startGridsWithCache(nodesCnt, dfltCacheCfg, CACHE_KEYS_RANGE);
+        IgniteEx ignite = startGridsWithCache(nodesCnt - 2, dfltCacheCfg, CACHE_KEYS_RANGE);
 
         resetBaselineTopology();
 
-        ignite.snapshot().createSnapshot(SNAPSHOT_NAME).get();
+        ignite.snapshot().createSnapshot(SNAPSHOT_NAME).get(MAX_AWAIT_MILLIS);
 
         putKeys(ignite.cache(dfltCacheCfg.getName()), CACHE_KEYS_RANGE, CACHE_KEYS_RANGE);
 
-        startGrid(nodesCnt);
-        startGrid(nodesCnt + 1);
+        startGrid(nodesCnt - 2);
+        startGrid(nodesCnt - 1);
 
         resetBaselineTopology();
         awaitPartitionMapExchange();
@@ -178,13 +183,11 @@ public class IgniteClusterSnapshoRestoreSelfTest extends AbstractSnapshotSelfTes
     /** @throws Exception If fails. */
     @Test
     public void testBasicClusterSnapshotRestoreAfterDestroy() throws Exception {
-        int nodesCnt = 2;
-
-        IgniteEx ignite = startGridsWithCache(nodesCnt, dfltCacheCfg, CACHE_KEYS_RANGE);
+        IgniteEx ignite = startGridsWithCache(2, dfltCacheCfg, CACHE_KEYS_RANGE);
 
         resetBaselineTopology();
 
-        ignite.snapshot().createSnapshot(SNAPSHOT_NAME).get();
+        ignite.snapshot().createSnapshot(SNAPSHOT_NAME).get(MAX_AWAIT_MILLIS);
 
         ignite.destroyCache(dfltCacheCfg.getName());
 
@@ -202,6 +205,57 @@ public class IgniteClusterSnapshoRestoreSelfTest extends AbstractSnapshotSelfTes
         ignite.cluster().state(ClusterState.ACTIVE);
 
         checkCacheKeys(ignite.cache(dfltCacheCfg.getName()), CACHE_KEYS_RANGE);
+    }
+
+    /** @throws Exception If fails. */
+    @Test
+    public void testActivateFromClientWhenRestoring() throws Exception {
+        IgniteEx ignite = startGridsWithCache(2, dfltCacheCfg, CACHE_KEYS_RANGE);
+
+        IgniteEx client = startClientGrid("client");
+
+        client.snapshot().createSnapshot(SNAPSHOT_NAME).get(MAX_AWAIT_MILLIS);
+
+        putKeys(client.cache(dfltCacheCfg.getName()), CACHE_KEYS_RANGE, CACHE_KEYS_RANGE);
+
+        client.cluster().state(ClusterState.INACTIVE);
+
+        IgniteSnapshotManager snapshotMgr = grid(1).context().cache().context().snapshotMgr();
+
+        // todo block distribprocess and try to activate cluster
+        TestRecordingCommunicationSpi spi = TestRecordingCommunicationSpi.spi(grid(1));
+
+        spi.blockMessages((node, msg) -> {
+            if (msg instanceof SingleNodeMessage)
+                return true;
+
+            System.out.println(">xxx> " + node.id());
+
+            return false;
+        });
+
+        IgniteFuture<Void> fut = snapshotMgr.restoreCacheGroups(SNAPSHOT_NAME, Collections.singleton(dfltCacheCfg.getName()));
+
+        spi.waitForBlocked();
+
+        GridTestUtils.assertThrowsAnyCause(
+            log,
+            () -> {
+                client.cluster().state(ClusterState.ACTIVE);
+
+                return null;
+            },
+            IllegalStateException.class,
+            "The cluster cannot be activated until the snapshot restore operation is complete."
+        );
+
+        spi.stopBlock();
+
+        fut.get(MAX_AWAIT_MILLIS);
+
+        client.cluster().state(ClusterState.ACTIVE);
+
+        checkCacheKeys(client.cache(dfltCacheCfg.getName()), CACHE_KEYS_RANGE);
     }
 
     private void checkCacheKeys(IgniteCache<Object, Object> testCache, int keysCnt) {

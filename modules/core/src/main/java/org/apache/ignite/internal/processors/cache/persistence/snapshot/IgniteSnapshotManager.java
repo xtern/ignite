@@ -672,6 +672,10 @@ public class IgniteSnapshotManager extends GridCacheSharedManagerAdapter
         }
     }
 
+    public boolean isSnapshotRestoring() {
+        return restoreSnapshotProcess.inProgress();
+    }
+
     /**
      * @return List of all known snapshots on the local node.
      */

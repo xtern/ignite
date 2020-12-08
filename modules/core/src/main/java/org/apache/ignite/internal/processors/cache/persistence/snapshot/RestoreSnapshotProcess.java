@@ -58,8 +58,8 @@ public class RestoreSnapshotProcess {
 
     // validating
     private IgniteInternalFuture<SnapshotRestoreResponse> prepare(SnapshotRestoreRequest req) {
-        if (ctx.clientNode())
-            return new GridFinishedFuture<>();
+//        if (ctx.clientNode())
+//            return new GridFinishedFuture<>();
 
         if (inProgress()) {
             // todo do we need it?
@@ -224,6 +224,8 @@ public class RestoreSnapshotProcess {
                 ctx.cache().context().snapshotMgr().restoreCacheGroupsLocal(req.snapshotName(), req.groups());
         } catch (IgniteCheckedException e) {
             return new GridFinishedFuture<>(e);
+        } finally {
+            this.req = null;
         }
 
         return new GridFinishedFuture<>(new SnapshotRestoreResponse());
