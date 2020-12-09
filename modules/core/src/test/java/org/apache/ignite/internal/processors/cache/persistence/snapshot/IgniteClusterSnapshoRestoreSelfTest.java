@@ -18,18 +18,14 @@
 package org.apache.ignite.internal.processors.cache.persistence.snapshot;
 
 import java.util.Collections;
-import org.apache.ignite.Ignite;
 import org.apache.ignite.IgniteCache;
 import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.IgniteException;
-import org.apache.ignite.cache.CacheAtomicityMode;
-import org.apache.ignite.cache.affinity.rendezvous.RendezvousAffinityFunction;
 import org.apache.ignite.cluster.ClusterState;
-import org.apache.ignite.configuration.CacheConfiguration;
-import org.apache.ignite.configuration.IgniteConfiguration;
 import org.apache.ignite.internal.IgniteEx;
 import org.apache.ignite.internal.TestRecordingCommunicationSpi;
 import org.apache.ignite.internal.util.distributed.SingleNodeMessage;
+import org.apache.ignite.internal.util.typedef.G;
 import org.apache.ignite.lang.IgniteFuture;
 import org.apache.ignite.testframework.GridTestUtils;
 import org.junit.Before;
@@ -256,6 +252,38 @@ public class IgniteClusterSnapshoRestoreSelfTest extends AbstractSnapshotSelfTes
         client.cluster().state(ClusterState.ACTIVE);
 
         checkCacheKeys(client.cache(dfltCacheCfg.getName()), CACHE_KEYS_RANGE);
+    }
+
+    @Test
+    public void testPreventRecoveryOnRestoredCacheGroup() throws Exception {
+        IgniteEx ignite = startGridsWithCache(2, dfltCacheCfg, CACHE_KEYS_RANGE);
+
+        resetBaselineTopology();
+
+        ignite.snapshot().createSnapshot(SNAPSHOT_NAME).get(MAX_AWAIT_MILLIS);
+
+        enableCheckpoints(G.allGrids(), false);
+
+        putKeys(ignite.cache(dfltCacheCfg.getName()), CACHE_KEYS_RANGE, CACHE_KEYS_RANGE);
+
+//        forceCheckpoint();
+
+        stopAllGrids();
+
+        ignite = startGrid(0);
+        startGrid(1);
+
+        ignite.context().cache().context().snapshotMgr().
+            restoreCacheGroups(SNAPSHOT_NAME, Collections.singleton(dfltCacheCfg.getName())).get(MAX_AWAIT_MILLIS);
+
+        stopAllGrids();
+
+        ignite = startGrid(0);
+        startGrid(1);
+
+        ignite.cluster().state(ClusterState.ACTIVE);
+
+        checkCacheKeys(ignite.cache(dfltCacheCfg.getName()), CACHE_KEYS_RANGE);
     }
 
     private void checkCacheKeys(IgniteCache<Object, Object> testCache, int keysCnt) {
