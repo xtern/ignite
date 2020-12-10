@@ -13,15 +13,17 @@ import java.util.Set;
 import java.util.UUID;
 import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.IgniteException;
-import org.apache.ignite.cluster.ClusterState;
 import org.apache.ignite.configuration.CacheConfiguration;
 import org.apache.ignite.configuration.IgniteConfiguration;
 import org.apache.ignite.internal.GridKernalContext;
 import org.apache.ignite.internal.IgniteInternalFuture;
+import org.apache.ignite.internal.processors.cache.CacheGroupContext;
+import org.apache.ignite.internal.processors.cache.CacheGroupDescriptor;
 import org.apache.ignite.internal.processors.cache.StoredCacheData;
 import org.apache.ignite.internal.processors.cache.persistence.file.FilePageStoreManager;
 import org.apache.ignite.internal.processors.cache.persistence.snapshot.SnapshotRestoreResponse.CacheGroupSnapshotDetails;
 import org.apache.ignite.internal.util.distributed.DistributedProcess;
+import org.apache.ignite.internal.util.future.GridCompoundFuture;
 import org.apache.ignite.internal.util.future.GridFinishedFuture;
 import org.apache.ignite.internal.util.future.GridFutureAdapter;
 import org.apache.ignite.internal.util.future.IgniteFinishedFutureImpl;
@@ -31,6 +33,7 @@ import org.apache.ignite.internal.util.typedef.internal.A;
 import org.apache.ignite.internal.util.typedef.internal.S;
 import org.apache.ignite.internal.util.typedef.internal.U;
 import org.apache.ignite.lang.IgniteFuture;
+import org.apache.ignite.lang.IgniteReducer;
 import org.apache.ignite.marshaller.MarshallerUtils;
 import org.apache.ignite.marshaller.jdk.JdkMarshaller;
 import org.jetbrains.annotations.Nullable;
@@ -71,8 +74,8 @@ public class RestoreSnapshotProcess {
 
         // todo forbid state change
         // todo forbid node join
-        if (ctx.state().clusterState().state() != ClusterState.INACTIVE)
-            throw new IgniteException("Operation was rejected. The cluster should be inactive.");
+//        if (ctx.state().clusterState().state() != ClusterState.ACTIVE_READ_ONLY)
+//            throw new IgniteException("Operation was rejected. The cluster should be in read-only mode.");
 
         this.req = req;
 
@@ -121,8 +124,10 @@ public class RestoreSnapshotProcess {
         boolean isCoordinator = U.isLocalNodeCoordinator(ctx.discovery());
 
 //        if (isInitiator || isCoordinator) {
+        Collection<CacheGroupSnapshotDetails> details;
+
         try {
-            validateResponses(res);
+            details = validateResponses(res);
         } catch (Exception e) {
             req = null;
 
@@ -132,12 +137,25 @@ public class RestoreSnapshotProcess {
             return;
         }
 
-        if (isCoordinator)
-            performRestoreProc.start(reqId, req);
-//        }
+        // todo should be coordinator - how to handle errors
+        if (isInitiator) {
+            System.out.println(">xxx> stop caches...");
+
+            ctx.getSystemExecutorService().submit(() -> {
+                ctx.cache().dynamicDestroyCaches(req.groups(), true, false).listen(f -> {
+                    if (f.error() == null && !f.isCancelled()) {
+                        System.out.println(">xxx> start perform...");
+                        performRestoreProc.start(reqId, req);
+                    } else
+                        if (f.error() != null)
+                            fut.onDone(f.error());
+                    // todo handle errors, finish future
+                });
+            });
+        }
     }
 
-    private void validateResponses(Map<UUID, SnapshotRestoreResponse> res) throws IgniteCheckedException {
+    private Collection<CacheGroupSnapshotDetails> validateResponses(Map<UUID, SnapshotRestoreResponse> res) throws IgniteCheckedException {
         Map<String, CacheGroupSnapshotDetails> globalParts = new HashMap<>();
 
         for (Map.Entry<UUID, SnapshotRestoreResponse> e : res.entrySet()) {
@@ -186,12 +204,14 @@ public class RestoreSnapshotProcess {
             if (reqParts != availParts)
                 throw new IgniteCheckedException("Cannot restore snapshot, not all partitions available [required=" + reqParts + ", avail=" + availParts + "]");
         }
+
+        return globalParts.values();
     }
 
     public IgniteFuture<Void> start(String snpName, Collection<String> cacheOrGrpNames) {
-        if (ctx.state().clusterState().state() != ClusterState.INACTIVE)
-            return new IgniteFinishedFutureImpl<>(new IgniteException("Snapshot restore operation was rejected. " +
-                " The cluster should be inactive."));
+//        if (ctx.state().clusterState().state() != ClusterState.ACTIVE_READ_ONLY)
+//            return new IgniteFinishedFutureImpl<>(new IgniteException("Snapshot restore operation was rejected. " +
+//                " The cluster should be in read-only mode."));
 
         IgniteInternalFuture<Void> fut0 = fut;
 
@@ -207,6 +227,13 @@ public class RestoreSnapshotProcess {
 
         prepareRestoreProc.start(req.requestId(), req);
 
+        try {
+            ctx.cache().dynamicDestroyCaches(cacheOrGrpNames, true, false).get();
+        }
+        catch (IgniteCheckedException e) {
+            throw new IgniteException(e);
+        }
+
         return new IgniteFutureImpl<>(fut);
     }
 
@@ -219,20 +246,67 @@ public class RestoreSnapshotProcess {
         if (!req.equals(this.req))
             return new GridFinishedFuture<>(new IgniteException("Unknown snapshot restore operation was rejected."));
 
+        SnapshotRestoreResponse resp = new SnapshotRestoreResponse();
+
         try {
-            if (!ctx.clientNode())
-                ctx.cache().context().snapshotMgr().restoreCacheGroupsLocal(req.snapshotName(), req.groups());
+            if (!ctx.clientNode()) {
+                Collection<CacheGroupDescriptor> grps = ctx.cache().context().snapshotMgr().restoreCacheGroupsLocal(req.snapshotName(), req.groups());
+
+//                RestoreSnapshotFuture fut0 = fut;
+
+//                if (fut0 != null && fut0.id().equals(req.requestId())) {
+                    for (CacheGroupDescriptor grp : grps)
+                        resp.put(grp.cacheOrGroupName(), grp.config(), null);
+//                }
+            }
+
+
         } catch (IgniteCheckedException e) {
             return new GridFinishedFuture<>(e);
         } finally {
             this.req = null;
         }
 
-        return new GridFinishedFuture<>(new SnapshotRestoreResponse());
+        return new GridFinishedFuture<>(resp);
     }
 
     private void finishPerform(UUID reqId, Map<UUID, SnapshotRestoreResponse> map, Map<UUID, Exception> errs) {
-        completeFuture(reqId, errs, fut);
+        try {
+            // remap
+
+            Map<String, CacheConfiguration> resMap = new HashMap<>();
+
+            for (SnapshotRestoreResponse nodeResp : map.values()) {
+                for (Map.Entry<String, CacheGroupSnapshotDetails> entry : nodeResp.locParts().entrySet()) {
+                    resMap.put(entry.getKey(), entry.getValue().config());
+                }
+
+            }
+
+            // todo should be coordinator
+            if (completeFuture(reqId, errs, fut)) {
+
+                for (Map.Entry<String, CacheConfiguration> entry : resMap.entrySet()) {
+                    // todo batch - wait start
+                    ctx.cache().dynamicStartCache(entry.getValue(),
+                        entry.getKey(),
+                        null,
+                        false,
+                        true,
+                        true);
+                }
+//                ctx.cache().dynamicStartCache(grp.config(),
+//                    grp.cacheOrGroupName(),
+//                    null,
+//                    false,
+//                    true,
+//                    true).get();
+            }
+//                ctx.cache().dynamicStartCache(cacheOrGrpNames, true, false).get();
+
+        } finally {
+            this.req = null;
+        }
     }
 
     /**

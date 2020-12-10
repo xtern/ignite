@@ -881,6 +881,7 @@ public class CacheGroupContext {
                     (IgniteBiInClosure<UUID, GridDhtAffinityAssignmentRequest>) this::processAffinityAssignmentRequest);
             }
 
+//            U.dumpStack(">xxx> make preldr " + cacheOrGroupName());
             preldr = new GridDhtPreloader(this);
 
             preldr.start();
@@ -1090,12 +1091,16 @@ public class CacheGroupContext {
         offheapMgr.start(ctx, this);
 
         if (!isRecoveryMode()) {
+//            U.dumpStack(">xxx> initialize!!!");
             initializeIO();
 
             ctx.affinity().onCacheGroupCreated(this);
 
             ctx.evict().onCacheGroupStarted(this);
         }
+//        else {
+//            U.dumpStack(">xxx> recovery!!!");
+//        }
     }
 
     /**

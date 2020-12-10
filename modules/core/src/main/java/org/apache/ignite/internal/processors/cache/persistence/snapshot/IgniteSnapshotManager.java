@@ -30,6 +30,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.SimpleFileVisitor;
 import java.nio.file.attribute.BasicFileAttributes;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
@@ -69,6 +70,7 @@ import org.apache.ignite.internal.processors.affinity.AffinityTopologyVersion;
 import org.apache.ignite.internal.processors.cache.CacheGroupContext;
 import org.apache.ignite.internal.processors.cache.CacheGroupDescriptor;
 import org.apache.ignite.internal.processors.cache.CacheType;
+import org.apache.ignite.internal.processors.cache.DynamicCacheDescriptor;
 import org.apache.ignite.internal.processors.cache.GridCacheContext;
 import org.apache.ignite.internal.processors.cache.GridCacheSharedManagerAdapter;
 import org.apache.ignite.internal.processors.cache.distributed.dht.preloader.GridDhtPartitionsExchangeFuture;
@@ -854,7 +856,9 @@ public class IgniteSnapshotManager extends GridCacheSharedManagerAdapter
         return restoreSnapshotProcess.start(snpName, grpNames);
     }
 
-    protected void restoreCacheGroupsLocal(String snpName, Collection<String> grpNames) throws IgniteCheckedException {
+    protected Collection<CacheGroupDescriptor> restoreCacheGroupsLocal(String snpName, Collection<String> grpNames) throws IgniteCheckedException {
+        List<CacheGroupDescriptor> grps = new ArrayList<>(grpNames.size());
+
         for (String grpName : grpNames) {
             File cacheDir = resolveCacheDir(cctx.igniteInstanceName(), grpName);
 
@@ -880,23 +884,30 @@ public class IgniteSnapshotManager extends GridCacheSharedManagerAdapter
             if (!cacheDirExists)
                 cacheDir.mkdir();
 
-            CacheGroupContext grp = cctx.cache().cacheGroup(CU.cacheId(grpName));
-
-            if (grp != null) {
-                cctx.database().checkpointReadLock();
-
-                try {
-                    for (GridCacheContext<?, ?> cacheCtx : grp.caches())
-                        cctx.cache().prepareCacheStop(cacheCtx.name(), false);
-                }
-                finally {
-                    cctx.database().checkpointReadUnlock();
-                }
-
-                cctx.cache().stopCacheGroup(grp.groupId(), false);
-
-                cctx.database().onCacheGroupsStopped(Collections.singleton(new T2<>(grp, false)));
-            }
+            CacheGroupDescriptor grp = cctx.cache().cacheGroupDescriptor(CU.cacheId(grpName));
+//
+////            DynamicCacheDescriptor desc = cctx.cache().cacheDescriptor(grp.groupId());
+//
+//            assert grp == null;
+//
+//            if (grp != null) {
+////                assert desc != null;
+//
+//                cctx.database().checkpointReadLock();
+//
+//                try {
+//                    for (GridCacheContext<?, ?> cacheCtx : grp.caches())
+//                        cctx.cache().prepareCacheStop(cacheCtx.name(), false);
+//                }
+//                finally {
+//                    cctx.database().checkpointReadUnlock();
+//                }
+//
+//                cctx.cache().stopCacheGroup(grp.groupId(), false);
+//
+//                cctx.database().onCacheGroupsStopped(Collections.singleton(new T2<>(grp, false)));
+////                cctx.cache().closeCaches(Collections.singleton(grpName), false);
+//            }
 
             try {
                 for (File snpFile : snapshotCacheDir.listFiles()) {
@@ -906,11 +917,24 @@ public class IgniteSnapshotManager extends GridCacheSharedManagerAdapter
 
                     Files.copy(snpFile.toPath(), target.toPath());
                 }
+
+//                cctx.cache().prepareCacheStart(
+//                    desc,
+//                    null,
+//                    cctx.exchange().readyAffinityVersion(),
+//                false,
+//                false);
+
+//                cctx.kernalContext().
+
+                grps.add(grp);
             }
             catch (IOException e) {
                 throw new IgniteCheckedException("Unable to restore file [snapshot=" + snpName + ", grp=" + grpName + ']');
             }
         }
+
+        return grps;
     }
 
     private File resolveCacheDir(String igniteInstanceName, String cacheName) throws IgniteCheckedException {

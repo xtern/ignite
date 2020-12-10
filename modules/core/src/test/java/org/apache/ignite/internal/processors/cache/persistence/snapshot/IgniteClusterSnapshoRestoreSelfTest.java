@@ -80,12 +80,12 @@ public class IgniteClusterSnapshoRestoreSelfTest extends AbstractSnapshotSelfTes
 
         forceCheckpoint();
 
-        ignite.cluster().state(ClusterState.INACTIVE);
+//        ignite.cluster().state(ClusterState.ACTIVE_READ_ONLY);
 
         ignite.context().cache().context().snapshotMgr().
             restoreCacheGroups(SNAPSHOT_NAME, Collections.singleton(dfltCacheCfg.getName())).get(MAX_AWAIT_MILLIS);
 
-        ignite.cluster().state(ClusterState.ACTIVE);
+//        ignite.cluster().state(ClusterState.ACTIVE);
 
         checkCacheKeys(ignite.cache(dfltCacheCfg.getName()), CACHE_KEYS_RANGE);
     }

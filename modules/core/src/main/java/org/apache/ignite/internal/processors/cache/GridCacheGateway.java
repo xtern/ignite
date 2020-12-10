@@ -160,6 +160,9 @@ public class GridCacheGateway<K, V> {
         try {
             GridCacheAdapter<K, V> cache = ctx.cache();
 
+//            if (cache == null)
+//                U.dumpStack(">xxx> cache is null");
+
             GridCachePreloader preldr = cache != null ? cache.preloader() : null;
 
             if (preldr == null)
