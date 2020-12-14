@@ -17,23 +17,23 @@ import org.apache.ignite.configuration.CacheConfiguration;
 import org.apache.ignite.configuration.IgniteConfiguration;
 import org.apache.ignite.internal.GridKernalContext;
 import org.apache.ignite.internal.IgniteInternalFuture;
-import org.apache.ignite.internal.processors.cache.CacheGroupContext;
+import org.apache.ignite.internal.IgniteInterruptedCheckedException;
 import org.apache.ignite.internal.processors.cache.CacheGroupDescriptor;
+import org.apache.ignite.internal.processors.cache.IgniteCacheProxyImpl;
 import org.apache.ignite.internal.processors.cache.StoredCacheData;
 import org.apache.ignite.internal.processors.cache.persistence.file.FilePageStoreManager;
 import org.apache.ignite.internal.processors.cache.persistence.snapshot.SnapshotRestoreResponse.CacheGroupSnapshotDetails;
 import org.apache.ignite.internal.util.distributed.DistributedProcess;
-import org.apache.ignite.internal.util.future.GridCompoundFuture;
 import org.apache.ignite.internal.util.future.GridFinishedFuture;
 import org.apache.ignite.internal.util.future.GridFutureAdapter;
 import org.apache.ignite.internal.util.future.IgniteFinishedFutureImpl;
 import org.apache.ignite.internal.util.future.IgniteFutureImpl;
 import org.apache.ignite.internal.util.typedef.F;
 import org.apache.ignite.internal.util.typedef.internal.A;
+import org.apache.ignite.internal.util.typedef.internal.CU;
 import org.apache.ignite.internal.util.typedef.internal.S;
 import org.apache.ignite.internal.util.typedef.internal.U;
 import org.apache.ignite.lang.IgniteFuture;
-import org.apache.ignite.lang.IgniteReducer;
 import org.apache.ignite.marshaller.MarshallerUtils;
 import org.apache.ignite.marshaller.jdk.JdkMarshaller;
 import org.jetbrains.annotations.Nullable;
@@ -112,6 +112,8 @@ public class RestoreSnapshotProcess {
         return new GridFinishedFuture<>(response);
     }
 
+    private volatile Collection<CacheGroupSnapshotDetails> details;
+
     private void finishPrepare(UUID reqId, Map<UUID, SnapshotRestoreResponse> res, Map<UUID, Exception> errs) {
         if (!errs.isEmpty()) {
             if (req != null && req.requestId().equals(reqId))
@@ -124,34 +126,50 @@ public class RestoreSnapshotProcess {
         boolean isCoordinator = U.isLocalNodeCoordinator(ctx.discovery());
 
 //        if (isInitiator || isCoordinator) {
-        Collection<CacheGroupSnapshotDetails> details;
+            Collection<CacheGroupSnapshotDetails> details;
 
-        try {
-            details = validateResponses(res);
-        } catch (Exception e) {
-            req = null;
+            try {
+                details = validateResponses(res);
 
-            if (isInitiator)
-                fut.onDone(e);
+                // Ensure cahe does not exists
+                for (CacheGroupSnapshotDetails e : details) {
+                    // todo properly handle cache groups
+                    String cacheName = e.config().getName();
 
-            return;
-        }
+                    CacheGroupDescriptor desc = ctx.cache().cacheGroupDescriptor(CU.cacheId(cacheName));
+
+                    if (desc != null)
+                        throw new IllegalStateException("Cache group \"" + desc.cacheOrGroupName() + "\" should be destroyed manually before perform restore operation.");
+                }
+
+                this.details = details;
+            }
+            catch (Exception e) {
+                req = null;
+
+                if (isInitiator)
+                    fut.onDone(e);
+
+                return;
+            }
+//        }
 
         // todo should be coordinator - how to handle errors
-        if (isInitiator) {
-            System.out.println(">xxx> stop caches...");
+        if (isCoordinator) {
+            System.out.println(">xxx> running perform phase...");
 
-            ctx.getSystemExecutorService().submit(() -> {
-                ctx.cache().dynamicDestroyCaches(req.groups(), true, false).listen(f -> {
-                    if (f.error() == null && !f.isCancelled()) {
-                        System.out.println(">xxx> start perform...");
-                        performRestoreProc.start(reqId, req);
-                    } else
-                        if (f.error() != null)
-                            fut.onDone(f.error());
-                    // todo handle errors, finish future
-                });
-            });
+            performRestoreProc.start(reqId, req);
+//            ctx.getSystemExecutorService().submit(() -> {
+//                ctx.cache().dynamicDestroyCaches(req.groups(), true, false).listen(f -> {
+//                    if (f.error() == null && !f.isCancelled()) {
+//                        System.out.println(">xxx> start perform...");
+//                        performRestoreProc.start(reqId, req);
+//                    } else
+//                        if (f.error() != null)
+//                            fut.onDone(f.error());
+//                    // todo handle errors, finish future
+//                });
+//            });
         }
     }
 
@@ -246,18 +264,20 @@ public class RestoreSnapshotProcess {
         if (!req.equals(this.req))
             return new GridFinishedFuture<>(new IgniteException("Unknown snapshot restore operation was rejected."));
 
-        SnapshotRestoreResponse resp = new SnapshotRestoreResponse();
+        //SnapshotRestoreResponse resp = new SnapshotRestoreResponse();
 
         try {
             if (!ctx.clientNode()) {
-                Collection<CacheGroupDescriptor> grps = ctx.cache().context().snapshotMgr().restoreCacheGroupsLocal(req.snapshotName(), req.groups());
+                ctx.cache().context().snapshotMgr().restoreCacheGroupsLocal(req.snapshotName(), req.groups());
 
 //                RestoreSnapshotFuture fut0 = fut;
 
 //                if (fut0 != null && fut0.id().equals(req.requestId())) {
-                    for (CacheGroupDescriptor grp : grps)
-                        resp.put(grp.cacheOrGroupName(), grp.config(), null);
+//                    for (CacheGroupDescriptor grp : grps)
+//                        resp.put(grp.cacheOrGroupName(), grp.config(), null);
 //                }
+
+                return new GridFinishedFuture<>(new SnapshotRestoreResponse());
             }
 
 
@@ -267,41 +287,91 @@ public class RestoreSnapshotProcess {
             this.req = null;
         }
 
-        return new GridFinishedFuture<>(resp);
+        return new GridFinishedFuture<>(new SnapshotRestoreResponse());
     }
 
     private void finishPerform(UUID reqId, Map<UUID, SnapshotRestoreResponse> map, Map<UUID, Exception> errs) {
         try {
             // remap
 
-            Map<String, CacheConfiguration> resMap = new HashMap<>();
+//            Map<String, CacheConfiguration> resMap = new HashMap<>();
+//
+//            for (SnapshotRestoreResponse nodeResp : map.values()) {
+//                for (Map.Entry<String, CacheGroupSnapshotDetails> entry : nodeResp.locParts().entrySet()) {
+//                    resMap.put(entry.getKey(), entry.getValue().config());
+//                }
+//
+//            }
 
-            for (SnapshotRestoreResponse nodeResp : map.values()) {
-                for (Map.Entry<String, CacheGroupSnapshotDetails> entry : nodeResp.locParts().entrySet()) {
-                    resMap.put(entry.getKey(), entry.getValue().config());
-                }
+            if (!F.isEmpty(errs)) {
+                completeFuture(reqId, errs, fut);
 
+                // todo log errors
             }
 
-            // todo should be coordinator
-            if (completeFuture(reqId, errs, fut)) {
-
-                for (Map.Entry<String, CacheConfiguration> entry : resMap.entrySet()) {
+            if (U.isLocalNodeCoordinator(ctx.discovery())) {
+                for (CacheGroupSnapshotDetails e : details) {
                     // todo batch - wait start
-                    ctx.cache().dynamicStartCache(entry.getValue(),
-                        entry.getKey(),
+                    ctx.cache().dynamicStartCache(e.config(),
+                        e.config().getName(),
                         null,
                         false,
                         true,
                         true);
                 }
-//                ctx.cache().dynamicStartCache(grp.config(),
-//                    grp.cacheOrGroupName(),
-//                    null,
-//                    false,
-//                    true,
-//                    true).get();
             }
+
+            if (fut != null && fut.id().equals(reqId)) {
+                ctx.getSystemExecutorService().submit(() -> {
+                    long maxTime = U.currentTimeMillis() + 15_000;
+
+                    boolean success;
+
+                    do {
+                        success = true;
+
+                        for (CacheGroupSnapshotDetails e : details) {
+                            IgniteCacheProxyImpl<?, ?> proxy = ctx.cache().jcacheProxy(e.config().getName(), true);
+
+                            if (proxy == null) {
+                                success = false;
+
+                                try {
+                                    U.sleep(200);
+                                }
+                                catch (IgniteInterruptedCheckedException exception) {
+                                    exception.printStackTrace();
+                                }
+
+                                break;
+                            }
+                        }
+                    }
+                    while (!success && U.currentTimeMillis() <= maxTime);
+
+                    completeFuture(reqId, errs, fut);
+                });
+            }
+
+//            // todo should be coordinator
+//            if (completeFuture(reqId, errs, fut)) {
+//
+//                for (Map.Entry<String, CacheConfiguration> entry : resMap.entrySet()) {
+//                    // todo batch - wait start
+//                    ctx.cache().dynamicStartCache(entry.getValue(),
+//                        entry.getKey(),
+//                        null,
+//                        false,
+//                        true,
+//                        true);
+//                }
+////                ctx.cache().dynamicStartCache(grp.config(),
+////                    grp.cacheOrGroupName(),
+////                    null,
+////                    false,
+////                    true,
+////                    true).get();
+//            }
 //                ctx.cache().dynamicStartCache(cacheOrGrpNames, true, false).get();
 
         } finally {

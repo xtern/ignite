@@ -76,7 +76,9 @@ public class IgniteClusterSnapshoRestoreSelfTest extends AbstractSnapshotSelfTes
 
         ignite.snapshot().createSnapshot(SNAPSHOT_NAME).get(MAX_AWAIT_MILLIS);
 
-        putKeys(ignite.cache(dfltCacheCfg.getName()), CACHE_KEYS_RANGE, CACHE_KEYS_RANGE);
+        //putKeys(ignite.cache(dfltCacheCfg.getName()), CACHE_KEYS_RANGE, CACHE_KEYS_RANGE);
+
+        ignite.cache(dfltCacheCfg.getName()).destroy();
 
         forceCheckpoint();
 
@@ -86,6 +88,8 @@ public class IgniteClusterSnapshoRestoreSelfTest extends AbstractSnapshotSelfTes
             restoreCacheGroups(SNAPSHOT_NAME, Collections.singleton(dfltCacheCfg.getName())).get(MAX_AWAIT_MILLIS);
 
 //        ignite.cluster().state(ClusterState.ACTIVE);
+
+//        GridTestUtils.waitForCondition(() -> ignite.cache(dfltCacheCfg.getName()) != null, MAX_AWAIT_MILLIS);
 
         checkCacheKeys(ignite.cache(dfltCacheCfg.getName()), CACHE_KEYS_RANGE);
     }

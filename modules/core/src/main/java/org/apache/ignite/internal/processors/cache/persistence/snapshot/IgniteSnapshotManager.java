@@ -856,8 +856,10 @@ public class IgniteSnapshotManager extends GridCacheSharedManagerAdapter
         return restoreSnapshotProcess.start(snpName, grpNames);
     }
 
-    protected Collection<CacheGroupDescriptor> restoreCacheGroupsLocal(String snpName, Collection<String> grpNames) throws IgniteCheckedException {
-        List<CacheGroupDescriptor> grps = new ArrayList<>(grpNames.size());
+    protected void restoreCacheGroupsLocal(String snpName, Collection<String> grpNames) throws IgniteCheckedException {
+        //List<CacheGroupDescriptor> grps = new ArrayList<>(grpNames.size());
+
+//        SnapshotRestoreResponse resp = new SnapshotRestoreResponse();
 
         for (String grpName : grpNames) {
             File cacheDir = resolveCacheDir(cctx.igniteInstanceName(), grpName);
@@ -884,7 +886,7 @@ public class IgniteSnapshotManager extends GridCacheSharedManagerAdapter
             if (!cacheDirExists)
                 cacheDir.mkdir();
 
-            CacheGroupDescriptor grp = cctx.cache().cacheGroupDescriptor(CU.cacheId(grpName));
+//            CacheGroupDescriptor grp = cctx.cache().cacheGroupDescriptor(CU.cacheId(grpName));
 //
 ////            DynamicCacheDescriptor desc = cctx.cache().cacheDescriptor(grp.groupId());
 //
@@ -927,14 +929,14 @@ public class IgniteSnapshotManager extends GridCacheSharedManagerAdapter
 
 //                cctx.kernalContext().
 
-                grps.add(grp);
+//                grps.add(grp);
             }
             catch (IOException e) {
                 throw new IgniteCheckedException("Unable to restore file [snapshot=" + snpName + ", grp=" + grpName + ']');
             }
         }
 
-        return grps;
+//        return resp;
     }
 
     private File resolveCacheDir(String igniteInstanceName, String cacheName) throws IgniteCheckedException {
