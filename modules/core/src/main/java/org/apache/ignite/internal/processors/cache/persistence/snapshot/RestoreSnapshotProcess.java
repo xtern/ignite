@@ -52,6 +52,8 @@ public class RestoreSnapshotProcess {
 
     private final DistributedProcess<SnapshotRestoreRequest, SnapshotRestoreResponse> performRestoreProc;
 
+    private volatile Collection<CacheGroupSnapshotDetails> details;
+
     public RestoreSnapshotProcess(GridKernalContext ctx) {
         this.ctx = ctx;
 
@@ -59,11 +61,35 @@ public class RestoreSnapshotProcess {
         performRestoreProc = new DistributedProcess<>(ctx, END_SNAPSHOT_RESTORE, this::perform, this::finishPerform);
     }
 
+    public IgniteFuture<Void> start(String snpName, Collection<String> cacheOrGrpNames) {
+        if (!ctx.state().clusterState().state().active()) {
+            return new IgniteFinishedFutureImpl<>(new IgniteException("Snapshot restore operation was rejected. " +
+                "The cluster should be active."));
+        }
+
+        IgniteInternalFuture<Void> fut0 = fut;
+
+        if (fut0 != null && !fut0.isDone()) {
+            return new IgniteFinishedFutureImpl<>(new IgniteException("Snapshot restore operation was rejected. " +
+                "The previous snapshot restore operation was not completed."));
+        }
+
+        SnapshotRestoreRequest req = new SnapshotRestoreRequest(snpName, cacheOrGrpNames);
+
+        // todo cas?
+        fut = new RestoreSnapshotFuture(req.requestId());
+
+        prepareRestoreProc.start(req.requestId(), req);
+
+        return new IgniteFutureImpl<>(fut);
+    }
+
+    public boolean inProgress() {
+        return req != null;
+    }
+
     // validating
     private IgniteInternalFuture<SnapshotRestoreResponse> prepare(SnapshotRestoreRequest req) {
-//        if (ctx.clientNode())
-//            return new GridFinishedFuture<>();
-
         if (inProgress()) {
             // todo do we need it?
             return new GridFinishedFuture<>(new IgniteException("Snapshot restore operation was rejected. " +
@@ -74,45 +100,49 @@ public class RestoreSnapshotProcess {
 
         // todo forbid state change
         // todo forbid node join
-//        if (ctx.state().clusterState().state() != ClusterState.ACTIVE_READ_ONLY)
-//            throw new IgniteException("Operation was rejected. The cluster should be in read-only mode.");
+        if (!ctx.state().clusterState().state().active())
+            throw new IgniteException("Operation was rejected. The cluster should be active.");
 
         this.req = req;
 
         // read cache configuration
         for (String cacheName : req.groups()) {
-            StoredCacheData data;
 
             try {
-                data = readStoredCacheConfig(ctx.config(), req.snapshotName(), cacheName);
+                CacheGroupSnapshotDetails details0 = cacheGroupDetails(req.snapshotName(), cacheName);
+
+                if (details0 != null)
+                    response.put(cacheName, details0.config(), details0.parts());
             }
             catch (IOException | IgniteCheckedException e) {
                 return new GridFinishedFuture<>(e);
             }
-
-            if (data == null)
-                continue;
-
-            File cacheDir = ctx.cache().context().snapshotMgr().resolveSnapshotCacheDir(req.snapshotName(), ctx.config(), cacheName);
-            // todo redundant
-            if (!cacheDir.exists())
-                continue;
-
-            Set<Integer> parts = new HashSet<>();
-
-            for (String fileName : cacheDir.list((dir, name) -> name.startsWith(FilePageStoreManager.PART_FILE_PREFIX))) {
-                int partId = Integer.parseInt(fileName.substring(FilePageStoreManager.PART_FILE_PREFIX.length(), fileName.indexOf('.')));
-
-                parts.add(partId);
-            }
-
-            response.put(cacheName, data.config(), parts);
         }
 
         return new GridFinishedFuture<>(response);
     }
 
-    private volatile Collection<CacheGroupSnapshotDetails> details;
+    private CacheGroupSnapshotDetails cacheGroupDetails(String snapshotName, String grpName) throws IgniteCheckedException, IOException {
+        StoredCacheData data = readStoredCacheConfig(ctx.config(), snapshotName, grpName);
+
+        if (data == null)
+            return null;
+
+        File cacheDir = ctx.cache().context().snapshotMgr().resolveSnapshotCacheDir(snapshotName, ctx.config(), grpName);
+        // todo redundant
+        if (!cacheDir.exists())
+            return null;
+
+        Set<Integer> parts = new HashSet<>();
+
+        for (String fileName : cacheDir.list((dir, name) -> name.startsWith(FilePageStoreManager.PART_FILE_PREFIX))) {
+            int partId = Integer.parseInt(fileName.substring(FilePageStoreManager.PART_FILE_PREFIX.length(), fileName.indexOf('.')));
+
+            parts.add(partId);
+        }
+
+        return new CacheGroupSnapshotDetails(data.config(), parts);
+    }
 
     private void finishPrepare(UUID reqId, Map<UUID, SnapshotRestoreResponse> res, Map<UUID, Exception> errs) {
         if (!errs.isEmpty()) {
@@ -226,62 +256,22 @@ public class RestoreSnapshotProcess {
         return globalParts.values();
     }
 
-    public IgniteFuture<Void> start(String snpName, Collection<String> cacheOrGrpNames) {
-//        if (ctx.state().clusterState().state() != ClusterState.ACTIVE_READ_ONLY)
-//            return new IgniteFinishedFutureImpl<>(new IgniteException("Snapshot restore operation was rejected. " +
-//                " The cluster should be in read-only mode."));
-
-        IgniteInternalFuture<Void> fut0 = fut;
-
-        if (fut0 != null && !fut0.isDone()) {
-            return new IgniteFinishedFutureImpl<>(new IgniteException("Snapshot restore operation was rejected. " +
-                "The previous snapshot restore operation was not completed."));
-        }
-
-        SnapshotRestoreRequest req = new SnapshotRestoreRequest(snpName, cacheOrGrpNames);
-
-        // todo cas?
-        fut = new RestoreSnapshotFuture(req.requestId());
-
-        prepareRestoreProc.start(req.requestId(), req);
-
-        try {
-            ctx.cache().dynamicDestroyCaches(cacheOrGrpNames, true, false).get();
-        }
-        catch (IgniteCheckedException e) {
-            throw new IgniteException(e);
-        }
-
-        return new IgniteFutureImpl<>(fut);
-    }
-
-    public boolean inProgress() {
-        return req != null;
-    }
-
     private IgniteInternalFuture<SnapshotRestoreResponse> perform(SnapshotRestoreRequest req) {
-//        this.req = req;
         if (!req.equals(this.req))
             return new GridFinishedFuture<>(new IgniteException("Unknown snapshot restore operation was rejected."));
-
-        //SnapshotRestoreResponse resp = new SnapshotRestoreResponse();
 
         try {
             if (!ctx.clientNode()) {
                 ctx.cache().context().snapshotMgr().restoreCacheGroupsLocal(req.snapshotName(), req.groups());
 
-//                RestoreSnapshotFuture fut0 = fut;
-
-//                if (fut0 != null && fut0.id().equals(req.requestId())) {
-//                    for (CacheGroupDescriptor grp : grps)
-//                        resp.put(grp.cacheOrGroupName(), grp.config(), null);
-//                }
-
                 return new GridFinishedFuture<>(new SnapshotRestoreResponse());
             }
-
-
         } catch (IgniteCheckedException e) {
+            RestoreSnapshotFuture fut0 = fut;
+
+            if (fut0 != null && fut0.id().equals(req.requestId()))
+                fut0.onDone(e);
+
             return new GridFinishedFuture<>(e);
         } finally {
             this.req = null;

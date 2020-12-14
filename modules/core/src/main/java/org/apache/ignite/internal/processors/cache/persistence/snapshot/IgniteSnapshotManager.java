@@ -18,6 +18,7 @@
 package org.apache.ignite.internal.processors.cache.persistence.snapshot;
 
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.Serializable;
@@ -30,7 +31,6 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.SimpleFileVisitor;
 import java.nio.file.attribute.BasicFileAttributes;
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
@@ -63,16 +63,15 @@ import org.apache.ignite.internal.IgniteFeatures;
 import org.apache.ignite.internal.IgniteFutureCancelledCheckedException;
 import org.apache.ignite.internal.IgniteInternalFuture;
 import org.apache.ignite.internal.NodeStoppingException;
+import org.apache.ignite.internal.binary.BinaryMetadata;
 import org.apache.ignite.internal.cluster.ClusterTopologyCheckedException;
 import org.apache.ignite.internal.events.DiscoveryCustomEvent;
 import org.apache.ignite.internal.managers.eventstorage.DiscoveryEventListener;
 import org.apache.ignite.internal.processors.affinity.AffinityTopologyVersion;
-import org.apache.ignite.internal.processors.cache.CacheGroupContext;
 import org.apache.ignite.internal.processors.cache.CacheGroupDescriptor;
 import org.apache.ignite.internal.processors.cache.CacheType;
-import org.apache.ignite.internal.processors.cache.DynamicCacheDescriptor;
-import org.apache.ignite.internal.processors.cache.GridCacheContext;
 import org.apache.ignite.internal.processors.cache.GridCacheSharedManagerAdapter;
+import org.apache.ignite.internal.processors.cache.binary.CacheObjectBinaryProcessorImpl;
 import org.apache.ignite.internal.processors.cache.distributed.dht.preloader.GridDhtPartitionsExchangeFuture;
 import org.apache.ignite.internal.processors.cache.distributed.dht.preloader.PartitionsExchangeAware;
 import org.apache.ignite.internal.processors.cache.persistence.file.FileIO;
@@ -103,7 +102,6 @@ import org.apache.ignite.internal.util.lang.GridClosureException;
 import org.apache.ignite.internal.util.lang.GridPlainRunnable;
 import org.apache.ignite.internal.util.tostring.GridToStringInclude;
 import org.apache.ignite.internal.util.typedef.F;
-import org.apache.ignite.internal.util.typedef.T2;
 import org.apache.ignite.internal.util.typedef.internal.A;
 import org.apache.ignite.internal.util.typedef.internal.CU;
 import org.apache.ignite.internal.util.typedef.internal.S;
@@ -857,22 +855,10 @@ public class IgniteSnapshotManager extends GridCacheSharedManagerAdapter
     }
 
     protected void restoreCacheGroupsLocal(String snpName, Collection<String> grpNames) throws IgniteCheckedException {
-        //List<CacheGroupDescriptor> grps = new ArrayList<>(grpNames.size());
-
-//        SnapshotRestoreResponse resp = new SnapshotRestoreResponse();
-
         for (String grpName : grpNames) {
-            File cacheDir = resolveCacheDir(cctx.igniteInstanceName(), grpName);
+            File cacheDir = resolveCacheDir(grpName);
 
-            boolean cacheDirExists = cacheDir.exists();
-
-            if (cacheDirExists) {
-                for (File file : cacheDir.listFiles()) {
-                    boolean rmv = file.delete();
-
-                    assert rmv : file;
-                }
-            }
+            assert F.isEmpty(cacheDir.list()) : cacheDir;
 
             File snapshotCacheDir = resolveSnapshotCacheDir(snpName, cctx.kernalContext().config(), grpName);
 
@@ -882,34 +868,8 @@ public class IgniteSnapshotManager extends GridCacheSharedManagerAdapter
                 continue;
             }
 
-            // todo should register cache?
-            if (!cacheDirExists)
+            if (!cacheDir.exists())
                 cacheDir.mkdir();
-
-//            CacheGroupDescriptor grp = cctx.cache().cacheGroupDescriptor(CU.cacheId(grpName));
-//
-////            DynamicCacheDescriptor desc = cctx.cache().cacheDescriptor(grp.groupId());
-//
-//            assert grp == null;
-//
-//            if (grp != null) {
-////                assert desc != null;
-//
-//                cctx.database().checkpointReadLock();
-//
-//                try {
-//                    for (GridCacheContext<?, ?> cacheCtx : grp.caches())
-//                        cctx.cache().prepareCacheStop(cacheCtx.name(), false);
-//                }
-//                finally {
-//                    cctx.database().checkpointReadUnlock();
-//                }
-//
-//                cctx.cache().stopCacheGroup(grp.groupId(), false);
-//
-//                cctx.database().onCacheGroupsStopped(Collections.singleton(new T2<>(grp, false)));
-////                cctx.cache().closeCaches(Collections.singleton(grpName), false);
-//            }
 
             try {
                 for (File snpFile : snapshotCacheDir.listFiles()) {
@@ -919,36 +879,52 @@ public class IgniteSnapshotManager extends GridCacheSharedManagerAdapter
 
                     Files.copy(snpFile.toPath(), target.toPath());
                 }
-
-//                cctx.cache().prepareCacheStart(
-//                    desc,
-//                    null,
-//                    cctx.exchange().readyAffinityVersion(),
-//                false,
-//                false);
-
-//                cctx.kernalContext().
-
-//                grps.add(grp);
             }
             catch (IOException e) {
-                throw new IgniteCheckedException("Unable to restore file [snapshot=" + snpName + ", grp=" + grpName + ']');
+                throw new IgniteCheckedException("Unable to restore file [snapshot=" + snpName + ", grp=" + grpName + ']', e);
             }
         }
 
-//        return resp;
+        String nodeFolderName = cctx.kernalContext().pdsFolderResolver().resolveFolders().folderName();
+
+        File workDIr = resolveSnapshotWorkDirectory(cctx.kernalContext().config());
+
+        String subPath = snpName + File.separator + DFLT_STORE_DIR + File.separator + "binary_meta" + File.separator +
+            nodeFolderName;
+
+        File snapshotMetadataDir = new File(workDIr, subPath);
+
+        if (!snapshotMetadataDir.exists())
+            return;
+
+        // restore metadata
+        for (File file : snapshotMetadataDir.listFiles()) {
+            try (FileInputStream in = new FileInputStream(file)) {
+                BinaryMetadata meta = U.unmarshal(cctx.kernalContext().config().getMarshaller(), in, U.resolveClassLoader(cctx.kernalContext().config()));
+
+                // todo get binaryContext without cast
+                // get binary marshaller withBinaryContext
+                CacheObjectBinaryProcessorImpl procImpl = (CacheObjectBinaryProcessorImpl)cctx.kernalContext().cacheObjects();
+
+                procImpl.addMetaLocally(meta.typeId(), meta.wrap(procImpl.binaryContext()));
+            }
+            catch (Exception e) {
+                U.warn(log, "Failed to add metadata from file: " + file.getName() +
+                    "; exception was thrown: " + e.getMessage());
+            }
+        }
     }
 
-    private File resolveCacheDir(String igniteInstanceName, String cacheName) throws IgniteCheckedException {
+    private File resolveCacheDir(String cacheName) throws IgniteCheckedException {
         File workDIr = U.resolveWorkDirectory(U.defaultWorkDirectory(), DFLT_STORE_DIR, false);
 
-        return new File(workDIr, igniteInstanceName.replaceAll("\\.", "_") + File.separator + "cache-" + cacheName);
+        return new File(workDIr, cctx.kernalContext().pdsFolderResolver().resolveFolders().folderName() + File.separator + "cache-" + cacheName);
     }
 
-    protected File resolveSnapshotCacheDir(String snpName, IgniteConfiguration cfg, String cacheName) {
+    protected File resolveSnapshotCacheDir(String snpName, IgniteConfiguration cfg, String cacheName) throws IgniteCheckedException {
         File workDIr = resolveSnapshotWorkDirectory(cfg);
 
-        String subPath = snpName + File.separator + DFLT_STORE_DIR + File.separator + cfg.getIgniteInstanceName().replaceAll("\\.", "_");
+        String subPath = snpName + File.separator + DFLT_STORE_DIR + File.separator + cctx.kernalContext().pdsFolderResolver().resolveFolders().folderName();
 
         return new File(workDIr, subPath + File.separator + "cache-" + cacheName);
     }
