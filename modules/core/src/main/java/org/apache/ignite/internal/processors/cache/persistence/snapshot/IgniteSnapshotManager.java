@@ -131,6 +131,8 @@ import static org.apache.ignite.internal.managers.communication.GridIoPolicy.SYS
 import static org.apache.ignite.internal.pagemem.PageIdAllocator.INDEX_PARTITION;
 import static org.apache.ignite.internal.pagemem.PageIdAllocator.MAX_PARTITION_ID;
 import static org.apache.ignite.internal.processors.cache.binary.CacheObjectBinaryProcessorImpl.binaryWorkDir;
+import static org.apache.ignite.internal.processors.cache.persistence.file.FilePageStoreManager.CACHE_DIR_PREFIX;
+import static org.apache.ignite.internal.processors.cache.persistence.file.FilePageStoreManager.CACHE_GRP_DIR_PREFIX;
 import static org.apache.ignite.internal.processors.cache.persistence.file.FilePageStoreManager.DFLT_STORE_DIR;
 import static org.apache.ignite.internal.processors.cache.persistence.file.FilePageStoreManager.INDEX_FILE_NAME;
 import static org.apache.ignite.internal.processors.cache.persistence.file.FilePageStoreManager.PART_FILE_TEMPLATE;
@@ -915,18 +917,32 @@ public class IgniteSnapshotManager extends GridCacheSharedManagerAdapter
         }
     }
 
-    private File resolveCacheDir(String cacheName) throws IgniteCheckedException {
+    private File resolveCacheDir(String cacheOrGrpName) throws IgniteCheckedException {
         File workDIr = U.resolveWorkDirectory(U.defaultWorkDirectory(), DFLT_STORE_DIR, false);
 
-        return new File(workDIr, cctx.kernalContext().pdsFolderResolver().resolveFolders().folderName() + File.separator + "cache-" + cacheName);
+        String nodeDirName = cctx.kernalContext().pdsFolderResolver().resolveFolders().folderName() + File.separator;
+
+        File cacheDir = new File(workDIr, nodeDirName + CACHE_DIR_PREFIX + cacheOrGrpName);
+
+        if (cacheDir.exists())
+            return cacheDir;
+
+        return new File(workDIr, nodeDirName + CACHE_GRP_DIR_PREFIX + cacheOrGrpName);
     }
 
     protected File resolveSnapshotCacheDir(String snpName, IgniteConfiguration cfg, String cacheName) throws IgniteCheckedException {
         File workDIr = resolveSnapshotWorkDirectory(cfg);
 
-        String subPath = snpName + File.separator + DFLT_STORE_DIR + File.separator + cctx.kernalContext().pdsFolderResolver().resolveFolders().folderName();
+        String nodeDirName = cctx.kernalContext().pdsFolderResolver().resolveFolders().folderName() + File.separator;
 
-        return new File(workDIr, subPath + File.separator + "cache-" + cacheName);
+        String subPath = snpName + File.separator + DFLT_STORE_DIR + File.separator + nodeDirName + File.separator;
+
+        File cacheDir = new File(workDIr, subPath + CACHE_DIR_PREFIX + cacheName);
+
+        if (cacheDir.exists())
+            return cacheDir;
+
+        return new File(workDIr, subPath + CACHE_GRP_DIR_PREFIX + cacheName);
     }
 
     /** {@inheritDoc} */

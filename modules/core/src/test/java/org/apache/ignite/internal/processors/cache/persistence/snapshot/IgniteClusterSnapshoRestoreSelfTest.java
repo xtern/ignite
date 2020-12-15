@@ -17,21 +17,24 @@
 
 package org.apache.ignite.internal.processors.cache.persistence.snapshot;
 
+import java.util.Arrays;
 import java.util.Collections;
 import org.apache.ignite.IgniteCache;
 import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.IgniteException;
 import org.apache.ignite.binary.BinaryObject;
 import org.apache.ignite.binary.BinaryObjectBuilder;
+import org.apache.ignite.cache.CacheAtomicityMode;
 import org.apache.ignite.cluster.ClusterState;
+import org.apache.ignite.configuration.CacheConfiguration;
+import org.apache.ignite.configuration.IgniteConfiguration;
 import org.apache.ignite.internal.IgniteEx;
 import org.apache.ignite.internal.TestRecordingCommunicationSpi;
 import org.apache.ignite.internal.util.distributed.SingleNodeMessage;
-import org.apache.ignite.internal.util.typedef.G;
-import org.apache.ignite.internal.util.typedef.internal.U;
 import org.apache.ignite.lang.IgniteFuture;
 import org.apache.ignite.testframework.GridTestUtils;
 import org.junit.Before;
+import org.junit.Ignore;
 import org.junit.Test;
 
 /**
@@ -50,14 +53,17 @@ public class IgniteClusterSnapshoRestoreSelfTest extends AbstractSnapshotSelfTes
 //    /** {@code true} if node should be started in separate jvm. */
 //    protected volatile boolean jvm;
 
-//    /** {@inheritDoc} */
-//    @Override protected IgniteConfiguration getConfiguration(String name) throws Exception {
-//        IgniteConfiguration cfg = super.getConfiguration(name);
-//
-//        cfg.setCommunicationSpi(new TestRecordingCommunicationSpi());
-//
-//        return cfg;
-//    }
+    protected CacheConfiguration[] cacheCfgs;
+
+    /** {@inheritDoc} */
+    @Override protected IgniteConfiguration getConfiguration(String name) throws Exception {
+        IgniteConfiguration cfg = super.getConfiguration(name);
+
+        if (cacheCfgs != null)
+            cfg.setCacheConfiguration(cacheCfgs);
+
+        return cfg;
+    }
 
     /** @throws Exception If fails. */
     @Before
@@ -79,7 +85,7 @@ public class IgniteClusterSnapshoRestoreSelfTest extends AbstractSnapshotSelfTes
 
         ignite.cache(dfltCacheCfg.getName()).destroy();
 
-        forceCheckpoint();
+        awaitPartitionMapExchange();
 
         ignite.context().cache().context().snapshotMgr().
             restoreCacheGroups(SNAPSHOT_NAME, Collections.singleton(dfltCacheCfg.getName())).get(MAX_AWAIT_MILLIS);
@@ -223,35 +229,63 @@ public class IgniteClusterSnapshoRestoreSelfTest extends AbstractSnapshotSelfTes
         checkCacheKeys(ignite.cache(dfltCacheCfg.getName()), CACHE_KEYS_RANGE);
     }
 
-    /** @throws Exception If fails. */
     @Test
-    public void testBasicClusterSnapshotRestoreAfterDestroy() throws Exception {
-        IgniteEx ignite = startGridsWithCache(2, dfltCacheCfg, CACHE_KEYS_RANGE);
+    public void testRestoreSharedCacheGroup() throws Exception {
+        String grpName = "shared";
+        String cacheName1 = "cache1";
+        String cacheName2 = "cache2";
 
-        resetBaselineTopology();
+        CacheConfiguration<?, ?> cacheCfg1 = txCacheConfig(new CacheConfiguration<>(cacheName1)).setGroupName(grpName);
+        CacheConfiguration<?, ?> cacheCfg2 = txCacheConfig(new CacheConfiguration<>(cacheName2))
+            .setAtomicityMode(CacheAtomicityMode.ATOMIC).setGroupName(grpName);
 
-        ignite.snapshot().createSnapshot(SNAPSHOT_NAME).get(MAX_AWAIT_MILLIS);
+        cacheCfgs = new CacheConfiguration[] {cacheCfg1, cacheCfg2};
 
-        ignite.destroyCache(dfltCacheCfg.getName());
-
-        awaitPartitionMapExchange();
-
-        forceCheckpoint();
-
-        assertNull(ignite.cache(dfltCacheCfg.getName()));
-
-        ignite.cluster().state(ClusterState.INACTIVE);
-
-        ignite.context().cache().context().snapshotMgr().
-            restoreCacheGroups(SNAPSHOT_NAME, Collections.singleton(dfltCacheCfg.getName())).get(MAX_AWAIT_MILLIS);
+        IgniteEx ignite = startGrids(2);
 
         ignite.cluster().state(ClusterState.ACTIVE);
 
-        checkCacheKeys(ignite.cache(dfltCacheCfg.getName()), CACHE_KEYS_RANGE);
+        IgniteCache<Object, Object> cache1 = ignite.cache(cacheName1);
+        IgniteCache<Object, Object> cache2 = ignite.cache(cacheName2);
+
+        for (int i = 0; i < CACHE_KEYS_RANGE; i++) {
+            cache1.put(i, i);
+            cache2.put(i, i);
+        }
+
+        ignite.snapshot().createSnapshot(SNAPSHOT_NAME).get(MAX_AWAIT_MILLIS);
+
+        cache1.destroy();
+
+        awaitPartitionMapExchange();
+
+        // todo should wait for exchange if group descriptor doesn't exists
+        awaitPartitionMapExchange();
+
+        IgniteSnapshotManager snapshotMgr = ignite.context().cache().context().snapshotMgr();
+
+        GridTestUtils.assertThrowsAnyCause(
+            log,
+            () -> {
+                snapshotMgr.restoreCacheGroups(SNAPSHOT_NAME, Arrays.asList(cacheName1, cacheName2)).get(MAX_AWAIT_MILLIS);
+
+                return null;
+            },
+            IllegalArgumentException.class,
+            "Cache group(s) \"" + cacheName1 + ", " + cacheName2 + "\" not found in snapshot \"" + SNAPSHOT_NAME + "\""
+        );
+
+        cache2.destroy();
+
+        awaitPartitionMapExchange();
+
+        snapshotMgr.restoreCacheGroups(SNAPSHOT_NAME, Collections.singleton(grpName)).get(MAX_AWAIT_MILLIS);
     }
 
     /** @throws Exception If fails. */
     @Test
+    // todo
+    @Ignore
     public void testActivateFromClientWhenRestoring() throws Exception {
         IgniteEx ignite = startGridsWithCache(2, dfltCacheCfg, CACHE_KEYS_RANGE);
 
@@ -301,37 +335,41 @@ public class IgniteClusterSnapshoRestoreSelfTest extends AbstractSnapshotSelfTes
         checkCacheKeys(client.cache(dfltCacheCfg.getName()), CACHE_KEYS_RANGE);
     }
 
-    @Test
-    public void testPreventRecoveryOnRestoredCacheGroup() throws Exception {
-        IgniteEx ignite = startGridsWithCache(2, dfltCacheCfg, CACHE_KEYS_RANGE);
-
-        resetBaselineTopology();
-
-        ignite.snapshot().createSnapshot(SNAPSHOT_NAME).get(MAX_AWAIT_MILLIS);
-
-        enableCheckpoints(G.allGrids(), false);
-
-        putKeys(ignite.cache(dfltCacheCfg.getName()), CACHE_KEYS_RANGE, CACHE_KEYS_RANGE);
-
-//        forceCheckpoint();
-
-        stopAllGrids();
-
-        ignite = startGrid(0);
-        startGrid(1);
-
-        ignite.context().cache().context().snapshotMgr().
-            restoreCacheGroups(SNAPSHOT_NAME, Collections.singleton(dfltCacheCfg.getName())).get(MAX_AWAIT_MILLIS);
-
-        stopAllGrids();
-
-        ignite = startGrid(0);
-        startGrid(1);
-
-        ignite.cluster().state(ClusterState.ACTIVE);
-
-        checkCacheKeys(ignite.cache(dfltCacheCfg.getName()), CACHE_KEYS_RANGE);
-    }
+//    @Test
+//    public void testPreventRecoveryOnRestoredCacheGroup() throws Exception {
+//        IgniteEx ignite = startGridsWithCache(2, dfltCacheCfg, CACHE_KEYS_RANGE);
+//
+//        resetBaselineTopology();
+//
+//        ignite.snapshot().createSnapshot(SNAPSHOT_NAME).get(MAX_AWAIT_MILLIS);
+//
+//        enableCheckpoints(G.allGrids(), false);
+//
+//        putKeys(ignite.cache(dfltCacheCfg.getName()), CACHE_KEYS_RANGE, CACHE_KEYS_RANGE);
+//
+//        stopAllGrids();
+//
+//        ignite = startGrid(0);
+//        startGrid(1);
+//
+//        ignite.cluster().state(ClusterState.ACTIVE);
+//
+//        ignite.cache(dfltCacheCfg.getName()).destroy();
+//
+//        awaitPartitionMapExchange();
+//
+//        ignite.context().cache().context().snapshotMgr().
+//            restoreCacheGroups(SNAPSHOT_NAME, Collections.singleton(dfltCacheCfg.getName())).get(MAX_AWAIT_MILLIS);
+//
+//        stopAllGrids();
+//
+//        ignite = startGrid(0);
+//        startGrid(1);
+//
+//        ignite.cluster().state(ClusterState.ACTIVE);
+//
+//        checkCacheKeys(ignite.cache(dfltCacheCfg.getName()), CACHE_KEYS_RANGE);
+//    }
 
     private void checkCacheKeys(IgniteCache<Object, Object> testCache, int keysCnt) {
         assertEquals(keysCnt, testCache.size());

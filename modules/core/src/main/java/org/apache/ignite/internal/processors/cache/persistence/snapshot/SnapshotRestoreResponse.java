@@ -1,7 +1,9 @@
 package org.apache.ignite.internal.processors.cache.persistence.snapshot;
 
 import java.io.Serializable;
+import java.util.Collection;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import org.apache.ignite.configuration.CacheConfiguration;
@@ -12,11 +14,11 @@ public class SnapshotRestoreResponse implements Serializable {
 
     private Map<String, CacheGroupSnapshotDetails> locParts;
 
-    void put(String name, CacheConfiguration<?, ?> cfg, Set<Integer> parts) {
+    void put(String name, List<CacheConfiguration<?, ?>> cfgs, Set<Integer> parts) {
         if (locParts == null)
             locParts = new HashMap<>();
 
-        locParts.put(name, new CacheGroupSnapshotDetails(cfg, parts));
+        locParts.put(name, new CacheGroupSnapshotDetails(cfgs, parts));
     }
 
     Map<String, CacheGroupSnapshotDetails> locParts() {
@@ -27,16 +29,16 @@ public class SnapshotRestoreResponse implements Serializable {
         /** Serial version uid. */
         private static final long serialVersionUID = 0L;
 
-        private CacheConfiguration cfg;
+        private List<CacheConfiguration<?, ?>> cfgs;
         private Set<Integer> parts;
 
-        public CacheGroupSnapshotDetails(CacheConfiguration cfg, Set<Integer> parts) {
-            this.cfg = cfg;
+        public CacheGroupSnapshotDetails(List<CacheConfiguration<?, ?>> cfgs, Set<Integer> parts) {
+            this.cfgs = cfgs;
             this.parts = parts;
         }
 
-        public CacheConfiguration config() {
-            return cfg;
+        public List<CacheConfiguration<?, ?>> configs() {
+            return cfgs;
         }
 
         public Set<Integer> parts() {
