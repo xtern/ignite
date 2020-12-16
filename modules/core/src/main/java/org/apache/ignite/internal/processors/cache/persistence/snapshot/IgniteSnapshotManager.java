@@ -259,7 +259,7 @@ public class IgniteSnapshotManager extends GridCacheSharedManagerAdapter
     /** Last seen cluster snapshot operation. */
     private volatile ClusterSnapshotFuture lastSeenSnpFut = new ClusterSnapshotFuture();
 
-    private final RestoreSnapshotProcess restoreSnapshotProcess;
+    private final SnapshotRestoreProcess restoreSnapshotProcess;
 
     /**
      * @param ctx Kernal context.
@@ -275,7 +275,7 @@ public class IgniteSnapshotManager extends GridCacheSharedManagerAdapter
         endSnpProc = new DistributedProcess<>(ctx, END_SNAPSHOT, this::initLocalSnapshotEndStage,
             this::processLocalSnapshotEndStageResult);
 
-        restoreSnapshotProcess = new RestoreSnapshotProcess(ctx);
+        restoreSnapshotProcess = new SnapshotRestoreProcess(ctx);
     }
 
     /**

@@ -14,11 +14,11 @@ public class SnapshotRestoreResponse implements Serializable {
 
     private Map<String, CacheGroupSnapshotDetails> locParts;
 
-    void put(String name, List<CacheConfiguration<?, ?>> cfgs, Set<Integer> parts) {
+    void put(String name, CacheGroupSnapshotDetails grpDetails) {
         if (locParts == null)
             locParts = new HashMap<>();
 
-        locParts.put(name, new CacheGroupSnapshotDetails(cfgs, parts));
+        locParts.put(name, grpDetails);
     }
 
     Map<String, CacheGroupSnapshotDetails> locParts() {

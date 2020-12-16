@@ -164,7 +164,7 @@ public class IgniteClusterSnapshoRestoreSelfTest extends AbstractSnapshotSelfTes
     /** @throws Exception If fails. */
     @Test
     public void testRestoreWithMissedPartitions() throws Exception {
-        IgniteEx ignite = startGridsWithCache(4, dfltCacheCfg, CACHE_KEYS_RANGE);
+        IgniteEx ignite = startGridsWithCache(2, dfltCacheCfg.setBackups(0), CACHE_KEYS_RANGE);
 
         ignite.snapshot().createSnapshot(SNAPSHOT_NAME).get(MAX_AWAIT_MILLIS);
 
@@ -172,8 +172,7 @@ public class IgniteClusterSnapshoRestoreSelfTest extends AbstractSnapshotSelfTes
 
         forceCheckpoint();
 
-        stopGrid(2);
-        stopGrid(3);
+        stopGrid(1);
 
         IgniteFuture<Void> fut = ignite.context().cache().context().snapshotMgr().
             restoreCacheGroups(SNAPSHOT_NAME, Collections.singleton(dfltCacheCfg.getName()));
@@ -181,8 +180,7 @@ public class IgniteClusterSnapshoRestoreSelfTest extends AbstractSnapshotSelfTes
         GridTestUtils.assertThrowsAnyCause(
             log, () -> fut.get(MAX_AWAIT_MILLIS), IgniteCheckedException.class, "not all partitions available");
 
-        startGrid(2);
-        startGrid(3);
+        startGrid(1);
 
         IgniteFuture<Void> fut1 = ignite.context().cache().context().snapshotMgr().
             restoreCacheGroups(SNAPSHOT_NAME, Collections.singleton(dfltCacheCfg.getName()));
