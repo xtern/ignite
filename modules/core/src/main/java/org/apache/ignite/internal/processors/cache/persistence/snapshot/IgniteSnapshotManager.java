@@ -31,6 +31,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.SimpleFileVisitor;
 import java.nio.file.attribute.BasicFileAttributes;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
@@ -900,20 +901,31 @@ public class IgniteSnapshotManager extends GridCacheSharedManagerAdapter
             return;
 
         // restore metadata
+        CacheObjectBinaryProcessorImpl procImpl = (CacheObjectBinaryProcessorImpl)cctx.kernalContext().cacheObjects();
+
+        List<BinaryMetadata> unregistered = new ArrayList<>();
+
         for (File file : snapshotMetadataDir.listFiles()) {
             try (FileInputStream in = new FileInputStream(file)) {
                 BinaryMetadata meta = U.unmarshal(cctx.kernalContext().config().getMarshaller(), in, U.resolveClassLoader(cctx.kernalContext().config()));
 
                 // todo get binaryContext without cast
                 // get binary marshaller withBinaryContext
-                CacheObjectBinaryProcessorImpl procImpl = (CacheObjectBinaryProcessorImpl)cctx.kernalContext().cacheObjects();
-
-                procImpl.addMetaLocally(meta.typeId(), meta.wrap(procImpl.binaryContext()));
+                if (procImpl.metadata0(meta.typeId()) == null)
+                    unregistered.add(meta);
             }
             catch (Exception e) {
                 U.warn(log, "Failed to add metadata from file: " + file.getName() +
                     "; exception was thrown: " + e.getMessage());
             }
+        }
+
+        // todo should register only from one node and validate result
+        if (!F.isEmpty(unregistered)) {
+            cctx.kernalContext().getSystemExecutorService().submit(() -> {
+                for (BinaryMetadata meta : unregistered)
+                    procImpl.addMeta(meta.typeId(), meta.wrap(procImpl.binaryContext()), false);
+            });
         }
     }
 

@@ -201,10 +201,23 @@ public class IgniteClusterSnapshoRestoreSelfTest extends AbstractSnapshotSelfTes
 
     /** @throws Exception If fails. */
     @Test
-    public void testBasicClusterSnapshotRestoreDiffTopology() throws Exception {
+    public void testClusterSnapshotRestoreDiffTopology() throws Exception {
         int nodesCnt = 4;
 
-        IgniteEx ignite = startGridsWithCache(nodesCnt - 2, dfltCacheCfg, CACHE_KEYS_RANGE);
+        IgniteEx ignite = startGridsWithCache(nodesCnt - 2, dfltCacheCfg, 0);
+
+        String customTypeName = "customType";
+
+        IgniteCache<Object, Object> cache = ignite.cache(dfltCacheCfg.getName());
+
+        for (int i = 0; i < CACHE_KEYS_RANGE; i++) {
+            BinaryObjectBuilder builder = ignite.binary().builder(customTypeName);
+
+            builder.setField("num", i);
+            builder.setField("name", String.valueOf(i));
+
+            cache.put(i, builder.build());
+        }
 
         ignite.snapshot().createSnapshot(SNAPSHOT_NAME).get(MAX_AWAIT_MILLIS);
 
@@ -215,16 +228,34 @@ public class IgniteClusterSnapshoRestoreSelfTest extends AbstractSnapshotSelfTes
 
         awaitPartitionMapExchange();
 
-        ignite.cache(dfltCacheCfg.getName()).destroy();
+        cache.destroy();
 
         awaitPartitionMapExchange();
+
+        // remove metadata
+        int typeId = grid(nodesCnt - 1).context().cacheObjects().typeId(customTypeName);
+
+        grid(nodesCnt - 1).context().cacheObjects().removeType(typeId);
+
+        forceCheckpoint();
 
         ignite.context().cache().context().snapshotMgr().
             restoreCacheGroups(SNAPSHOT_NAME, Collections.singleton(dfltCacheCfg.getName())).get(MAX_AWAIT_MILLIS);
 
         awaitPartitionMapExchange();
 
-        checkCacheKeys(ignite.cache(dfltCacheCfg.getName()), CACHE_KEYS_RANGE);
+        cache = grid(nodesCnt - 1).cache(dfltCacheCfg.getName()).withKeepBinary();
+
+        assert cache != null;
+
+        assertEquals(CACHE_KEYS_RANGE, cache.size());
+
+        for (int i = 0; i < CACHE_KEYS_RANGE; i++) {
+            BinaryObject obj = (BinaryObject)cache.get(i);
+
+            assertEquals(Integer.valueOf(i), obj.field("num"));
+            assertEquals(String.valueOf(i), obj.field("name"));
+        }
     }
 
     @Test
