@@ -283,12 +283,12 @@ public class SnapshotRestoreProcess {
                     GridCacheAttributes currAttr = new GridCacheAttributes(cfg, null);
 
                     // todo rmt nodeId not local + message formatting
-                    CU.checkCacheAttributes(savedAttrs, currAttr, ctx.localNodeId(), log);
+                    //CU.checkCacheAttributes(savedAttrs, currAttr, ctx.localNodeId(), log);
 
                     if (firstCfgInGroup == null)
                         firstCfgInGroup = cfg;
-                    else
-                        CU.validateCacheGroupConfiguration(firstCfgInGroup, cfg, log);
+//                    else
+//                        CU.validateCacheGroupConfiguration(firstCfgInGroup, cfg, log);
                 }
             }
         }
