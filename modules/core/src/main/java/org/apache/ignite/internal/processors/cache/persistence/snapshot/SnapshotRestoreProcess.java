@@ -24,7 +24,6 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -40,11 +39,10 @@ import org.apache.ignite.internal.GridKernalContext;
 import org.apache.ignite.internal.IgniteInternalFuture;
 import org.apache.ignite.internal.IgniteInterruptedCheckedException;
 import org.apache.ignite.internal.processors.cache.CacheGroupDescriptor;
-import org.apache.ignite.internal.processors.cache.GridCacheAttributes;
 import org.apache.ignite.internal.processors.cache.StoredCacheData;
 import org.apache.ignite.internal.processors.cache.distributed.dht.preloader.GridDhtPartitionsExchangeFuture;
 import org.apache.ignite.internal.processors.cache.persistence.file.FilePageStoreManager;
-import org.apache.ignite.internal.processors.cache.persistence.snapshot.SnapshotRestoreResponse.CacheGroupSnapshotDetails;
+import org.apache.ignite.internal.processors.cache.persistence.snapshot.SnapshotRestorePrepareResponse.CacheGroupSnapshotDetails;
 import org.apache.ignite.internal.util.distributed.DistributedProcess;
 import org.apache.ignite.internal.util.future.GridFinishedFuture;
 import org.apache.ignite.internal.util.future.GridFutureAdapter;
@@ -55,13 +53,13 @@ import org.apache.ignite.internal.util.typedef.T2;
 import org.apache.ignite.internal.util.typedef.internal.CU;
 import org.apache.ignite.internal.util.typedef.internal.S;
 import org.apache.ignite.internal.util.typedef.internal.U;
+import org.apache.ignite.lang.IgniteBiTuple;
 import org.apache.ignite.lang.IgniteFuture;
 import org.apache.ignite.marshaller.MarshallerUtils;
 import org.apache.ignite.marshaller.jdk.JdkMarshaller;
 import org.jetbrains.annotations.Nullable;
 
 import static org.apache.ignite.internal.processors.cache.persistence.file.FilePageStoreManager.CACHE_DATA_FILENAME;
-import static org.apache.ignite.internal.processors.cache.persistence.file.FilePageStoreManager.CACHE_DIR_PREFIX;
 import static org.apache.ignite.internal.util.distributed.DistributedProcess.DistributedProcessType.END_SNAPSHOT_RESTORE;
 import static org.apache.ignite.internal.util.distributed.DistributedProcess.DistributedProcessType.START_SNAPSHOT_RESTORE;
 
@@ -71,13 +69,13 @@ import static org.apache.ignite.internal.util.distributed.DistributedProcess.Dis
 public class SnapshotRestoreProcess {
     private final GridKernalContext ctx;
 
-    private final DistributedProcess<SnapshotRestoreRequest, SnapshotRestoreResponse> prepareRestoreProc;
+    private final DistributedProcess<SnapshotRestoreRequest, SnapshotRestorePrepareResponse> prepareRestoreProc;
 
-    private final DistributedProcess<SnapshotRestoreRequest, SnapshotRestoreResponse> performRestoreProc;
+    private final DistributedProcess<SnapshotRestoreRequest, SnapshotRestorePerformResponse> performRestoreProc;
 
     private final IgniteLogger log;
 
-    private volatile Collection<CacheConfiguration> ccfgs;
+    private volatile Collection<CacheConfiguration> cacheCfgsToStart;
 
     private volatile SnapshotRestoreRequest req = null;
 
@@ -122,14 +120,12 @@ public class SnapshotRestoreProcess {
         return req != null;
     }
 
-    private IgniteInternalFuture<SnapshotRestoreResponse> prepare(SnapshotRestoreRequest req) {
+    private IgniteInternalFuture<SnapshotRestorePrepareResponse> prepare(SnapshotRestoreRequest req) {
         if (inProgress()) {
             // todo do we need it?
             return new GridFinishedFuture<>(new IgniteException("Snapshot restore operation was rejected. " +
                 "The previous restore operation was not completed."));
         }
-
-        SnapshotRestoreResponse res = new SnapshotRestoreResponse();
 
         // todo forbid state change
         // todo forbid node join
@@ -138,45 +134,53 @@ public class SnapshotRestoreProcess {
 
         this.req = req;
 
+        List<CacheGroupSnapshotDetails> grpCfgs = new ArrayList<>();
+
         // read cache configuration
         for (String cacheName : req.groups()) {
             try {
-                CacheGroupSnapshotDetails details0 = readCacheGroupDetails(req.snapshotName(), cacheName);
+                CacheGroupSnapshotDetails grpCfg = readCacheGroupDetails(req.snapshotName(), cacheName);
 
-                if (details0 != null)
-                    res.put(cacheName, details0);
+                if (grpCfg != null)
+                    grpCfgs.add(grpCfg);
             }
             catch (IOException | IgniteCheckedException e) {
                 return new GridFinishedFuture<>(e);
             }
         }
 
-        return new GridFinishedFuture<>(res);
+        return new GridFinishedFuture<>(new SnapshotRestorePrepareResponse(grpCfgs));
     }
 
-    private CacheGroupSnapshotDetails readCacheGroupDetails(String snapshotName, String grpName) throws IgniteCheckedException, IOException {
-        List<CacheConfiguration<?, ?>> ccfgs = readStoredCacheConfigs(ctx.config(), snapshotName, grpName);
-
-        if (ccfgs == null)
-            return null;
-
+    private @Nullable CacheGroupSnapshotDetails readCacheGroupDetails(String snapshotName, String grpName) throws IgniteCheckedException, IOException {
         File cacheDir = ctx.cache().context().snapshotMgr().resolveSnapshotCacheDir(snapshotName, ctx.config(), grpName);
-        // todo redundant
+
         if (!cacheDir.exists())
             return null;
 
         Set<Integer> parts = new HashSet<>();
 
-        for (String fileName : cacheDir.list((dir, name) -> name.startsWith(FilePageStoreManager.PART_FILE_PREFIX))) {
-            int partId = Integer.parseInt(fileName.substring(FilePageStoreManager.PART_FILE_PREFIX.length(), fileName.indexOf('.')));
+        List<CacheConfiguration<?, ?>> cacheCfgs = new ArrayList<>(1);
 
-            parts.add(partId);
+        for (File file : cacheDir.listFiles()) {
+            if (file.isDirectory())
+                continue;
+
+            String name = file.getName();
+
+            if (name.endsWith(CACHE_DATA_FILENAME) && file.length() > 0)
+                cacheCfgs.add(unmarshal(ctx.config(), file));
+            else if (name.startsWith(FilePageStoreManager.PART_FILE_PREFIX)) {
+                String partId = name.substring(FilePageStoreManager.PART_FILE_PREFIX.length(), name.indexOf('.'));
+
+                parts.add(Integer.parseInt(partId));
+            }
         }
 
-        return new CacheGroupSnapshotDetails(ccfgs, parts);
+        return new CacheGroupSnapshotDetails(grpName, cacheCfgs, parts);
     }
 
-    private void finishPrepare(UUID reqId, Map<UUID, SnapshotRestoreResponse> res, Map<UUID, Exception> errs) {
+    private void finishPrepare(UUID reqId, Map<UUID, SnapshotRestorePrepareResponse> res, Map<UUID, Exception> errs) {
         if (!errs.isEmpty()) {
             if (req != null && req.requestId().equals(reqId))
                 req = null;
@@ -190,25 +194,42 @@ public class SnapshotRestoreProcess {
         List<String> notFoundGroups = new ArrayList<>(req.groups());
 
         try {
-            Collection<CacheConfiguration> details = validateResponses(res);
+            Collection<CacheGroupSnapshotDetails> grpsDetails = mergeDetails(res);
 
-            // Ensure cahe does not exists
-            for (CacheConfiguration e : details) {
-                // todo properly handle cache groups
-                String cacheName = F.isEmpty(e.getGroupName()) ? e.getName() : e.getGroupName();
+            List<CacheConfiguration> cacheCfgs = new ArrayList<>();
 
-                CacheGroupDescriptor desc = ctx.cache().cacheGroupDescriptor(CU.cacheId(cacheName));
+            for (CacheGroupSnapshotDetails grpDetails : grpsDetails) {
+                CacheConfiguration<?, ?> ccfg = F.first(grpDetails.configs());
 
-                if (desc != null)
-                    throw new IllegalStateException("Cache group \"" + desc.cacheOrGroupName() + "\" should be destroyed manually before perform restore operation.");
+                if (ccfg == null)
+                    continue;
 
-                notFoundGroups.remove(cacheName);
+                int reqParts = ccfg.getAffinity().partitions();
+                int availParts = grpDetails.parts().size();
+
+                if (reqParts != availParts) {
+                    throw new IgniteCheckedException("Cannot restore snapshot, not all partitions available [" +
+                        "required=" + reqParts + ", avail=" + availParts + ", grp=" + grpDetails.groupName() + ']');
+                }
+
+                notFoundGroups.remove(grpDetails.groupName());
+
+                cacheCfgs.addAll(grpDetails.configs());
+
+                CacheGroupDescriptor desc = ctx.cache().cacheGroupDescriptor(CU.cacheId(grpDetails.groupName()));
+
+                if (desc != null) {
+                    throw new IllegalStateException("Cache group \"" + desc.cacheOrGroupName() +
+                        "\" should be destroyed manually before perform restore operation.");
+                }
             }
 
-            if (!notFoundGroups.isEmpty())
-                throw new IllegalArgumentException("Cache group(s) \"" + F.concat(notFoundGroups, ", ") + "\" not found in snapshot \"" + req.snapshotName() + "\"");
+            if (!notFoundGroups.isEmpty()) {
+                throw new IllegalArgumentException("Cache group(s) \"" + F.concat(notFoundGroups, ", ") +
+                    "\" not found in snapshot \"" + req.snapshotName() + "\"");
+            }
 
-            ccfgs = details;
+            cacheCfgsToStart = cacheCfgs;
         }
         catch (Exception e) {
             req = null;
@@ -219,7 +240,6 @@ public class SnapshotRestoreProcess {
             return;
         }
 
-        // todo should be coordinator - how to handle errors
         if (isCoordinator) {
             System.out.println(">xxx> running perform phase...");
 
@@ -227,84 +247,43 @@ public class SnapshotRestoreProcess {
         }
     }
 
-    private Collection<CacheConfiguration> validateResponses(Map<UUID, SnapshotRestoreResponse> res) throws IgniteCheckedException {
-        Collection<CacheConfiguration> allCfgs = new ArrayList<>();
-        Map<String, T2<Map<String, CacheConfiguration>, Set<Integer>>> globalParts = new HashMap<>();
+    private Collection<CacheGroupSnapshotDetails> mergeDetails(Map<UUID, SnapshotRestorePrepareResponse> responses) {
+        Map<String, T2<UUID, CacheGroupSnapshotDetails>> globalDetails = new HashMap<>();
 
-        for (Map.Entry<UUID, SnapshotRestoreResponse> e : res.entrySet()) {
-            UUID nodeId = e.getKey();
-            SnapshotRestoreResponse resp = e.getValue();
+        for (Map.Entry<UUID, SnapshotRestorePrepareResponse> entry : responses.entrySet()) {
+            UUID currNodeId = entry.getKey();
+            SnapshotRestorePrepareResponse singleResp = entry.getValue();
 
-            Map<String, CacheGroupSnapshotDetails> parts = resp.locParts();
+            for (CacheGroupSnapshotDetails nodeDetails : singleResp.groups()) {
+                T2<UUID, CacheGroupSnapshotDetails> clusterDetailsPair = globalDetails.get(nodeDetails.groupName());
 
-            if (parts == null)
-                continue;
+                String grpName = nodeDetails.groupName();
 
-            for (CacheGroupSnapshotDetails grpDetails : parts.values()) {
-                CacheConfiguration firstCfg = F.first(grpDetails.configs());
-
-                if (firstCfg == null)
-                    continue;
-
-                String grpName = F.isEmpty(firstCfg.getGroupName()) ? firstCfg.getName() : firstCfg.getGroupName();
-
-                T2<Map<String, CacheConfiguration>, Set<Integer>> savedGrpEntry = globalParts.get(grpName);
-
-                if (savedGrpEntry == null) {
-                    savedGrpEntry = new T2<>(new HashMap<>(), new HashSet<>());
-
-                    for (CacheConfiguration<?, ?> cfg : grpDetails.configs()) {
-                        savedGrpEntry.get1().put(cfg.getName(), cfg);
-
-                        allCfgs.add(cfg);
-                    }
-
-                    savedGrpEntry.get2().addAll(grpDetails.parts());
-
-                    globalParts.put(grpName, savedGrpEntry);
+                if (clusterDetailsPair == null) {
+                    globalDetails.put(grpName, new T2<>(currNodeId, nodeDetails));
 
                     continue;
                 }
 
-                // todo detailed info
-                if (savedGrpEntry.get1().size() != grpDetails.configs().size())
-                    throw new IllegalStateException("Count of caches in shared groups mismatch");
+                CacheGroupSnapshotDetails clusterDetails = clusterDetailsPair.get2();
 
-                CacheConfiguration<?, ?> firstCfgInGroup = null;
+                int currCfgCnt = nodeDetails.configs().size();
+                int savedCfgCnt = clusterDetails.configs().size();
 
-                for (CacheConfiguration<?, ?> cfg : grpDetails.configs()) {
-                    savedGrpEntry.get2().addAll(grpDetails.parts());
-
-                    Map<String, CacheConfiguration> savedCcfgs = savedGrpEntry.get1();
-
-                    CacheConfiguration savedCfg = savedCcfgs.get(cfg.getName());
-
-                    GridCacheAttributes savedAttrs = new GridCacheAttributes(savedCfg, null);
-                    GridCacheAttributes currAttr = new GridCacheAttributes(cfg, null);
-
-                    // todo rmt nodeId not local + message formatting
-                    //CU.checkCacheAttributes(savedAttrs, currAttr, ctx.localNodeId(), log);
-
-                    if (firstCfgInGroup == null)
-                        firstCfgInGroup = cfg;
-//                    else
-//                        CU.validateCacheGroupConfiguration(firstCfgInGroup, cfg, log);
+                if (currCfgCnt != savedCfgCnt) {
+                    throw new IllegalStateException("Count of cache configs in shared group mismatch [" +
+                        "node1=" + clusterDetailsPair.get1() + ", cnt=" + savedCfgCnt +
+                        ", node2=" + currNodeId + ", cnt=" + nodeDetails.configs().size() + ']');
                 }
+
+                clusterDetails.parts().addAll(nodeDetails.parts());
             }
         }
 
-        for (T2<Map<String, CacheConfiguration>, Set<Integer>> value : globalParts.values()) {
-            int reqParts = F.first(value.get1().values()).getAffinity().partitions();
-            int availParts = value.get2().size();
-
-            if (reqParts != availParts) // todo name of the group
-                throw new IgniteCheckedException("Cannot restore snapshot, not all partitions available [required=" + reqParts + ", avail=" + availParts + "]");
-        }
-
-        return allCfgs;
+        return F.viewReadOnly(globalDetails.values(), IgniteBiTuple::get2);
     }
 
-    private IgniteInternalFuture<SnapshotRestoreResponse> perform(SnapshotRestoreRequest req) {
+    private IgniteInternalFuture<SnapshotRestorePerformResponse> perform(SnapshotRestoreRequest req) {
         if (!req.equals(this.req))
             return new GridFinishedFuture<>(new IgniteException("Unknown snapshot restore operation was rejected."));
 
@@ -312,7 +291,7 @@ public class SnapshotRestoreProcess {
             if (!ctx.clientNode()) {
                 ctx.cache().context().snapshotMgr().restoreCacheGroupsLocal(req.snapshotName(), req.groups());
 
-                return new GridFinishedFuture<>(new SnapshotRestoreResponse());
+                return new GridFinishedFuture<>(new SnapshotRestorePerformResponse());
             }
         } catch (IgniteCheckedException e) {
             RestoreSnapshotFuture fut0 = fut;
@@ -325,14 +304,14 @@ public class SnapshotRestoreProcess {
             this.req = null;
         }
 
-        return new GridFinishedFuture<>(new SnapshotRestoreResponse());
+        return new GridFinishedFuture<>(new SnapshotRestorePerformResponse());
     }
 
-    private void finishPerform(UUID reqId, Map<UUID, SnapshotRestoreResponse> map, Map<UUID, Exception> errs) {
+    private void finishPerform(UUID reqId, Map<UUID, SnapshotRestorePerformResponse> map, Map<UUID, Exception> errs) {
         try {
-            Collection<CacheConfiguration> ccfgs0 = ccfgs;
+            Collection<CacheConfiguration> ccfgs0 = cacheCfgsToStart;
 
-            ccfgs = null;
+            cacheCfgsToStart = null;
 
             if (!F.isEmpty(errs)) {
                 completeFuture(reqId, errs, fut);
@@ -425,7 +404,7 @@ public class SnapshotRestoreProcess {
      * @return {@code True} if future was completed by this call.
      */
     private boolean completeFuture(UUID reqId, Map<UUID, Exception> err, RestoreSnapshotFuture fut) {
-        ccfgs = null;
+        cacheCfgsToStart = null;
 
         boolean isInitiator = fut != null && fut.id().equals(reqId);
 
@@ -433,35 +412,6 @@ public class SnapshotRestoreProcess {
             return false;
 
         return !F.isEmpty(err) ? fut.onDone(F.firstValue(err)) : fut.onDone();
-    }
-
-    private @Nullable List<CacheConfiguration<?, ?>> readStoredCacheConfigs(IgniteConfiguration cfg, String snpName, String cacheName) throws IOException, IgniteCheckedException {
-        File cacheDir = ctx.cache().context().snapshotMgr().resolveSnapshotCacheDir(snpName, cfg, cacheName);
-
-        if (!cacheDir.exists())
-            return null;
-
-        if (cacheDir.getName().startsWith(CACHE_DIR_PREFIX)) {
-            File cacheDataFile = new File(cacheDir, CACHE_DATA_FILENAME);
-
-            assert cacheDataFile.exists() : cacheDataFile;
-
-            return Collections.singletonList(unmarshal(cfg, cacheDataFile));
-        }
-
-        List<CacheConfiguration<?, ?>> ccfgs = new ArrayList<>();
-
-        File[] files = cacheDir.listFiles();
-
-        if (files == null)
-            return null;
-
-        for (File file : files) {
-            if (!file.isDirectory() && file.getName().endsWith(CACHE_DATA_FILENAME) && file.length() > 0)
-                ccfgs.add(unmarshal(cfg, file));
-        }
-
-        return ccfgs;
     }
 
     private CacheConfiguration<?, ?> unmarshal(IgniteConfiguration cfg, File cacheDataFile) throws IOException, IgniteCheckedException {
@@ -474,6 +424,7 @@ public class SnapshotRestoreProcess {
         }
     }
 
+    /** */
     protected static class RestoreSnapshotFuture extends GridFutureAdapter<Void> {
         /** Request ID. */
         private final UUID id;
