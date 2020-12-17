@@ -911,6 +911,7 @@ public class GridCacheProcessor extends GridProcessorAdapter {
 
         completeProxyInitialize(cctx.name());
 
+//        U.dumpStack("xxx> jCacheProxies [1]");
         jCacheProxies.remove(cctx.name());
 
         stoppedCaches.add(cctx.cache());
@@ -1945,9 +1946,12 @@ public class GridCacheProcessor extends GridProcessorAdapter {
     ) throws IgniteCheckedException {
         GridCacheContext cacheCtx = prepareCacheContext(desc, reqNearCfg, exchTopVer, disabledAfterStart);
 
-        if (cacheCtx.isRecoveryMode())
+        if (cacheCtx.isRecoveryMode()) {
+//            U.dumpStack(">xxx> recovery " + desc.cacheName());
             finishRecovery(exchTopVer, cacheCtx);
+        }
         else {
+//            U.dumpStack(">xxx> start " + desc.cacheName());
             ctx.query().onCacheStart(
                     new GridCacheContextInfo(cacheCtx, clientCache),
                     desc.schema() != null ? desc.schema() : new QuerySchema(),
@@ -2009,6 +2013,8 @@ public class GridCacheProcessor extends GridProcessorAdapter {
         ctx.cache().context().database().checkpointReadLock();
 
         try {
+//            U.dumpStack(">xxx> getOrCreateCacheGroupContext");
+
             CacheGroupContext grp = getOrCreateCacheGroupContext(
                 desc, exchTopVer, cacheObjCtx, affNode, startCfg.getGroupName(), false);
 
@@ -2426,7 +2432,7 @@ public class GridCacheProcessor extends GridProcessorAdapter {
                 String cacheName = e.getKey();
 
                 res.add(cacheName);
-
+                U.dumpStack("xxx> jCacheProxies [2]");
                 jCacheProxies.remove(cacheName);
 
                 proxy.onRestarted(null, null);
@@ -2501,6 +2507,7 @@ public class GridCacheProcessor extends GridProcessorAdapter {
 
         U.startLifecycleAware(grp.configuredUserObjects());
 
+//        U.dumpStack(">xxx> start grp " + grp.cacheOrGroupName());
         grp.start();
 
         CacheGroupContext old = cacheGrps.put(desc.groupId(), grp);
@@ -2586,6 +2593,7 @@ public class GridCacheProcessor extends GridProcessorAdapter {
         else {
             completeProxyInitialize(req.cacheName());
 
+//            U.dumpStack("xxx> jCacheProxies [3]");
             proxy = jCacheProxies.remove(req.cacheName());
         }
 
@@ -2690,6 +2698,7 @@ public class GridCacheProcessor extends GridProcessorAdapter {
      * @param cctx Cache context.
      */
     private void closeCache(GridCacheContext cctx) {
+//        U.dumpStack(">xxx> closeCache");
         if (cctx.affinityNode()) {
             GridCacheAdapter<?, ?> cache = caches.get(cctx.name());
 
@@ -2710,7 +2719,7 @@ public class GridCacheProcessor extends GridProcessorAdapter {
                     sharedCtx.tm().rollbackTransactionsForCache(cctx.cacheId());
 
                 completeProxyInitialize(cctx.name());
-
+                U.dumpStack("xxx> jCacheProxies [4]");
                 jCacheProxies.remove(cctx.name());
 
                 closeCacheOnNotAffinityNode(cctx);
@@ -2928,7 +2937,7 @@ public class GridCacheProcessor extends GridProcessorAdapter {
      * @param grpId Group ID.
      * @param destroy Group destroy flag.
      */
-    private void stopCacheGroup(int grpId, boolean destroy) {
+    public void stopCacheGroup(int grpId, boolean destroy) {
         CacheGroupContext grp = cacheGrps.remove(grpId);
 
         if (grp != null)
@@ -4721,6 +4730,7 @@ public class GridCacheProcessor extends GridProcessorAdapter {
      * @return Previous cache proxy.
      */
     public @Nullable IgniteCacheProxyImpl<?, ?> addjCacheProxy(String name, IgniteCacheProxyImpl<?, ?> proxy) {
+//        U.dumpStack(">xxx>  addjCacheProxy " + name);
         return jCacheProxies.putIfAbsent(name, proxy);
     }
 
