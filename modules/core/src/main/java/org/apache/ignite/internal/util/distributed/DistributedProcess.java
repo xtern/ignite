@@ -444,6 +444,8 @@ public class DistributedProcess<I extends Serializable, R extends Serializable> 
 
         START_SNAPSHOT_RESTORE,
 
-        END_SNAPSHOT_RESTORE
+        END_SNAPSHOT_RESTORE,
+
+        UNDO_SNAPSHOT_RESTORE
     }
 }

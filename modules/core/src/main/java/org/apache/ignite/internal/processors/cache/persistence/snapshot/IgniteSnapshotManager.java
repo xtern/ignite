@@ -45,6 +45,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Future;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.function.BiFunction;
 import java.util.function.Function;
@@ -65,6 +66,7 @@ import org.apache.ignite.internal.IgniteFutureCancelledCheckedException;
 import org.apache.ignite.internal.IgniteInternalFuture;
 import org.apache.ignite.internal.NodeStoppingException;
 import org.apache.ignite.internal.binary.BinaryMetadata;
+import org.apache.ignite.internal.binary.BinaryUtils;
 import org.apache.ignite.internal.cluster.ClusterTopologyCheckedException;
 import org.apache.ignite.internal.events.DiscoveryCustomEvent;
 import org.apache.ignite.internal.managers.eventstorage.DiscoveryEventListener;
@@ -109,6 +111,7 @@ import org.apache.ignite.internal.util.typedef.internal.S;
 import org.apache.ignite.internal.util.typedef.internal.U;
 import org.apache.ignite.lang.IgniteCallable;
 import org.apache.ignite.lang.IgniteFuture;
+import org.apache.ignite.marshaller.Marshaller;
 import org.apache.ignite.resources.IgniteInstanceResource;
 import org.apache.ignite.thread.IgniteThreadPoolExecutor;
 import org.apache.ignite.thread.OomExceptionHandler;
@@ -372,6 +375,8 @@ public class IgniteSnapshotManager extends GridCacheSharedManagerAdapter
                                 "One of baseline nodes left the cluster: " + leftNodeId));
                         }
                     }
+
+                    restoreSnapshotProcess.onNodeLeft(leftNodeId);
                 }
             }
             finally {
@@ -857,7 +862,79 @@ public class IgniteSnapshotManager extends GridCacheSharedManagerAdapter
         return restoreSnapshotProcess.start(snpName, grpNames);
     }
 
-    protected void restoreCacheGroupsLocal(String snpName, Collection<String> grpNames) throws IgniteCheckedException {
+    protected void ensureMetaCanBeMerged(String snpName) throws IgniteCheckedException, IOException {
+        String nodeFolderName = cctx.kernalContext().pdsFolderResolver().resolveFolders().folderName();
+
+        File workDIr = resolveSnapshotWorkDirectory(cctx.kernalContext().config());
+
+        String subPath = snpName + File.separator + DFLT_STORE_DIR + File.separator + "binary_meta" + File.separator +
+            nodeFolderName;
+
+        File snapshotMetadataDir = new File(workDIr, subPath);
+
+        if (!snapshotMetadataDir.exists())
+            return;
+
+        // todo get binaryContext without cast
+        CacheObjectBinaryProcessorImpl binProc = (CacheObjectBinaryProcessorImpl)cctx.kernalContext().cacheObjects();
+
+        for (File file : snapshotMetadataDir.listFiles()) {
+            try (FileInputStream in = new FileInputStream(file)) {
+                BinaryMetadata meta = U.unmarshal(cctx.kernalContext().config().getMarshaller(), in, U.resolveClassLoader(cctx.kernalContext().config()));
+
+                BinaryMetadata oldMeta = binProc.metadata0(meta.typeId());
+
+                if (oldMeta == null)
+                    continue;
+
+                BinaryUtils.mergeMetadata(oldMeta, meta, null);
+            }
+        }
+    }
+
+    protected RestoreOperationContext restoreCacheGroupsLocal(String snpName, Collection<String> grpNames) throws IgniteCheckedException {
+        RestoreOperationContext opCtx = new RestoreOperationContext();
+
+        String nodeFolderName = cctx.kernalContext().pdsFolderResolver().resolveFolders().folderName();
+
+        File workDIr = resolveSnapshotWorkDirectory(cctx.kernalContext().config());
+
+        String subPath = snpName + File.separator + DFLT_STORE_DIR + File.separator + "binary_meta" + File.separator +
+            nodeFolderName;
+
+        File snapshotMetadataDir = new File(workDIr, subPath);
+
+        if (!snapshotMetadataDir.exists())
+            return opCtx;
+
+        // restore metadata
+        CacheObjectBinaryProcessorImpl procImpl = (CacheObjectBinaryProcessorImpl)cctx.kernalContext().cacheObjects();
+
+        List<BinaryMetadata> metas = new ArrayList<>();
+
+        Marshaller marshaller = cctx.kernalContext().config().getMarshaller();
+        ClassLoader clsLdr = U.resolveClassLoader(cctx.kernalContext().config());
+
+        for (File file : snapshotMetadataDir.listFiles()) {
+            try (FileInputStream in = new FileInputStream(file)) {
+                metas.add(U.unmarshal(marshaller, in, clsLdr));
+            }
+            catch (Exception e) {
+                throw new IgniteCheckedException("Failed to add metadata from file: " + file.getName() +
+                    "; exception was thrown: " + e.getMessage());
+            }
+        }
+
+        // todo should register only from one node and validate result
+        if (!F.isEmpty(metas)) {
+            Future<?> updateMetaFut = cctx.kernalContext().getSystemExecutorService().submit(() -> {
+                for (BinaryMetadata meta : metas)
+                    procImpl.addMeta(meta.typeId(), meta.wrap(procImpl.binaryContext()), false);
+            });
+
+            opCtx.updateMetaFuture(updateMetaFut);
+        }
+
         for (String grpName : grpNames) {
             File cacheDir = resolveCacheDir(grpName);
 
@@ -871,8 +948,11 @@ public class IgniteSnapshotManager extends GridCacheSharedManagerAdapter
                 continue;
             }
 
-            if (!cacheDir.exists())
+            if (!cacheDir.exists()) {
                 cacheDir.mkdir();
+
+                opCtx.cacheGroupFile(grpName, cacheDir);
+            }
 
             try {
                 for (File snpFile : snapshotCacheDir.listFiles()) {
@@ -881,6 +961,8 @@ public class IgniteSnapshotManager extends GridCacheSharedManagerAdapter
                     log.info("Restore file from snapshot [snapshot=" + snpName + ", src=" + snpFile + ", target=" + target + "]");
 
                     Files.copy(snpFile.toPath(), target.toPath());
+
+                    opCtx.cacheGroupFile(grpName, target);
                 }
             }
             catch (IOException e) {
@@ -888,44 +970,27 @@ public class IgniteSnapshotManager extends GridCacheSharedManagerAdapter
             }
         }
 
-        String nodeFolderName = cctx.kernalContext().pdsFolderResolver().resolveFolders().folderName();
+        return opCtx;
+    }
 
-        File workDIr = resolveSnapshotWorkDirectory(cctx.kernalContext().config());
+    protected void rollbackRestoreOperation(Collection<String> grps, RestoreOperationContext opCtx) {
+        for (String grpName : grps) {
+            List<File> files = opCtx.cacheGroupFiles(grpName);
 
-        String subPath = snpName + File.separator + DFLT_STORE_DIR + File.separator + "binary_meta" + File.separator +
-            nodeFolderName;
+            List<File> dirs = new ArrayList<>();
 
-        File snapshotMetadataDir = new File(workDIr, subPath);
+            for (File file : files) {
+                if (!file.exists())
+                    continue;
 
-        if (!snapshotMetadataDir.exists())
-            return;
+                if (file.isDirectory())
+                    dirs.add(file);
 
-        // restore metadata
-        CacheObjectBinaryProcessorImpl procImpl = (CacheObjectBinaryProcessorImpl)cctx.kernalContext().cacheObjects();
-
-        List<BinaryMetadata> unregistered = new ArrayList<>();
-
-        for (File file : snapshotMetadataDir.listFiles()) {
-            try (FileInputStream in = new FileInputStream(file)) {
-                BinaryMetadata meta = U.unmarshal(cctx.kernalContext().config().getMarshaller(), in, U.resolveClassLoader(cctx.kernalContext().config()));
-
-                // todo get binaryContext without cast
-                // get binary marshaller withBinaryContext
-                if (procImpl.metadata0(meta.typeId()) == null)
-                    unregistered.add(meta);
+                file.delete();
             }
-            catch (Exception e) {
-                U.warn(log, "Failed to add metadata from file: " + file.getName() +
-                    "; exception was thrown: " + e.getMessage());
-            }
-        }
 
-        // todo should register only from one node and validate result
-        if (!F.isEmpty(unregistered)) {
-            cctx.kernalContext().getSystemExecutorService().submit(() -> {
-                for (BinaryMetadata meta : unregistered)
-                    procImpl.addMeta(meta.typeId(), meta.wrap(procImpl.binaryContext()), false);
-            });
+            for (File dir : dirs)
+                dir.delete();
         }
     }
 
@@ -1587,6 +1652,34 @@ public class IgniteSnapshotManager extends GridCacheSharedManagerAdapter
                 return new IgniteException("Client disconnected. Snapshot result is unknown", U.convertException(e));
             else
                 return new IgniteException("Snapshot has not been created", U.convertException(e));
+        }
+    }
+
+    static class RestoreOperationContext {
+        private final Map<String, List<File>> files = new HashMap<>();
+
+        private final List<Integer> metadataTypes = new ArrayList<>();
+
+        private volatile Future<?> updateMetaFuture;
+
+        public void updateMetaFuture(Future<?> updateMetaFuture) {
+            this.updateMetaFuture = updateMetaFuture;
+        }
+
+        public @Nullable Future<?> updateMetaFuture() {
+            return this.updateMetaFuture;
+        }
+
+        public void cacheGroupFile(String grpName, File newFile) {
+            files.computeIfAbsent(grpName, v -> new ArrayList<>()).add(newFile);
+        }
+
+        public void metadataType(int typeId) {
+            metadataTypes.add(typeId);
+        }
+
+        public List<File> cacheGroupFiles(String grpName) {
+            return files.get(grpName);
         }
     }
 }

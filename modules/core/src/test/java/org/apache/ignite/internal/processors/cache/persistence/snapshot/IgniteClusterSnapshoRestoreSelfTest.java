@@ -17,25 +17,36 @@
 
 package org.apache.ignite.internal.processors.cache.persistence.snapshot;
 
+import java.io.File;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.UUID;
+import java.util.function.Function;
+import org.apache.ignite.Ignite;
 import org.apache.ignite.IgniteCache;
 import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.IgniteException;
 import org.apache.ignite.binary.BinaryObject;
 import org.apache.ignite.binary.BinaryObjectBuilder;
+import org.apache.ignite.binary.BinaryType;
 import org.apache.ignite.cache.CacheAtomicityMode;
 import org.apache.ignite.cluster.ClusterState;
 import org.apache.ignite.configuration.CacheConfiguration;
 import org.apache.ignite.configuration.IgniteConfiguration;
 import org.apache.ignite.internal.IgniteEx;
 import org.apache.ignite.internal.TestRecordingCommunicationSpi;
+import org.apache.ignite.internal.util.distributed.DistributedProcess;
 import org.apache.ignite.internal.util.distributed.SingleNodeMessage;
+import org.apache.ignite.internal.util.typedef.internal.U;
 import org.apache.ignite.lang.IgniteFuture;
 import org.apache.ignite.testframework.GridTestUtils;
-import org.junit.Before;
 import org.junit.Ignore;
 import org.junit.Test;
+
+import static org.apache.ignite.internal.processors.cache.persistence.file.FilePageStoreManager.CACHE_DIR_PREFIX;
+import static org.apache.ignite.internal.processors.cache.persistence.file.FilePageStoreManager.CACHE_GRP_DIR_PREFIX;
+import static org.apache.ignite.internal.processors.cache.persistence.file.FilePageStoreManager.DFLT_STORE_DIR;
+import static org.apache.ignite.testframework.GridTestUtils.runAsync;
 
 /**
  * Snapshot restore tests.
@@ -44,16 +55,9 @@ public class IgniteClusterSnapshoRestoreSelfTest extends AbstractSnapshotSelfTes
     /** Timeout. */
     private static final long MAX_AWAIT_MILLIS = 15_000;
 
-//    /** Cache configuration for test. */
-//    private static final CacheConfiguration<Integer, Integer> atomicCcfg = new CacheConfiguration<Integer, Integer>("atomicCacheName")
-//        .setAtomicityMode(CacheAtomicityMode.ATOMIC)
-//        .setBackups(2)
-//        .setAffinity(new RendezvousAffinityFunction(false, CACHE_PARTS_COUNT));
-
-//    /** {@code true} if node should be started in separate jvm. */
-//    protected volatile boolean jvm;
-
     protected CacheConfiguration[] cacheCfgs;
+
+    protected Function<Integer, Object> valueBuilder = new IntValueBuilder();
 
     /** {@inheritDoc} */
     @Override protected IgniteConfiguration getConfiguration(String name) throws Exception {
@@ -65,12 +69,6 @@ public class IgniteClusterSnapshoRestoreSelfTest extends AbstractSnapshotSelfTes
         return cfg;
     }
 
-    /** @throws Exception If fails. */
-    @Before
-    @Override public void beforeTestSnapshot() throws Exception {
-        super.beforeTestSnapshot();
-    }
-
     /** {@inheritDoc} */
     @Override public void afterTestSnapshot() throws Exception {
         stopAllGrids();
@@ -79,7 +77,7 @@ public class IgniteClusterSnapshoRestoreSelfTest extends AbstractSnapshotSelfTes
     /** @throws Exception If fails. */
     @Test
     public void testBasicClusterSnapshotRestore() throws Exception {
-        IgniteEx ignite = startGridsWithCache(2, dfltCacheCfg, CACHE_KEYS_RANGE);
+        IgniteEx ignite = startGridsWithCache(2, CACHE_KEYS_RANGE, valueBuilder, dfltCacheCfg);
 
         ignite.snapshot().createSnapshot(SNAPSHOT_NAME).get(MAX_AWAIT_MILLIS);
 
@@ -96,26 +94,11 @@ public class IgniteClusterSnapshoRestoreSelfTest extends AbstractSnapshotSelfTes
     /** @throws Exception If fails. */
     @Test
     public void testBasicClusterSnapshotRestoreWithMetadata() throws Exception {
-        int keysCnt = 100;
-
         String customTypeName = "customType";
 
-        IgniteEx ignite = startGrids(2);
+        valueBuilder = new BinaryValueBuilder(0, customTypeName);
 
-        ignite.cluster().state(ClusterState.ACTIVE);
-
-        IgniteCache cache = ignite.getOrCreateCache(dfltCacheCfg);
-
-        for (int i = 0; i < keysCnt; i++) {
-            BinaryObjectBuilder builder = ignite.binary().builder(customTypeName);
-
-            builder.setField("num", i);
-            builder.setField("name", String.valueOf(i));
-
-            cache.put(i, builder.build());
-        }
-
-//        resetBaselineTopology();
+        IgniteEx ignite = startGridsWithCache(2, CACHE_KEYS_RANGE, valueBuilder, dfltCacheCfg);
 
         ignite.snapshot().createSnapshot(SNAPSHOT_NAME).get(MAX_AWAIT_MILLIS);
 
@@ -131,24 +114,13 @@ public class IgniteClusterSnapshoRestoreSelfTest extends AbstractSnapshotSelfTes
         ignite.context().cache().context().snapshotMgr().
             restoreCacheGroups(SNAPSHOT_NAME, Collections.singleton(dfltCacheCfg.getName())).get(MAX_AWAIT_MILLIS);
 
-        cache = ignite.cache(dfltCacheCfg.getName()).withKeepBinary();
-
-        assert cache != null;
-
-        assertEquals(keysCnt, cache.size());
-
-        for (int i = 0; i < keysCnt; i++) {
-            BinaryObject obj = (BinaryObject)cache.get(i);
-
-            assertEquals(Integer.valueOf(i), obj.field("num"));
-            assertEquals(String.valueOf(i), obj.field("name"));
-        }
+        checkCacheKeys(ignite.cache(dfltCacheCfg.getName()).withKeepBinary(), CACHE_KEYS_RANGE);
     }
 
     /** @throws Exception If fails. */
     @Test
     public void testClusterSnapshotRestoreRejectOnInActiveCluster() throws Exception {
-        IgniteEx ignite = startGridsWithCache(2, dfltCacheCfg, CACHE_KEYS_RANGE);
+        IgniteEx ignite = startGridsWithCache(2, CACHE_KEYS_RANGE, valueBuilder, dfltCacheCfg);
 
         ignite.snapshot().createSnapshot(SNAPSHOT_NAME).get(MAX_AWAIT_MILLIS);
 
@@ -164,7 +136,7 @@ public class IgniteClusterSnapshoRestoreSelfTest extends AbstractSnapshotSelfTes
     /** @throws Exception If fails. */
     @Test
     public void testRestoreWithMissedPartitions() throws Exception {
-        IgniteEx ignite = startGridsWithCache(2, dfltCacheCfg.setBackups(0), CACHE_KEYS_RANGE);
+        IgniteEx ignite = startGridsWithCache(2, CACHE_KEYS_RANGE, valueBuilder, dfltCacheCfg.setBackups(0));
 
         ignite.snapshot().createSnapshot(SNAPSHOT_NAME).get(MAX_AWAIT_MILLIS);
 
@@ -204,20 +176,11 @@ public class IgniteClusterSnapshoRestoreSelfTest extends AbstractSnapshotSelfTes
     public void testClusterSnapshotRestoreDiffTopology() throws Exception {
         int nodesCnt = 4;
 
-        IgniteEx ignite = startGridsWithCache(nodesCnt - 2, dfltCacheCfg, 0);
-
         String customTypeName = "customType";
 
-        IgniteCache<Object, Object> cache = ignite.cache(dfltCacheCfg.getName());
+        valueBuilder = new BinaryValueBuilder(0, customTypeName);
 
-        for (int i = 0; i < CACHE_KEYS_RANGE; i++) {
-            BinaryObjectBuilder builder = ignite.binary().builder(customTypeName);
-
-            builder.setField("num", i);
-            builder.setField("name", String.valueOf(i));
-
-            cache.put(i, builder.build());
-        }
+        IgniteEx ignite = startGridsWithCache(nodesCnt - 2, CACHE_KEYS_RANGE, valueBuilder, dfltCacheCfg);
 
         ignite.snapshot().createSnapshot(SNAPSHOT_NAME).get(MAX_AWAIT_MILLIS);
 
@@ -228,7 +191,7 @@ public class IgniteClusterSnapshoRestoreSelfTest extends AbstractSnapshotSelfTes
 
         awaitPartitionMapExchange();
 
-        cache.destroy();
+        ignite.cache(dfltCacheCfg.getName()).destroy();
 
         awaitPartitionMapExchange();
 
@@ -244,18 +207,7 @@ public class IgniteClusterSnapshoRestoreSelfTest extends AbstractSnapshotSelfTes
 
         awaitPartitionMapExchange();
 
-        cache = grid(nodesCnt - 1).cache(dfltCacheCfg.getName()).withKeepBinary();
-
-        assert cache != null;
-
-        assertEquals(CACHE_KEYS_RANGE, cache.size());
-
-        for (int i = 0; i < CACHE_KEYS_RANGE; i++) {
-            BinaryObject obj = (BinaryObject)cache.get(i);
-
-            assertEquals(Integer.valueOf(i), obj.field("num"));
-            assertEquals(String.valueOf(i), obj.field("name"));
-        }
+        checkCacheKeys(grid(nodesCnt - 1).cache(dfltCacheCfg.getName()).withKeepBinary(), CACHE_KEYS_RANGE);
     }
 
     @Test
@@ -311,12 +263,165 @@ public class IgniteClusterSnapshoRestoreSelfTest extends AbstractSnapshotSelfTes
         snapshotMgr.restoreCacheGroups(SNAPSHOT_NAME, Collections.singleton(grpName)).get(MAX_AWAIT_MILLIS);
     }
 
+    @Test
+    public void testIncompatibleMetasUpdate() throws Exception {
+        String customTypeName = "customType";
+
+        valueBuilder = new BinaryValueBuilder(0, customTypeName);
+
+        IgniteEx ignite = startGridsWithCache(2, CACHE_KEYS_RANGE, valueBuilder, dfltCacheCfg);
+
+        ignite.snapshot().createSnapshot(SNAPSHOT_NAME).get(MAX_AWAIT_MILLIS);
+
+        ignite.cache(dfltCacheCfg.getName()).destroy();
+
+        int typeId = ignite.context().cacheObjects().typeId(customTypeName);
+
+        ignite.context().cacheObjects().removeType(typeId);
+
+        BinaryObject[] objs = new BinaryObject[CACHE_KEYS_RANGE];
+
+        IgniteCache<Integer, Object> cache1 = createCacheWithBinaryType(ignite, "cache1", n -> {
+            BinaryObjectBuilder builder = ignite.binary().builder(customTypeName);
+
+            builder.setField("id", n);
+
+            objs[n] = builder.build();
+
+            return objs[n];
+        });
+
+        IgniteFuture<Void> fut = ignite.context().cache().context().snapshotMgr().
+            restoreCacheGroups(SNAPSHOT_NAME, Collections.singleton(dfltCacheCfg.getName()));
+
+        fut.get(MAX_AWAIT_MILLIS);
+
+        // Ensure that existing type has been updated
+        BinaryType type = ignite.context().cacheObjects().metadata(typeId);
+
+        assertTrue(type.fieldNames().contains("name"));
+
+        for (int i = 0; i < CACHE_KEYS_RANGE; i++)
+            assertEquals(objs[i], cache1.get(i));
+
+        cache1.destroy();
+
+        grid(0).cache(dfltCacheCfg.getName()).destroy();
+
+        ignite.context().cacheObjects().removeType(typeId);
+
+        // Create cache with incompatible binary type
+        cache1 = createCacheWithBinaryType(ignite, "cache1", n -> {
+            BinaryObjectBuilder builder = ignite.binary().builder(customTypeName);
+
+            builder.setField("id", UUID.randomUUID());
+
+            objs[n] = builder.build();
+
+            return objs[n];
+        });
+
+        final IgniteFuture<Void> fut0 = ignite.context().cache().context().snapshotMgr().
+            restoreCacheGroups(SNAPSHOT_NAME, Collections.singleton(dfltCacheCfg.getName()));
+
+        GridTestUtils.assertThrowsAnyCause(
+            log,
+            () -> fut0.get(MAX_AWAIT_MILLIS),
+            IgniteCheckedException.class,
+            "Operation has been rejected, incompatible binary types found"
+        );
+
+        ensureCacheDirEmpty(2, dfltCacheCfg.getName());
+
+        for (int i = 0; i < CACHE_KEYS_RANGE; i++)
+            assertEquals(objs[i], cache1.get(i));
+    }
+
+    private IgniteCache<Integer, Object> createCacheWithBinaryType(Ignite ignite, String cacheName, Function<Integer, BinaryObject> valBuilder) {
+        IgniteCache<Integer, Object> cache = ignite.createCache(new CacheConfiguration<>(cacheName)).withKeepBinary();
+
+        for (int i = 0; i < CACHE_KEYS_RANGE; i++)
+            cache.put(i, valBuilder.apply(i));
+
+        return cache;
+    }
+
+    /** @throws Exception If fails. */
+    @Test
+    public void testRollbackOnNodeFail() throws Exception {
+        doRollbackOnNodeFail(DistributedProcess.DistributedProcessType.END_SNAPSHOT_RESTORE);
+    }
+
+    private void doRollbackOnNodeFail(DistributedProcess.DistributedProcessType procType) throws Exception {
+        IgniteEx ignite = startGridsWithCache(4, dfltCacheCfg, CACHE_KEYS_RANGE);
+
+        ignite.snapshot().createSnapshot(SNAPSHOT_NAME).get(MAX_AWAIT_MILLIS);
+
+        ignite.cache(dfltCacheCfg.getName()).destroy();
+
+        awaitPartitionMapExchange();
+
+        IgniteSnapshotManager snapshotMgr = ignite.context().cache().context().snapshotMgr();
+
+        // todo block distribprocess and try to activate cluster
+        TestRecordingCommunicationSpi spi = TestRecordingCommunicationSpi.spi(grid(3));
+
+        spi.blockMessages((node, msg) ->
+            msg instanceof SingleNodeMessage && ((SingleNodeMessage<?>)msg).type() == procType.ordinal());
+
+        IgniteFuture<Void> fut = snapshotMgr.restoreCacheGroups(SNAPSHOT_NAME, Collections.singleton(dfltCacheCfg.getName()));
+
+        spi.waitForBlocked();
+
+        runAsync(() -> {
+            stopGrid(3, true);
+        });
+
+//        spi.stopBlock();
+
+        GridTestUtils.assertThrowsAnyCause(
+            log,
+            () -> fut.get(MAX_AWAIT_MILLIS),
+            IgniteCheckedException.class,
+            "Operation has been rejected, cluster topology has been changed."
+        );
+
+        ensureCacheDirEmpty(3, dfltCacheCfg.getName());
+    }
+
+    private void ensureCacheDirEmpty(int nodesCnt, String cacheName) throws IgniteCheckedException {
+        for (int nodeIdx = 0; nodeIdx < nodesCnt; nodeIdx++) {
+            IgniteEx grid = grid(nodeIdx);
+
+            File dir = resolveCacheDir(grid, cacheName);
+
+            String errMsg = String.format("%s, dir=%s, exists=%b, files=%s",
+                grid.name(), dir, dir.exists(), Arrays.toString(dir.list()));
+
+            assertTrue(errMsg, !dir.exists() || dir.list().length == 0);
+        }
+    }
+
+    private File resolveCacheDir(IgniteEx ignite, String cacheOrGrpName) throws IgniteCheckedException {
+        File workDIr = U.resolveWorkDirectory(U.defaultWorkDirectory(), DFLT_STORE_DIR, false);
+
+        String nodeDirName = ignite.context().pdsFolderResolver().resolveFolders().folderName() + File.separator;
+
+        File cacheDir = new File(workDIr, nodeDirName + CACHE_DIR_PREFIX + cacheOrGrpName);
+
+        if (cacheDir.exists())
+            return cacheDir;
+
+        return new File(workDIr, nodeDirName + CACHE_GRP_DIR_PREFIX + cacheOrGrpName);
+    }
+
+
     /** @throws Exception If fails. */
     @Test
     // todo
     @Ignore
     public void testActivateFromClientWhenRestoring() throws Exception {
-        IgniteEx ignite = startGridsWithCache(2, dfltCacheCfg, CACHE_KEYS_RANGE);
+        IgniteEx ignite = startGridsWithCache(2, CACHE_KEYS_RANGE, valueBuilder, dfltCacheCfg);
 
         IgniteEx client = startClientGrid("client");
 
@@ -404,11 +509,38 @@ public class IgniteClusterSnapshoRestoreSelfTest extends AbstractSnapshotSelfTes
         assertEquals(keysCnt, testCache.size());
 
         for (int i = 0; i < keysCnt; i++)
-            assertEquals(i, testCache.get(i));
+            assertEquals(valueBuilder.apply(i), testCache.get(i));
     }
 
     private void putKeys(IgniteCache<Object, Object> cache, int startIdx, int cnt) {
         for (int i = startIdx; i < (startIdx + cnt); i++)
             cache.put(i, i);
+    }
+
+    private class IntValueBuilder implements Function<Integer, Object> {
+        /** {@inheritDoc} */
+        @Override public Object apply(Integer key) {
+            return key;
+        }
+    }
+
+    private class BinaryValueBuilder implements Function<Integer, Object> {
+        private final int nodeIdx;
+        private final String typeName;
+
+        BinaryValueBuilder(int nodeIdx, String typeName) {
+            this.nodeIdx = nodeIdx;
+            this.typeName = typeName;
+        }
+
+        /** {@inheritDoc} */
+        @Override public Object apply(Integer key) {
+            BinaryObjectBuilder builder = grid(nodeIdx).binary().builder(typeName);
+
+            builder.setField("id", key);
+            builder.setField("name", String.valueOf(key));
+
+            return builder.build();
+        }
     }
 }
