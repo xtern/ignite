@@ -373,6 +373,8 @@ public class SnapshotRestoreProcess {
             return;
         }
 
+        //if (!map.keySet().containsAll(fut0.request().requiredNodes()))
+
 //        if (fut0.isCancelled() || fut0.error() != null) {
 //            log.info("Starting rollback routine.");
 //
@@ -404,10 +406,7 @@ public class SnapshotRestoreProcess {
 
         Collection<CacheConfiguration> ccfgs0 = fut0.startConfigs();
 
-        IgniteInternalFuture<Boolean> startCachesFut = null;
-
-        if (U.isLocalNodeCoordinator(ctx.discovery()))
-            startCachesFut = ctx.cache().dynamicStartCaches(ccfgs0, true, true, false);
+//        IgniteInternalFuture<Boolean> startCachesFut = null;
 
         if (fut0 == null || !fut0.id().equals(reqId) || !fut0.initiator() || F.isEmpty(ccfgs0)) {
             completeFuture(reqId, errs, fut);
@@ -415,18 +414,21 @@ public class SnapshotRestoreProcess {
             return;
         }
 
+        ctx.cache().dynamicStartCaches(ccfgs0, true, true, false).
+            listen(f -> completeFuture(reqId, errs, fut0));
+
         // If initiator is the coordinator.
-        if (startCachesFut != null) {
-            startCachesFut.listen(f -> completeFuture(reqId, errs, fut0));
+//        if (startCachesFut != null) {
+//            startCachesFut.listen(f -> completeFuture(reqId, errs, fut0));
+//
+//            return;
+//        }
 
-            return;
-        }
-
-        ctx.getSystemExecutorService().submit(() -> {
-            ensureCachesStarted(ccfgs0);
-
-            completeFuture(reqId, errs, fut0);
-        });
+//        ctx.getSystemExecutorService().submit(() -> {
+//            ensureCachesStarted(ccfgs0);
+//
+//            completeFuture(reqId, errs, fut0);
+//        });
     }
 
     // todo separate rollback request
@@ -456,52 +458,52 @@ public class SnapshotRestoreProcess {
         //if (!fut0.id().equals(reqId) || !fut0.initiator())
     }
 
-    private void ensureCachesStarted(Collection<CacheConfiguration> ccfgs) {
-        long maxTime = U.currentTimeMillis() + 15_000;
-
-        for (;;) {
-            boolean failed = false;
-
-            for (CacheConfiguration<?, ?> cfg : ccfgs) {
-                if (failed |= ctx.cache().jcacheProxy(cfg.getName(), true) == null)
-                    break;
-            }
-
-            if (!failed)
-                break;
-
-            if (U.currentTimeMillis() > maxTime) {
-                log.warning("Timeout waiting for caches startup.");
-
-                break;
-            }
-
-            GridDhtPartitionsExchangeFuture fut0 = ctx.cache().context().exchange().lastTopologyFuture();
-
-            // Exchange didn't started yet.
-            if (fut0.isDone()) {
-                try {
-                    U.sleep(200);
-                }
-                catch (IgniteInterruptedCheckedException exception) {
-                    exception.printStackTrace();
-                }
-
-                continue;
-            }
-
-            try {
-                // todo listen?
-                System.out.println(">xxx> waiting topology ");
-                fut0.get();
-            }
-            catch (IgniteCheckedException e) {
-                log.error("Failed to wait caches startup.", e);
-
-                break;
-            }
-        }
-    }
+//    private void ensureCachesStarted(Collection<CacheConfiguration> ccfgs) {
+//        long maxTime = U.currentTimeMillis() + 15_000;
+//
+//        for (;;) {
+//            boolean failed = false;
+//
+//            for (CacheConfiguration<?, ?> cfg : ccfgs) {
+//                if (failed |= ctx.cache().jcacheProxy(cfg.getName(), true) == null)
+//                    break;
+//            }
+//
+//            if (!failed)
+//                break;
+//
+//            if (U.currentTimeMillis() > maxTime) {
+//                log.warning("Timeout waiting for caches startup.");
+//
+//                break;
+//            }
+//
+//            GridDhtPartitionsExchangeFuture fut0 = ctx.cache().context().exchange().lastTopologyFuture();
+//
+//            // Exchange didn't started yet.
+//            if (fut0.isDone()) {
+//                try {
+//                    U.sleep(200);
+//                }
+//                catch (IgniteInterruptedCheckedException exception) {
+//                    exception.printStackTrace();
+//                }
+//
+//                continue;
+//            }
+//
+//            try {
+//                // todo listen?
+//                System.out.println(">xxx> waiting topology ");
+//                fut0.get();
+//            }
+//            catch (IgniteCheckedException e) {
+//                log.error("Failed to wait caches startup.", e);
+//
+//                break;
+//            }
+//        }
+//    }
 
     /**
      * @param reqId Request id.
