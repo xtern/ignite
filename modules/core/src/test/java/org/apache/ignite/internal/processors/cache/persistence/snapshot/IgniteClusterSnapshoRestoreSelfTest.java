@@ -20,6 +20,8 @@ package org.apache.ignite.internal.processors.cache.persistence.snapshot;
 import java.io.File;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.LinkedHashMap;
+import java.util.Objects;
 import java.util.UUID;
 import java.util.function.Function;
 import org.apache.ignite.Ignite;
@@ -30,13 +32,16 @@ import org.apache.ignite.binary.BinaryObject;
 import org.apache.ignite.binary.BinaryObjectBuilder;
 import org.apache.ignite.binary.BinaryType;
 import org.apache.ignite.cache.CacheAtomicityMode;
+import org.apache.ignite.cache.QueryEntity;
+import org.apache.ignite.cache.QueryIndex;
+import org.apache.ignite.cache.query.annotations.QuerySqlField;
 import org.apache.ignite.cluster.ClusterState;
 import org.apache.ignite.configuration.CacheConfiguration;
 import org.apache.ignite.configuration.IgniteConfiguration;
 import org.apache.ignite.internal.IgniteEx;
 import org.apache.ignite.internal.TestRecordingCommunicationSpi;
-import org.apache.ignite.internal.util.distributed.DistributedProcess;
 import org.apache.ignite.internal.util.distributed.SingleNodeMessage;
+import org.apache.ignite.internal.util.typedef.F;
 import org.apache.ignite.internal.util.typedef.internal.U;
 import org.apache.ignite.lang.IgniteFuture;
 import org.apache.ignite.testframework.GridTestUtils;
@@ -46,6 +51,7 @@ import org.junit.Test;
 import static org.apache.ignite.internal.processors.cache.persistence.file.FilePageStoreManager.CACHE_DIR_PREFIX;
 import static org.apache.ignite.internal.processors.cache.persistence.file.FilePageStoreManager.CACHE_GRP_DIR_PREFIX;
 import static org.apache.ignite.internal.processors.cache.persistence.file.FilePageStoreManager.DFLT_STORE_DIR;
+import static org.apache.ignite.internal.util.distributed.DistributedProcess.DistributedProcessType.END_SNAPSHOT_RESTORE;
 import static org.apache.ignite.testframework.GridTestUtils.runAsync;
 
 /**
@@ -55,9 +61,11 @@ public class IgniteClusterSnapshoRestoreSelfTest extends AbstractSnapshotSelfTes
     /** Timeout. */
     private static final long MAX_AWAIT_MILLIS = 15_000;
 
+    private static final String BIN_TYPE_NAME = "customType";
+
     protected CacheConfiguration[] cacheCfgs;
 
-    protected Function<Integer, Object> valueBuilder = new IntValueBuilder();
+    protected Function<Integer, Object> valueBuilder = new IndexedValueBuilder();
 
     /** {@inheritDoc} */
     @Override protected IgniteConfiguration getConfiguration(String name) throws Exception {
@@ -65,9 +73,28 @@ public class IgniteClusterSnapshoRestoreSelfTest extends AbstractSnapshotSelfTes
 
         if (cacheCfgs != null)
             cfg.setCacheConfiguration(cacheCfgs);
+        else {
+            dfltCacheCfg.setSqlIndexMaxInlineSize(255);
+            dfltCacheCfg.setQueryEntities(
+                Arrays.asList(queryEntity(BIN_TYPE_NAME), queryEntity(IndexedObject.class.getName())));
+        }
 
         return cfg;
     }
+
+    private QueryEntity queryEntity(String typeName) {
+        return new QueryEntity()
+            .setKeyType("java.lang.Integer")
+            .setValueType(typeName)
+            .setFields(new LinkedHashMap<>(F.asMap("id", Integer.class.getName(), "name", String.class.getName())))
+            .setIndexes(Arrays.asList(new QueryIndex("id"), new QueryIndex("name")));
+    }
+
+//    /** @throws Exception If fails. */
+//    @Before
+//    @Override public void beforeTestSnapshot() throws Exception {
+//        super.beforeTestSnapshot();
+//    }
 
     /** {@inheritDoc} */
     @Override public void afterTestSnapshot() throws Exception {
@@ -77,7 +104,9 @@ public class IgniteClusterSnapshoRestoreSelfTest extends AbstractSnapshotSelfTes
     /** @throws Exception If fails. */
     @Test
     public void testBasicClusterSnapshotRestore() throws Exception {
-        IgniteEx ignite = startGridsWithCache(2, CACHE_KEYS_RANGE, valueBuilder, dfltCacheCfg);
+        int keysCnt = 10_000;
+
+        IgniteEx ignite = startGridsWithCache(2, keysCnt, valueBuilder, dfltCacheCfg);
 
         ignite.snapshot().createSnapshot(SNAPSHOT_NAME).get(MAX_AWAIT_MILLIS);
 
@@ -88,24 +117,28 @@ public class IgniteClusterSnapshoRestoreSelfTest extends AbstractSnapshotSelfTes
         ignite.context().cache().context().snapshotMgr().
             restoreCacheGroups(SNAPSHOT_NAME, Collections.singleton(dfltCacheCfg.getName())).get(MAX_AWAIT_MILLIS);
 
-        checkCacheKeys(ignite.cache(dfltCacheCfg.getName()), CACHE_KEYS_RANGE);
+        IgniteCache<Object, Object> cache = ignite.cache(dfltCacheCfg.getName());
+
+        assertTrue(cache.indexReadyFuture().isDone());
+
+        checkCacheKeys(cache, keysCnt);
     }
 
     /** @throws Exception If fails. */
     @Test
     public void testBasicClusterSnapshotRestoreWithMetadata() throws Exception {
-        String customTypeName = "customType";
+        int keysCnt = 10_000;
 
-        valueBuilder = new BinaryValueBuilder(0, customTypeName);
+        valueBuilder = new BinaryValueBuilder(0, BIN_TYPE_NAME);
 
-        IgniteEx ignite = startGridsWithCache(2, CACHE_KEYS_RANGE, valueBuilder, dfltCacheCfg);
+        IgniteEx ignite = startGridsWithCache(2, keysCnt, valueBuilder, dfltCacheCfg);
 
         ignite.snapshot().createSnapshot(SNAPSHOT_NAME).get(MAX_AWAIT_MILLIS);
 
         ignite.cache(dfltCacheCfg.getName()).destroy();
 
         // remove metadata
-        int typeId = ignite.context().cacheObjects().typeId(customTypeName);
+        int typeId = ignite.context().cacheObjects().typeId(BIN_TYPE_NAME);
 
         ignite.context().cacheObjects().removeType(typeId);
 
@@ -114,7 +147,11 @@ public class IgniteClusterSnapshoRestoreSelfTest extends AbstractSnapshotSelfTes
         ignite.context().cache().context().snapshotMgr().
             restoreCacheGroups(SNAPSHOT_NAME, Collections.singleton(dfltCacheCfg.getName())).get(MAX_AWAIT_MILLIS);
 
-        checkCacheKeys(ignite.cache(dfltCacheCfg.getName()).withKeepBinary(), CACHE_KEYS_RANGE);
+        IgniteCache<Object, Object> cache = ignite.cache(dfltCacheCfg.getName()).withKeepBinary();
+
+        assertTrue(cache.indexReadyFuture().isDone());
+
+        checkCacheKeys(cache, keysCnt);
     }
 
     /** @throws Exception If fails. */
@@ -162,7 +199,6 @@ public class IgniteClusterSnapshoRestoreSelfTest extends AbstractSnapshotSelfTes
 
         ignite.cache(dfltCacheCfg.getName()).destroy();
 
-        // todo remove files before restore snapshot?
         awaitPartitionMapExchange();
 
         ignite.context().cache().context().snapshotMgr().
@@ -176,11 +212,11 @@ public class IgniteClusterSnapshoRestoreSelfTest extends AbstractSnapshotSelfTes
     public void testClusterSnapshotRestoreDiffTopology() throws Exception {
         int nodesCnt = 4;
 
-        String customTypeName = "customType";
+        int keysCnt = 10_000;
 
-        valueBuilder = new BinaryValueBuilder(0, customTypeName);
+        valueBuilder = new BinaryValueBuilder(0, BIN_TYPE_NAME);
 
-        IgniteEx ignite = startGridsWithCache(nodesCnt - 2, CACHE_KEYS_RANGE, valueBuilder, dfltCacheCfg);
+        IgniteEx ignite = startGridsWithCache(nodesCnt - 2, keysCnt, valueBuilder, dfltCacheCfg);
 
         ignite.snapshot().createSnapshot(SNAPSHOT_NAME).get(MAX_AWAIT_MILLIS);
 
@@ -196,7 +232,7 @@ public class IgniteClusterSnapshoRestoreSelfTest extends AbstractSnapshotSelfTes
         awaitPartitionMapExchange();
 
         // remove metadata
-        int typeId = grid(nodesCnt - 1).context().cacheObjects().typeId(customTypeName);
+        int typeId = grid(nodesCnt - 1).context().cacheObjects().typeId(BIN_TYPE_NAME);
 
         grid(nodesCnt - 1).context().cacheObjects().removeType(typeId);
 
@@ -205,11 +241,16 @@ public class IgniteClusterSnapshoRestoreSelfTest extends AbstractSnapshotSelfTes
         ignite.context().cache().context().snapshotMgr().
             restoreCacheGroups(SNAPSHOT_NAME, Collections.singleton(dfltCacheCfg.getName())).get(MAX_AWAIT_MILLIS);
 
+        IgniteCache<Object, Object> cache = grid(nodesCnt - 1).cache(dfltCacheCfg.getName()).withKeepBinary();
+
+        assertTrue(cache.indexReadyFuture().isDone());
+
         awaitPartitionMapExchange();
 
-        checkCacheKeys(grid(nodesCnt - 1).cache(dfltCacheCfg.getName()).withKeepBinary(), CACHE_KEYS_RANGE);
+        checkCacheKeys(cache, keysCnt);
     }
 
+    /** @throws Exception If fails. */
     @Test
     public void testRestoreSharedCacheGroup() throws Exception {
         String grpName = "shared";
@@ -240,18 +281,11 @@ public class IgniteClusterSnapshoRestoreSelfTest extends AbstractSnapshotSelfTes
 
         awaitPartitionMapExchange();
 
-        // todo should wait for exchange if group descriptor doesn't exists
-        awaitPartitionMapExchange();
-
         IgniteSnapshotManager snapshotMgr = ignite.context().cache().context().snapshotMgr();
 
         GridTestUtils.assertThrowsAnyCause(
             log,
-            () -> {
-                snapshotMgr.restoreCacheGroups(SNAPSHOT_NAME, Arrays.asList(cacheName1, cacheName2)).get(MAX_AWAIT_MILLIS);
-
-                return null;
-            },
+            () -> snapshotMgr.restoreCacheGroups(SNAPSHOT_NAME, Arrays.asList(cacheName1, cacheName2)).get(MAX_AWAIT_MILLIS),
             IllegalArgumentException.class,
             "Cache group(s) \"" + cacheName1 + ", " + cacheName2 + "\" not found in snapshot \"" + SNAPSHOT_NAME + "\""
         );
@@ -261,13 +295,20 @@ public class IgniteClusterSnapshoRestoreSelfTest extends AbstractSnapshotSelfTes
         awaitPartitionMapExchange();
 
         snapshotMgr.restoreCacheGroups(SNAPSHOT_NAME, Collections.singleton(grpName)).get(MAX_AWAIT_MILLIS);
+
+        cache1 = ignite.cache(cacheName1);
+        cache2 = ignite.cache(cacheName2);
+
+        for (int i = 0; i < CACHE_KEYS_RANGE; i++) {
+            assertEquals(i, cache1.get(i));
+            assertEquals(i, cache2.get(i));
+        }
     }
 
+    /** @throws Exception If fails. */
     @Test
     public void testIncompatibleMetasUpdate() throws Exception {
-        String customTypeName = "customType";
-
-        valueBuilder = new BinaryValueBuilder(0, customTypeName);
+        valueBuilder = new BinaryValueBuilder(0, BIN_TYPE_NAME);
 
         IgniteEx ignite = startGridsWithCache(2, CACHE_KEYS_RANGE, valueBuilder, dfltCacheCfg);
 
@@ -275,14 +316,14 @@ public class IgniteClusterSnapshoRestoreSelfTest extends AbstractSnapshotSelfTes
 
         ignite.cache(dfltCacheCfg.getName()).destroy();
 
-        int typeId = ignite.context().cacheObjects().typeId(customTypeName);
+        int typeId = ignite.context().cacheObjects().typeId(BIN_TYPE_NAME);
 
         ignite.context().cacheObjects().removeType(typeId);
 
         BinaryObject[] objs = new BinaryObject[CACHE_KEYS_RANGE];
 
         IgniteCache<Integer, Object> cache1 = createCacheWithBinaryType(ignite, "cache1", n -> {
-            BinaryObjectBuilder builder = ignite.binary().builder(customTypeName);
+            BinaryObjectBuilder builder = ignite.binary().builder(BIN_TYPE_NAME);
 
             builder.setField("id", n);
 
@@ -312,7 +353,7 @@ public class IgniteClusterSnapshoRestoreSelfTest extends AbstractSnapshotSelfTes
 
         // Create cache with incompatible binary type
         cache1 = createCacheWithBinaryType(ignite, "cache1", n -> {
-            BinaryObjectBuilder builder = ignite.binary().builder(customTypeName);
+            BinaryObjectBuilder builder = ignite.binary().builder(BIN_TYPE_NAME);
 
             builder.setField("id", UUID.randomUUID());
 
@@ -349,11 +390,19 @@ public class IgniteClusterSnapshoRestoreSelfTest extends AbstractSnapshotSelfTes
     /** @throws Exception If fails. */
     @Test
     public void testRollbackOnNodeFail() throws Exception {
-        doRollbackOnNodeFail(DistributedProcess.DistributedProcessType.END_SNAPSHOT_RESTORE);
+        checkBaselineChange(true);
     }
 
-    private void doRollbackOnNodeFail(DistributedProcess.DistributedProcessType procType) throws Exception {
-        IgniteEx ignite = startGridsWithCache(4, dfltCacheCfg, CACHE_KEYS_RANGE);
+    /** @throws Exception If fails. */
+    @Test
+    public void testNodeJoin() throws Exception {
+        checkBaselineChange(false);
+    }
+
+    private void checkBaselineChange(boolean stopNode) throws Exception {
+        int keysCnt = 10_000;
+
+        IgniteEx ignite = startGridsWithCache(4, keysCnt, valueBuilder, dfltCacheCfg);
 
         ignite.snapshot().createSnapshot(SNAPSHOT_NAME).get(MAX_AWAIT_MILLIS);
 
@@ -363,30 +412,41 @@ public class IgniteClusterSnapshoRestoreSelfTest extends AbstractSnapshotSelfTes
 
         IgniteSnapshotManager snapshotMgr = ignite.context().cache().context().snapshotMgr();
 
-        // todo block distribprocess and try to activate cluster
         TestRecordingCommunicationSpi spi = TestRecordingCommunicationSpi.spi(grid(3));
 
         spi.blockMessages((node, msg) ->
-            msg instanceof SingleNodeMessage && ((SingleNodeMessage<?>)msg).type() == procType.ordinal());
+            msg instanceof SingleNodeMessage && ((SingleNodeMessage<?>)msg).type() == END_SNAPSHOT_RESTORE.ordinal());
 
         IgniteFuture<Void> fut = snapshotMgr.restoreCacheGroups(SNAPSHOT_NAME, Collections.singleton(dfltCacheCfg.getName()));
 
         spi.waitForBlocked();
 
-        runAsync(() -> {
-            stopGrid(3, true);
-        });
+        if (stopNode) {
+            runAsync(() -> stopGrid(3, true));
 
-//        spi.stopBlock();
+            GridTestUtils.assertThrowsAnyCause(
+                log,
+                () -> fut.get(MAX_AWAIT_MILLIS),
+                IgniteException.class,
+                "Snapshot restore operation was rejected. Baseline node has left the cluster"
+            );
 
-        GridTestUtils.assertThrowsAnyCause(
-            log,
-            () -> fut.get(MAX_AWAIT_MILLIS),
-            IgniteException.class,
-            "Operation has been rejected, cluster topology has been changed."
-        );
+            ensureCacheDirEmpty(3, dfltCacheCfg.getName());
 
-        ensureCacheDirEmpty(3, dfltCacheCfg.getName());
+            return;
+        }
+
+        runAsync(() -> startGrid(4));
+
+        spi.stopBlock();
+
+        fut.get(MAX_AWAIT_MILLIS);
+
+        IgniteCache<Object, Object> cache = grid(4).cache(dfltCacheCfg.getName());
+
+        assertTrue(cache.indexReadyFuture().isDone());
+
+        checkCacheKeys(cache, keysCnt);
     }
 
     private void ensureCacheDirEmpty(int nodesCnt, String cacheName) throws IgniteCheckedException {
@@ -517,17 +577,70 @@ public class IgniteClusterSnapshoRestoreSelfTest extends AbstractSnapshotSelfTes
             cache.put(i, i);
     }
 
-    private class IntValueBuilder implements Function<Integer, Object> {
+    /** */
+    private static class IntValueBuilder implements Function<Integer, Object> {
         /** {@inheritDoc} */
         @Override public Object apply(Integer key) {
             return key;
         }
     }
 
+    private static class IndexedValueBuilder implements Function<Integer, Object> {
+        /** {@inheritDoc} */
+        @Override public Object apply(Integer key) {
+            return new IndexedObject(key, "Person number #" + key);
+        }
+    }
+
+    /** */
+    private static class IndexedObject {
+        /** Id. */
+        @QuerySqlField(index = true)
+        private final int id;
+
+        /** Name. */
+        @QuerySqlField(index = true)
+        private final String name;
+
+        /**
+         * @param id Id.
+         */
+        public IndexedObject(int id, String name) {
+            this.id = id;
+            this.name = name;
+        }
+
+        /** {@inheritDoc} */
+        @Override public boolean equals(Object o) {
+            if (this == o)
+                return true;
+
+            if (o == null || getClass() != o.getClass())
+                return false;
+
+            IndexedObject obj = (IndexedObject)o;
+
+            return id == obj.id && Objects.equals(name, obj.name);
+        }
+
+        /** {@inheritDoc} */
+        @Override public int hashCode() {
+            return Objects.hash(name, id);
+        }
+    }
+
+    /** */
     private class BinaryValueBuilder implements Function<Integer, Object> {
+        /** Ignite node index. */
         private final int nodeIdx;
+
+        /** Binary type name. */
         private final String typeName;
 
+        /**
+         * @param nodeIdx Ignite node index.
+         * @param typeName Binary type name.
+         */
         BinaryValueBuilder(int nodeIdx, String typeName) {
             this.nodeIdx = nodeIdx;
             this.typeName = typeName;

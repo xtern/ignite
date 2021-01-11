@@ -70,18 +70,25 @@ import static org.apache.ignite.internal.util.distributed.DistributedProcess.Dis
  * Distributed process to restore cache group from the snapshot.
  */
 public class SnapshotRestoreProcess {
+    /** Reject operation message. */
     private static final String OP_REJECT_MSG = "Snapshot restore operation was rejected. ";
 
+    /** Kernal context. */
     private final GridKernalContext ctx;
 
+    /** Cache group restore prepare phase. */
     private final DistributedProcess<SnapshotRestoreRequest, SnapshotRestorePrepareResponse> prepareRestoreProc;
 
+    /** Cache group restore perform phase. */
     private final DistributedProcess<SnapshotRestoreRequest, SnapshotRestorePerformResponse> performRestoreProc;
 
+    /** Cache group restore rollback phase. */
     private final DistributedProcess<SnapshotRestoreRequest, SnapshotRestoreRollbackResponse> rollbackRestoreProc;
 
+    /** Logger. */
     private final IgniteLogger log;
 
+    /** The future to be completed when the cache restore process is complete. */
     private volatile RestoreSnapshotFuture fut = new RestoreSnapshotFuture(false);
 
     /**
@@ -135,12 +142,22 @@ public class SnapshotRestoreProcess {
         return new IgniteFutureImpl<>(fut);
     }
 
+    /**
+     * Check if the cache group restore process is currently running.
+     *
+     * @return {@code True} if cache group restore process is currently running.
+     */
     public boolean inProgress() {
         RestoreSnapshotFuture fut0 = fut;
 
         return !fut0.isDone() && fut0.request() != null;
     }
 
+    /**
+     * Node left callback.
+     *
+     * @param leftNodeId Left node ID.
+     */
     public void onNodeLeft(UUID leftNodeId) {
         RestoreSnapshotFuture fut0 = fut;
 
@@ -151,11 +168,14 @@ public class SnapshotRestoreProcess {
 
         if (req != null && req.requiredNodes().contains(leftNodeId)) {
             fut.handleError(new IgniteException(OP_REJECT_MSG +
-                "Baseline node has left the clkuster [nodeId=" + leftNodeId + ']'));
+                "Baseline node has left the cluster [nodeId=" + leftNodeId + ']'));
         }
     }
 
     private IgniteInternalFuture<SnapshotRestorePrepareResponse> prepare(SnapshotRestoreRequest req) {
+        if (ctx.clientNode())
+            return new GridFinishedFuture<>();
+
         if (inProgress())
             return errResponse(OP_REJECT_MSG + "The previous snapshot restore operation was not completed.");
 
@@ -169,7 +189,7 @@ public class SnapshotRestoreProcess {
 
         List<CacheGroupSnapshotDetails> grpCfgs = new ArrayList<>();
 
-        // read cache configuration
+        // Collect cache configuration(s).
         for (String cacheName : req.groups()) {
             try {
                 CacheGroupSnapshotDetails grpCfg = readCacheGroupDetails(req.snapshotName(), cacheName);
@@ -189,6 +209,8 @@ public class SnapshotRestoreProcess {
             ctx.cache().context().snapshotMgr().ensureMetaCanBeMerged(req.snapshotName());
         }
         catch (BinaryObjectException e) {
+            log.warning(OP_REJECT_MSG + "Incompatible binary types found", e);
+
             return errResponse(OP_REJECT_MSG + "Incompatible binary types found: " + e.getMessage());
         }
         catch (IOException | IgniteCheckedException e) {
@@ -287,8 +309,10 @@ public class SnapshotRestoreProcess {
 
             reqNodes.removeAll(srvNodeIds);
 
-            if (!reqNodes.isEmpty())
-                throw new IllegalStateException("Cannot perform restore opeartion, server node(s) leaved cluster [nodeIds=" + reqNodes + ']');
+            if (!reqNodes.isEmpty()) {
+                throw new IllegalStateException("Unable to perform a restore operation, server node(s) left " +
+                    "the cluster [nodeIds=" + F.concat(reqNodes, ", ") + ']');
+            }
 
             fut.startConfigs(cacheCfgs);
         }
@@ -339,10 +363,9 @@ public class SnapshotRestoreProcess {
     }
 
     private IgniteInternalFuture<SnapshotRestorePerformResponse> perform(SnapshotRestoreRequest req) {
-        if (ctx.clientNode())
+        if (ctx.clientNode() || !req.requiredNodes().contains(ctx.localNodeId()))
             return new GridFinishedFuture<>();
 
-        // todo new server node should ignore - not fail?
         if (!req.equals(fut.request()))
             return errResponse("Unknown snapshot restore operation was rejected.");
 
@@ -382,7 +405,8 @@ public class SnapshotRestoreProcess {
 
             log.warning("Node left the cluster, snapshot restore operation should be reverted [nodeIds=" + F.concat(reqNodes, ", "));
 
-            fut0.handleError(failure = new IgniteCheckedException("Operation has been rejected, cluster topology has been changed."));
+            fut0.handleError(failure = new IgniteException(new IgniteException(OP_REJECT_MSG +
+                "Baseline node has left the cluster [nodeId(s)=" + F.concat(reqNodes, ", ") + ']')));
         }
 
         if (failure != null) {
