@@ -327,8 +327,8 @@ public class IgniteClusterSnapshoRestoreSelfTest extends AbstractSnapshotSelfTes
         GridTestUtils.assertThrowsAnyCause(
             log,
             () -> fut0.get(MAX_AWAIT_MILLIS),
-            IgniteCheckedException.class,
-            "Operation has been rejected, incompatible binary types found"
+            IgniteException.class,
+            "Snapshot restore operation was rejected. Incompatible binary types found"
         );
 
         ensureCacheDirEmpty(2, dfltCacheCfg.getName());
@@ -382,7 +382,7 @@ public class IgniteClusterSnapshoRestoreSelfTest extends AbstractSnapshotSelfTes
         GridTestUtils.assertThrowsAnyCause(
             log,
             () -> fut.get(MAX_AWAIT_MILLIS),
-            IgniteCheckedException.class,
+            IgniteException.class,
             "Operation has been rejected, cluster topology has been changed."
         );
 
