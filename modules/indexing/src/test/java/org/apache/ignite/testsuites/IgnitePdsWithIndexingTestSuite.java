@@ -26,6 +26,7 @@ import org.apache.ignite.internal.processors.cache.persistence.db.IgniteTcBotIni
 import org.apache.ignite.internal.processors.cache.persistence.db.IndexingMultithreadedLoadContinuousRestartTest;
 import org.apache.ignite.internal.processors.cache.persistence.db.LongDestroyDurableBackgroundTaskTest;
 import org.apache.ignite.internal.processors.cache.persistence.db.MultipleParallelCacheDeleteDeadlockTest;
+import org.apache.ignite.internal.processors.cache.persistence.snapshot.IgniteClusterSnapshoRestoreSelfTest;
 import org.apache.ignite.internal.processors.cache.persistence.snapshot.IgniteClusterSnapshotWithIndexesTest;
 import org.apache.ignite.internal.processors.database.IgniteDbMultiNodeWithIndexingPutGetTest;
 import org.apache.ignite.internal.processors.database.IgniteDbSingleNodeWithIndexingPutGetTest;
@@ -42,25 +43,26 @@ import org.junit.runners.Suite;
 /** */
 @RunWith(Suite.class)
 @Suite.SuiteClasses({
-    IgniteDbSingleNodeWithIndexingWalRestoreTest.class,
-    IgniteDbSingleNodeWithIndexingPutGetTest.class,
-    IgniteDbMultiNodeWithIndexingPutGetTest.class,
-    IgnitePdsSingleNodeWithIndexingPutGetPersistenceTest.class,
-    IgnitePdsSingleNodeWithIndexingAndGroupPutGetPersistenceSelfTest.class,
-    IgnitePersistentStoreSchemaLoadTest.class,
-    IgnitePersistentStoreQueryWithMultipleClassesPerCacheTest.class,
-    IgniteTwoRegionsRebuildIndexTest.class,
-    IgniteTcBotInitNewPageTest.class,
-    RebuildIndexWithHistoricalRebalanceTest.class,
-    IndexingMultithreadedLoadContinuousRestartTest.class,
-    LongDestroyDurableBackgroundTaskTest.class,
-    RebuildIndexTest.class,
-    RebuildIndexWithMVCCTest.class,
-    IgniteClusterSnapshotWithIndexesTest.class,
-    ClientReconnectWithSqlTableConfiguredTest.class,
-    MultipleParallelCacheDeleteDeadlockTest.class,
-    CacheGroupReencryptionTest.class,
-    IgnitePdsIndexingDefragmentationTest.class
+//    IgniteDbSingleNodeWithIndexingWalRestoreTest.class,
+//    IgniteDbSingleNodeWithIndexingPutGetTest.class,
+//    IgniteDbMultiNodeWithIndexingPutGetTest.class,
+//    IgnitePdsSingleNodeWithIndexingPutGetPersistenceTest.class,
+//    IgnitePdsSingleNodeWithIndexingAndGroupPutGetPersistenceSelfTest.class,
+//    IgnitePersistentStoreSchemaLoadTest.class,
+//    IgnitePersistentStoreQueryWithMultipleClassesPerCacheTest.class,
+//    IgniteTwoRegionsRebuildIndexTest.class,
+//    IgniteTcBotInitNewPageTest.class,
+//    RebuildIndexWithHistoricalRebalanceTest.class,
+//    IndexingMultithreadedLoadContinuousRestartTest.class,
+//    LongDestroyDurableBackgroundTaskTest.class,
+//    RebuildIndexTest.class,
+//    RebuildIndexWithMVCCTest.class,
+//    IgniteClusterSnapshotWithIndexesTest.class,
+//    ClientReconnectWithSqlTableConfiguredTest.class,
+//    MultipleParallelCacheDeleteDeadlockTest.class,
+//    CacheGroupReencryptionTest.class,
+//    IgnitePdsIndexingDefragmentationTest.class,
+    IgniteClusterSnapshoRestoreSelfTest.class
 })
 public class IgnitePdsWithIndexingTestSuite {
 }
