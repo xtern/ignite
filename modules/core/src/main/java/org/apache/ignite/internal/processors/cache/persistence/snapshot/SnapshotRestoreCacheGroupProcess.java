@@ -153,6 +153,15 @@ public class SnapshotRestoreCacheGroupProcess {
         return !fut0.isDone() && fut0.request() != null;
     }
 
+    public boolean inProgress(String grpName) {
+        RestoreSnapshotFuture fut0 = fut;
+
+        if (fut0.isDone() || fut0.request() == null)
+            return false;
+
+        return fut0.request().groups().contains(grpName);
+    }
+
     /**
      * Node left callback.
      *
@@ -370,6 +379,16 @@ public class SnapshotRestoreCacheGroupProcess {
             return errResponse("Unknown snapshot restore operation was rejected.");
 
         try {
+            // Double check that cache was not started after first phase.
+            for (String grpName : req.groups()) {
+                CacheGroupDescriptor desc = ctx.cache().cacheGroupDescriptor(CU.cacheId(grpName));
+
+                if (desc != null) {
+                    throw new IllegalStateException("Cache group \"" + desc.cacheOrGroupName() +
+                        "\" should be destroyed manually before perform restore operation.");
+                }
+            }
+
             RestoreOperationContext opCtx =
                 ctx.cache().context().snapshotMgr().restoreCacheGroupsLocal(req.snapshotName(), req.groups());
 
@@ -427,8 +446,15 @@ public class SnapshotRestoreCacheGroupProcess {
             return;
         }
 
-        ctx.cache().dynamicStartCaches(ccfgs0, true, true, false).
-            listen(f -> completeFuture(reqId, errs, fut0));
+        // todo check whether the cache has been already started
+        ctx.cache().dynamicStartCaches(ccfgs0, true, true, false, true).
+            listen(f -> {
+                // todo rollback operation
+                if (f.error() != null)
+                    f.error().printStackTrace();
+
+                completeFuture(reqId, errs, fut0);
+            });
     }
 
     // todo separate rollback request
@@ -518,7 +544,9 @@ public class SnapshotRestoreCacheGroupProcess {
             return reqRef.compareAndSet(null, req);
         }
 
-        /** @param id Request ID. */
+        /**
+         * @param initiator A flag indicating that the node is the initiator of the request.
+         */
         RestoreSnapshotFuture(boolean initiator) {
             this.initiator = initiator;
         }
