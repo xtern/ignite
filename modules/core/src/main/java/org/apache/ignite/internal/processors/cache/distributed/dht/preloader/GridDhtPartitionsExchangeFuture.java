@@ -1165,7 +1165,7 @@ public class GridDhtPartitionsExchangeFuture extends GridDhtTopologyFutureAdapte
         }
 
         if (!notStartedCacheConfigs.isEmpty())
-            cacheProcessor.dynamicStartCaches(notStartedCacheConfigs, false, false, false);
+            cacheProcessor.dynamicStartCaches(notStartedCacheConfigs, false, false, false, false);
     }
 
     /**
