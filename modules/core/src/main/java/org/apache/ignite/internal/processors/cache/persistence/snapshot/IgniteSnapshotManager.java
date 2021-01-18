@@ -91,6 +91,7 @@ import org.apache.ignite.internal.processors.cache.persistence.partstate.GroupPa
 import org.apache.ignite.internal.processors.cache.persistence.tree.io.PageIO;
 import org.apache.ignite.internal.processors.cache.persistence.wal.crc.FastCrc;
 import org.apache.ignite.internal.processors.cluster.DiscoveryDataClusterState;
+import org.apache.ignite.internal.processors.cluster.IgniteChangeGlobalStateSupport;
 import org.apache.ignite.internal.processors.marshaller.MappedName;
 import org.apache.ignite.internal.processors.metric.MetricRegistry;
 import org.apache.ignite.internal.processors.task.GridInternal;
@@ -157,7 +158,7 @@ import static org.apache.ignite.plugin.security.SecurityPermission.ADMIN_SNAPSHO
  * </ul>
  */
 public class IgniteSnapshotManager extends GridCacheSharedManagerAdapter
-    implements IgniteSnapshot, PartitionsExchangeAware, MetastorageLifecycleListener {
+    implements IgniteSnapshot, PartitionsExchangeAware, MetastorageLifecycleListener, IgniteChangeGlobalStateSupport {
     /** File with delta pages suffix. */
     public static final String DELTA_SUFFIX = ".delta";
 
@@ -390,6 +391,8 @@ public class IgniteSnapshotManager extends GridCacheSharedManagerAdapter
         busyLock.block();
 
         try {
+            restoreCacheGrpProcess.stop("Node is stopping.");
+
             // Try stop all snapshot processing if not yet.
             for (SnapshotFutureTask sctx : locSnpTasks.values())
                 sctx.acceptException(new NodeStoppingException(SNP_NODE_STOPPING_ERR_MSG));
@@ -415,6 +418,16 @@ public class IgniteSnapshotManager extends GridCacheSharedManagerAdapter
         finally {
             busyLock.unblock();
         }
+    }
+
+    /** {@inheritDoc} */
+    @Override public void onActivate(GridKernalContext kctx) {
+        // No-op.
+    }
+
+    /** {@inheritDoc} */
+    @Override public void onDeActivate(GridKernalContext kctx) {
+        restoreCacheGrpProcess.stop("The cluster has been deactivated.");
     }
 
     /**
