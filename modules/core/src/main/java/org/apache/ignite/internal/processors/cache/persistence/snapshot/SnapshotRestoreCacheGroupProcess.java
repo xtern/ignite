@@ -162,11 +162,11 @@ public class SnapshotRestoreCacheGroupProcess {
     public boolean inProgress(@Nullable String cacheName) {
         RestoreSnapshotFuture fut0 = fut;
 
-        return !staleFuture(fut0) && (cacheName == null || fut0.containsCache(cacheName));
+        return !staleFuture(fut0) && (cacheName == null || fut0.context().containsCache(cacheName));
     }
 
     public boolean staleFuture(RestoreSnapshotFuture fut) {
-        return fut.isDone() || !fut.initialized();
+        return fut.isDone() || fut.context() == null;
     }
 
     /**
@@ -182,7 +182,7 @@ public class SnapshotRestoreCacheGroupProcess {
 
         String grpName0 = grpName != null ? grpName : cacheName;
 
-        PendingStartCacheGroup pendingGrp = fut0.pendingStartCaches.get(grpName0);
+        PendingStartCacheGroup pendingGrp = fut0.context().pendingStartCaches.get(grpName0);
 
         // If any of shared caches has been started - we cannot rollback changes.
         if (pendingGrp.caches.remove(cacheName) && err == null)
@@ -191,7 +191,7 @@ public class SnapshotRestoreCacheGroupProcess {
         if (!pendingGrp.caches.isEmpty())
             return;
 
-        if (pendingGrp.canRollback && err != null && fut.rollbackContext() != null) {
+        if (pendingGrp.canRollback && err != null && fut.context().rollbackContext() != null) {
             ctx.getSystemExecutorService().submit(() -> {
                 rollbackChanges(fut0, grpName0);
 
@@ -201,9 +201,9 @@ public class SnapshotRestoreCacheGroupProcess {
             return;
         }
 
-        fut0.pendingStartCaches.remove(grpName0);
+        fut0.context().pendingStartCaches.remove(grpName0);
 
-        if (fut0.pendingStartCaches.isEmpty())
+        if (fut0.context().pendingStartCaches.isEmpty())
             fut0.onDone();
     }
 
@@ -221,7 +221,7 @@ public class SnapshotRestoreCacheGroupProcess {
             if (staleFuture(fut))
                 return false;
 
-            List<File> createdFiles = fut.rollbackContext().remove(grpName);
+            List<File> createdFiles = fut.context().rollbackContext().remove(grpName);
 
             if (F.isEmpty(createdFiles))
                 return false;
@@ -245,7 +245,7 @@ public class SnapshotRestoreCacheGroupProcess {
         if (staleFuture(fut0))
             return;
 
-        if (fut0.nodes().contains(leftNodeId)) {
+        if (fut0.context().nodes().contains(leftNodeId)) {
             fut.handleError(new IgniteException(OP_REJECT_MSG +
                 "Baseline node has left the cluster [nodeId=" + leftNodeId + ']'));
         }
@@ -267,7 +267,7 @@ public class SnapshotRestoreCacheGroupProcess {
         if (staleFuture(fut0))
             return;
 
-        Set<String> grpNames = fut0.groups();
+        Set<String> grpNames = fut0.context().groups();
 
         log.warning("Snapshot restore process has been interrupted [grps=" + grpNames + ']');
 
@@ -392,7 +392,9 @@ public class SnapshotRestoreCacheGroupProcess {
             }
         }
 
-        Set<String> notFoundGroups = new HashSet<>(fut0.groups());
+        OperationContext opCtx = fut0.context();
+
+        Set<String> notFoundGroups = new HashSet<>(opCtx.groups());
 
         try {
             Collection<CacheGroupSnapshotDetails> grpsDetails = mergeNodeResults(res);
@@ -415,13 +417,13 @@ public class SnapshotRestoreCacheGroupProcess {
 
                 notFoundGroups.remove(grpDetails.groupName());
 
-                PendingStartCacheGroup pendingGrp = fut0.pendingStartCaches.get(grpDetails.groupName());
+                PendingStartCacheGroup pendingGrp = opCtx.pendingStartCaches.get(grpDetails.groupName());
 
                 for (StoredCacheData cacheData : grpDetails.configs()) {
                     String cacheName = cacheData.config().getName();
 
                     if (!F.isEmpty(cacheData.config().getGroupName())) {
-                        fut0.addCacheId(CU.cacheId(cacheName));
+                        opCtx.addCacheId(CU.cacheId(cacheName));
                         pendingGrp.caches.add(cacheName);
                     }
 
@@ -438,14 +440,14 @@ public class SnapshotRestoreCacheGroupProcess {
 
             if (!notFoundGroups.isEmpty()) {
                 throw new IllegalArgumentException("Cache group(s) not found in snapshot [groups=" +
-                    F.concat(notFoundGroups, ", ") + ", snapshot=" + fut0.snapshotName() + ']');
+                    F.concat(notFoundGroups, ", ") + ", snapshot=" + opCtx.snapshotName() + ']');
             }
 
             Set<UUID> srvNodeIds = new HashSet<>(F.viewReadOnly(ctx.discovery().serverNodes(AffinityTopologyVersion.NONE),
                 F.node2id(),
                 (node) -> CU.baselineNode(node, ctx.state().clusterState())));
 
-            Set<UUID> reqNodes = new HashSet<>(fut0.nodes());
+            Set<UUID> reqNodes = new HashSet<>(opCtx.nodes());
 
             reqNodes.removeAll(srvNodeIds);
 
@@ -454,7 +456,7 @@ public class SnapshotRestoreCacheGroupProcess {
                     "the cluster [nodeIds=" + F.concat(reqNodes, ", ") + ']');
             }
 
-            fut0.startConfigs(cacheCfgs);
+            opCtx.startConfigs(cacheCfgs);
         }
         catch (Exception e) {
             fut0.onDone(e);
@@ -514,22 +516,22 @@ public class SnapshotRestoreCacheGroupProcess {
      * @return Result future.
      */
     private IgniteInternalFuture<SnapshotRestorePerformResponse> perform(SnapshotRestorePerformRequest req) {
-        RestoreSnapshotFuture fut0 = fut;
-
-        if (ctx.clientNode() || !fut0.nodes().contains(ctx.localNodeId()))
+        if (ctx.clientNode())
             return new GridFinishedFuture<>();
 
-        if (!req.requestId().equals(fut0.requestId()))
+        OperationContext opCtx = fut.context();
+
+        if (!req.requestId().equals(opCtx.requestId()))
             return errResponse("Unknown snapshot restore operation was rejected.");
 
         GridFutureAdapter<SnapshotRestorePerformResponse> retFut = new GridFutureAdapter<>();
 
-        if (!ctx.cache().context().snapshotMgr().snapshotLocalDir(fut0.snapshotName()).exists())
+        if (!ctx.cache().context().snapshotMgr().snapshotLocalDir(opCtx.snapshotName()).exists())
             return new GridFinishedFuture<>();
 
         ctx.getSystemExecutorService().submit(() -> {
             try {
-                restore0(fut0.snapshotName(), fut0.groups(), req.updateMetaNodeId(), fut0.rollbackContext());
+                restore0(opCtx.snapshotName(), opCtx.groups(), req.updateMetaNodeId(), opCtx.rollbackContext());
 
                 retFut.onDone();
             } catch (Throwable t) {
@@ -590,7 +592,9 @@ public class SnapshotRestoreCacheGroupProcess {
         if (failure == null)
             failure = fut0.failure();
 
-        Set<UUID> reqNodes = new HashSet<>(fut0.nodes());
+        OperationContext opCtx = fut0.context();
+
+        Set<UUID> reqNodes = new HashSet<>(opCtx.nodes());
 
         if (failure == null && !res.keySet().containsAll(reqNodes)) {
             reqNodes.removeAll(res.keySet());
@@ -606,14 +610,14 @@ public class SnapshotRestoreCacheGroupProcess {
             if (U.isLocalNodeCoordinator(ctx.discovery())) {
                 log.info("Starting snapshot restore rollback routine.");
 
-                rollbackRestoreProc.start(reqId, new SnapshotRestoreRollbackRequest(fut0.requestId(), failure));
+                rollbackRestoreProc.start(reqId, new SnapshotRestoreRollbackRequest(fut0.id(), failure));
             }
 
             return;
         }
 
         if (U.isLocalNodeCoordinator(ctx.discovery()))
-            ctx.cache().dynamicStartCachesByStoredConf(fut0.startConfigs(), true, true, false, null, true);
+            ctx.cache().dynamicStartCachesByStoredConf(opCtx.startConfigs(), true, true, false, null, true);
     }
 
     /**
@@ -628,10 +632,10 @@ public class SnapshotRestoreCacheGroupProcess {
 
 //        SnapshotRestorePrepareRequest req0 = fut0.request();
 
-        if (!req.requestId().equals(fut0.requestId()))
+        if (!req.requestId().equals(fut0.id()))
             return errResponse("Unknown snapshot restore rollback operation was rejected.");
 
-        for (String grpName : fut0.groups())
+        for (String grpName : fut0.context().groups())
             rollbackChanges(fut0, grpName);
 
         fut0.handleError(req.reason());
@@ -715,33 +719,32 @@ public class SnapshotRestoreCacheGroupProcess {
         }
     }
 
-    /** */
-    private static class RestoreSnapshotFuture extends GridFutureAdapter<Void> {
+    private static class OperationContext {
         private final RestoreOperationContext rollbackCtx = new RestoreOperationContext();
-
-        private volatile Throwable err;
-
-        private volatile String snpName;
-
-        private volatile UUID requestId;
-
-        private volatile Set<UUID> reqNodes;
-
-        private volatile boolean initialized;
-
-        public Throwable failure() {
-            return err;
-        }
-
-        private volatile Collection<StoredCacheData> cacheCfgsToStart;
 
         private final Map<String, PendingStartCacheGroup> pendingStartCaches = new ConcurrentHashMap<>();
 
-//        public SnapshotRestorePrepareRequest request() {
-//            return req;
-//        }
+        private final Set<Integer> cacheIds = new GridConcurrentHashSet<>();
 
-        public Set<Integer> cacheIds = new GridConcurrentHashSet<>();
+        private final String snpName;
+
+        private final UUID requestId;
+
+        private final Set<UUID> reqNodes;
+
+        private volatile Collection<StoredCacheData> cacheCfgsToStart;
+
+        public OperationContext(UUID requestId, String snpName, Set<UUID> reqNodes, Collection<String> grps) {
+            for (String grpName : grps) {
+                cacheIds.add(CU.cacheId(grpName));
+
+                pendingStartCaches.put(grpName, new PendingStartCacheGroup());
+            }
+
+            this.requestId = requestId;
+            this.reqNodes = reqNodes;
+            this.snpName = snpName;
+        }
 
         public boolean containsCache(String name) {
             return cacheIds.contains(CU.cacheId(name));
@@ -749,49 +752,6 @@ public class SnapshotRestoreCacheGroupProcess {
 
         public void addCacheId(int cacheId) {
             cacheIds.add(cacheId);
-        }
-
-        public boolean initialized() {
-            return initialized;
-        }
-
-        public void init(SnapshotRestorePrepareRequest req) {
-            for (String grpName : req.groups()) {
-                cacheIds.add(CU.cacheId(grpName));
-
-                pendingStartCaches.put(grpName, new PendingStartCacheGroup());
-            }
-
-            requestId = req.requestId();
-            reqNodes = req.requiredNodes();
-            snpName = req.snapshotName();
-
-            initialized = true;
-        }
-
-        public Set<UUID> nodes() {
-            return reqNodes;
-        }
-
-        public Set<String> groups() {
-            return pendingStartCaches.keySet();
-        }
-
-        public String snapshotName() {
-            return snpName;
-        }
-
-        public UUID requestId() {
-            return requestId;
-        }
-
-        /** @return Request ID. */
-        public UUID id() {
-            return requestId;
-        }
-
-        public void handleError(Throwable err) {
-            this.err = err;
         }
 
         public void startConfigs(Collection<StoredCacheData> ccfgs) {
@@ -804,6 +764,54 @@ public class SnapshotRestoreCacheGroupProcess {
 
         public RestoreOperationContext rollbackContext() {
             return rollbackCtx;
+        }
+
+        public Set<UUID> nodes() {
+            return reqNodes;
+        }
+
+        public String snapshotName() {
+            return snpName;
+        }
+
+        public UUID requestId() {
+            return requestId;
+        }
+
+        public Set<String> groups() {
+            return pendingStartCaches.keySet();
+        }
+
+        /** @return Request ID. */
+        public UUID id() {
+            return requestId;
+        }
+    }
+
+    /** */
+    private static class RestoreSnapshotFuture extends GridFutureAdapter<Void> {
+        private volatile Throwable err;
+
+        private volatile OperationContext ctx;
+
+        public Throwable failure() {
+            return err;
+        }
+
+        public UUID id() {
+            return ctx != null ? ctx.requestId() : null;
+        }
+
+        public OperationContext context() {
+            return ctx;
+        }
+
+        public void init(SnapshotRestorePrepareRequest req) {
+            ctx = new OperationContext(req.requestId(), req.snapshotName(), req.requiredNodes(), req.groups());
+        }
+
+        public void handleError(Throwable err) {
+            this.err = err;
         }
 
         @Override protected boolean onDone(@Nullable Void res, @Nullable Throwable err, boolean cancel) {
