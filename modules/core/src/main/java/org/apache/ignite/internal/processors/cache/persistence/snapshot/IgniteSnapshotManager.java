@@ -260,7 +260,7 @@ public class IgniteSnapshotManager extends GridCacheSharedManagerAdapter
     private volatile ClusterSnapshotFuture lastSeenSnpFut = new ClusterSnapshotFuture();
 
     /** Distributed process to restore cache group from the snapshot. */
-    private final SnapshotRestoreCacheGroupProcess restoreCacheGrpProcess;
+    private final SnapshotRestoreCacheGroupProcess restoreCacheGrpProc;
 
     /**
      * @param ctx Kernal context.
@@ -276,7 +276,7 @@ public class IgniteSnapshotManager extends GridCacheSharedManagerAdapter
         endSnpProc = new DistributedProcess<>(ctx, END_SNAPSHOT, this::initLocalSnapshotEndStage,
             this::processLocalSnapshotEndStageResult);
 
-        restoreCacheGrpProcess = new SnapshotRestoreCacheGroupProcess(ctx);
+        restoreCacheGrpProc = new SnapshotRestoreCacheGroupProcess(ctx);
     }
 
     /**
@@ -373,7 +373,7 @@ public class IgniteSnapshotManager extends GridCacheSharedManagerAdapter
                         }
                     }
 
-                    restoreCacheGrpProcess.onNodeLeft(leftNodeId);
+                    restoreCacheGrpProc.onNodeLeft(leftNodeId);
                 }
             }
             finally {
@@ -387,7 +387,7 @@ public class IgniteSnapshotManager extends GridCacheSharedManagerAdapter
         busyLock.block();
 
         try {
-            restoreCacheGrpProcess.stop("Node is stopping.");
+            restoreCacheGrpProc.stop("Node is stopping.");
 
             // Try stop all snapshot processing if not yet.
             for (SnapshotFutureTask sctx : locSnpTasks.values())
@@ -423,7 +423,7 @@ public class IgniteSnapshotManager extends GridCacheSharedManagerAdapter
 
     /** {@inheritDoc} */
     @Override public void onDeActivate(GridKernalContext kctx) {
-        restoreCacheGrpProcess.stop("The cluster has been deactivated.");
+        restoreCacheGrpProc.stop("The cluster has been deactivated.");
     }
 
     /**
@@ -694,7 +694,7 @@ public class IgniteSnapshotManager extends GridCacheSharedManagerAdapter
      * @return {@code True} if the restore operation is in progress.
      */
     public boolean isCacheRestoring(@Nullable String name) {
-        return restoreCacheGrpProcess.inProgress(name);
+        return restoreCacheGrpProc.inProgress(name);
     }
 
     /**
@@ -705,7 +705,7 @@ public class IgniteSnapshotManager extends GridCacheSharedManagerAdapter
      * @param err Error if any.
      */
     public void afterRestoredCacheStarted(String cacheName, @Nullable String grpName, @Nullable Throwable err) {
-        restoreCacheGrpProcess.handleCacheStart(cacheName, grpName, err);
+        restoreCacheGrpProc.handleCacheStart(cacheName, grpName, err);
     }
 
     /**
@@ -889,7 +889,7 @@ public class IgniteSnapshotManager extends GridCacheSharedManagerAdapter
 
     /** {@inheritDoc} */
     @Override public IgniteFuture<Void> restoreCacheGroups(String snpName, Collection<String> grpNames) {
-        return restoreCacheGrpProcess.start(snpName, grpNames);
+        return restoreCacheGrpProc.start(snpName, grpNames);
     }
 
     /**
@@ -980,16 +980,15 @@ public class IgniteSnapshotManager extends GridCacheSharedManagerAdapter
      * @return Local path to the cache directory.
      */
     public File resolveSnapshotCacheDir(String snpName, String cacheName) {
-        File workDir = snapshotLocalDir(snpName);
+        File dbDir = Paths.get(snapshotLocalDir(snpName).getAbsolutePath(),
+            DFLT_STORE_DIR, pdsSettings.folderName()).toFile();
 
-        String dbPath = DFLT_STORE_DIR + File.separator + pdsSettings.folderName() + File.separator;
-
-        File cacheDir = new File(workDir, dbPath + CACHE_DIR_PREFIX + cacheName);
+        File cacheDir = new File(dbDir, CACHE_DIR_PREFIX + cacheName);
 
         if (cacheDir.exists())
             return cacheDir;
 
-        return new File(workDir, dbPath + CACHE_GRP_DIR_PREFIX + cacheName);
+        return new File(dbDir, CACHE_GRP_DIR_PREFIX + cacheName);
     }
 
     /** {@inheritDoc} */
