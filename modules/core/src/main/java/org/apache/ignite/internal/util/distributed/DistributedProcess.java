@@ -442,14 +442,19 @@ public class DistributedProcess<I extends Serializable, R extends Serializable> 
          */
         CACHE_GROUP_KEY_CHANGE_FINISH,
 
-        /**
-         * Cache group restore from snapshot prepare process.
-         */
-        RESTORE_CACHE_GROUP_SNAPSHOT_PREPARE,
+//        /**
+//         * Cache group restore from snapshot prepare process.
+//         */
+//        RESTORE_CACHE_GROUP_SNAPSHOT_PREPARE,
 
         /**
          * Cache group restore from snapshot perform process.
          */
-        RESTORE_CACHE_GROUP_SNAPSHOT_PERFORM
+        RESTORE_CACHE_GROUP_SNAPSHOT_PREPARE,
+
+        RESTORE_CACHE_GROUP_SNAPSHOT_START,
+
+        RESTORE_CACHE_GROUP_SNAPSHOT_FINISH
+
     }
 }

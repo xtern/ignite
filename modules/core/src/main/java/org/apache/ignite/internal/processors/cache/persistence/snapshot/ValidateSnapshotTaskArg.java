@@ -19,82 +19,71 @@ package org.apache.ignite.internal.processors.cache.persistence.snapshot;
 
 import java.io.Serializable;
 import java.util.Collection;
-import java.util.List;
+import java.util.Set;
 import java.util.UUID;
-import org.apache.ignite.internal.processors.cache.StoredCacheData;
-import org.apache.ignite.internal.util.tostring.GridToStringExclude;
 import org.apache.ignite.internal.util.tostring.GridToStringInclude;
 import org.apache.ignite.internal.util.typedef.internal.S;
 
 /**
- * Request to perform snapshot restore.
+ * Request to prepare snapshot restore.
  */
-public class SnapshotRestorePrepareRequest implements Serializable {
+public class ValidateSnapshotTaskArg implements Serializable {
     /** Serial version uid. */
     private static final long serialVersionUID = 0L;
 
-    /** Request ID. */
-    private final UUID reqId;
+//    /** Request ID. */
+//    private final UUID reqId;
 
-    /** Node ID from which to update the binary metadata. */
-    private final UUID updateMetaNodeId;
+    /** Snapshot name. */
+    private final String snpName;
 
-    @GridToStringExclude
-    private final List<StoredCacheData> ccfgs;
-
+    /** List of cache group names to restore from the snapshot. */
     @GridToStringInclude
     private final Collection<String> grps;
 
-    private final String snpName;
-
-    private final Collection<UUID> nodes;
+//    /** List of baseline node IDs that must be alive to complete the operation. */
+//    @GridToStringInclude
+//    private final Set<UUID> nodes;
 
     /**
-     * @param reqId Request ID.
-     * @param updateMetaNodeId Node ID from which to update the binary metadata.
+     * @param snpName Snapshot name.
+     * @param grps List of cache group names to restore from the snapshot.
      */
-    public SnapshotRestorePrepareRequest(UUID reqId, String snpName, Collection<String> grps, Collection<UUID> nodes, List<StoredCacheData> ccfgs, UUID updateMetaNodeId) {
-        this.reqId = reqId;
+    public ValidateSnapshotTaskArg(String snpName, Collection<String> grps) {
         this.snpName = snpName;
         this.grps = grps;
-        this.nodes = nodes;
-        this.ccfgs = ccfgs;
-        this.updateMetaNodeId = updateMetaNodeId;
     }
+
+//    /**
+//     * @return Request ID.
+//     */
+//    public UUID requestId() {
+//        return reqId;
+//    }
 
     /**
-     * @return Request ID.
+     * @return List of cache group names to restore from the snapshot.
      */
-    public UUID requestId() {
-        return reqId;
-    }
-
-    /**
-     * @return Node ID from which to update the binary metadata.
-     */
-    public UUID updateMetaNodeId() {
-        return updateMetaNodeId;
-    }
-
-
     public Collection<String> groups() {
         return grps;
     }
 
-    public List<StoredCacheData> configs() {
-        return ccfgs;
-    }
-
+    /**
+     * @return Snapshot name.
+     */
     public String snapshotName() {
         return snpName;
     }
 
-    public Collection<UUID> nodes() {
-        return nodes;
-    }
+//    /**
+//     * @return List of baseline node IDs that must be alive to complete the operation.
+//     */
+//    public Set<UUID> nodes() {
+//        return Collections.unmodifiableSet(nodes);
+//    }
 
     /** {@inheritDoc} */
     @Override public String toString() {
-        return S.toString(SnapshotRestorePrepareRequest.class, this);
+        return S.toString(ValidateSnapshotTaskArg.class, this);
     }
 }

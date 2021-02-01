@@ -54,7 +54,6 @@ import org.junit.Test;
 import static org.apache.ignite.internal.processors.cache.persistence.file.FilePageStoreManager.CACHE_DIR_PREFIX;
 import static org.apache.ignite.internal.processors.cache.persistence.file.FilePageStoreManager.CACHE_GRP_DIR_PREFIX;
 import static org.apache.ignite.internal.processors.cache.persistence.file.FilePageStoreManager.DFLT_STORE_DIR;
-import static org.apache.ignite.internal.util.distributed.DistributedProcess.DistributedProcessType.RESTORE_CACHE_GROUP_SNAPSHOT_PERFORM;
 import static org.apache.ignite.internal.util.distributed.DistributedProcess.DistributedProcessType.RESTORE_CACHE_GROUP_SNAPSHOT_PREPARE;
 import static org.apache.ignite.testframework.GridTestUtils.runAsync;
 
@@ -99,6 +98,13 @@ public class IgniteClusterSnapshoRestoreSelfTest extends AbstractSnapshotSelfTes
             .setFields(new LinkedHashMap<>(F.asMap("id", Integer.class.getName(), "name", String.class.getName())))
             .setIndexes(Arrays.asList(new QueryIndex("id"), new QueryIndex("name")));
     }
+
+//    @Test
+//    public void computeTest() throws Exception {
+//        IgniteEx node = startGrid(4);
+//
+//        node.context().task().execute()
+//    }
 
     /** @throws Exception If failed. */
     @Test
@@ -178,7 +184,7 @@ public class IgniteClusterSnapshoRestoreSelfTest extends AbstractSnapshotSelfTes
             ignite.snapshot().restoreCacheGroups(SNAPSHOT_NAME, Collections.singleton(dfltCacheCfg.getName()));
 
         GridTestUtils.assertThrowsAnyCause(
-            log, () -> fut.get(TIMEOUT), IgniteCheckedException.class, "not all partitions available");
+            log, () -> fut.get(TIMEOUT), IgniteException.class, "not all partitions available");
 
         startGrid(1);
 
@@ -324,6 +330,10 @@ public class IgniteClusterSnapshoRestoreSelfTest extends AbstractSnapshotSelfTes
 
         forceCheckpoint();
 
+        awaitPartitionMapExchange();
+
+        U.sleep(2_000);
+
         // After destroying the cache with a node filter, the configuration file remains on the filtered node.
         // todo https://issues.apache.org/jira/browse/IGNITE-14044
         for (String cacheName : new String[] {cacheName1, cacheName2}) {
@@ -331,7 +341,7 @@ public class IgniteClusterSnapshoRestoreSelfTest extends AbstractSnapshotSelfTes
                 U.delete(resolveCacheDir(grid(nodeIdx), cacheName));
         }
 
-        ignite0.cluster().state(ClusterState.ACTIVE);
+//        ignite0.cluster().state(ClusterState.ACTIVE);
 
         ignite0.snapshot().restoreCacheGroups(SNAPSHOT_NAME, Collections.singleton(cacheName1)).get(TIMEOUT);
         awaitPartitionMapExchange();
@@ -431,13 +441,13 @@ public class IgniteClusterSnapshoRestoreSelfTest extends AbstractSnapshotSelfTes
         return cache;
     }
 
-    /**
-     * @throws Exception if failed
-     */
-    @Test
-    public void testParallelCacheStartWithTheSameNameOnPrepare() throws Exception {
-        checkCacheStartWithTheSameName(true);
-    }
+//    /**
+//     * @throws Exception if failed
+//     */
+//    @Test
+//    public void testParallelCacheStartWithTheSameNameOnPrepare() throws Exception {
+//        checkCacheStartWithTheSameName(true);
+//    }
 
     /**
      * @throws Exception if failed
@@ -462,7 +472,7 @@ public class IgniteClusterSnapshoRestoreSelfTest extends AbstractSnapshotSelfTes
         TestRecordingCommunicationSpi spi = TestRecordingCommunicationSpi.spi(grid(1));
 
         IgniteFuture<Void> fut = waitForBlockOnRestore(spi, prepare ?
-            RESTORE_CACHE_GROUP_SNAPSHOT_PREPARE : RESTORE_CACHE_GROUP_SNAPSHOT_PERFORM, grpName);
+            RESTORE_CACHE_GROUP_SNAPSHOT_PREPARE : RESTORE_CACHE_GROUP_SNAPSHOT_PREPARE, grpName);
 
         String msgFormat = "Cache start failed. A cache named \"%s\" is currently being restored from a snapshot.";
 
@@ -528,7 +538,7 @@ public class IgniteClusterSnapshoRestoreSelfTest extends AbstractSnapshotSelfTes
 
         TestRecordingCommunicationSpi spi = TestRecordingCommunicationSpi.spi(grid(3));
 
-        IgniteFuture<Void> fut = waitForBlockOnRestore(spi, RESTORE_CACHE_GROUP_SNAPSHOT_PERFORM, dfltCacheCfg.getName());
+        IgniteFuture<Void> fut = waitForBlockOnRestore(spi, RESTORE_CACHE_GROUP_SNAPSHOT_PREPARE, dfltCacheCfg.getName());
 
         if (stopNode) {
             runAsync(() -> stopGrid(3, true));
@@ -563,13 +573,13 @@ public class IgniteClusterSnapshoRestoreSelfTest extends AbstractSnapshotSelfTes
         checkCacheKeys(cache, keysCnt);
     }
 
-    /**
-     * @throws Exception if failed.
-     */
-    @Test
-    public void testClusterStateChangeActiveReadonlyDuringPrepare() throws Exception {
-        checkReadOnlyDuringRestoring(RESTORE_CACHE_GROUP_SNAPSHOT_PREPARE);
-    }
+//    /**
+//     * @throws Exception if failed.
+//     */
+//    @Test
+//    public void testClusterStateChangeActiveReadonlyDuringPrepare() throws Exception {
+//        checkReadOnlyDuringRestoring(RESTORE_CACHE_GROUP_SNAPSHOT_PREPARE);
+//    }
 
 
     /**
@@ -577,7 +587,7 @@ public class IgniteClusterSnapshoRestoreSelfTest extends AbstractSnapshotSelfTes
      */
     @Test
     public void testClusterStateChangeActiveReadonlyDuringPerform() throws Exception {
-        checkReadOnlyDuringRestoring(RESTORE_CACHE_GROUP_SNAPSHOT_PERFORM);
+        checkReadOnlyDuringRestoring(RESTORE_CACHE_GROUP_SNAPSHOT_PREPARE);
     }
 
     /**
@@ -589,20 +599,20 @@ public class IgniteClusterSnapshoRestoreSelfTest extends AbstractSnapshotSelfTes
             "Failed to perform start cache operation (cluster is in read-only mode)");
     }
 
-    /**
-     * @throws Exception if failed.
-     */
-    @Test
-    public void testClusterDeactivateOnPrepare() throws Exception {
-        checkDeactivationDuringRestoring(RESTORE_CACHE_GROUP_SNAPSHOT_PREPARE);
-    }
+//    /**
+//     * @throws Exception if failed.
+//     */
+//    @Test
+//    public void testClusterDeactivateOnPrepare() throws Exception {
+//        checkDeactivationDuringRestoring(RESTORE_CACHE_GROUP_SNAPSHOT_PREPARE);
+//    }
 
     /**
      * @throws Exception if failed.
      */
     @Test
     public void testClusterDeactivateOnPerform() throws Exception {
-        checkDeactivationDuringRestoring(RESTORE_CACHE_GROUP_SNAPSHOT_PERFORM);
+        checkDeactivationDuringRestoring(RESTORE_CACHE_GROUP_SNAPSHOT_PREPARE);
     }
 
     /**
