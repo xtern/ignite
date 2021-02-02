@@ -113,8 +113,16 @@ public class IgniteClusterSnapshoRestoreSelfTest extends AbstractSnapshotSelfTes
 
         IgniteEx ignite = startGridsWithSnapshot(2, keysCnt);
 
-        ignite.snapshot().restoreCacheGroups(
-            SNAPSHOT_NAME, Collections.singleton(dfltCacheCfg.getName())).get(TIMEOUT);
+//        try {
+            ignite.snapshot().restoreCacheGroups(
+                SNAPSHOT_NAME, Collections.singleton(dfltCacheCfg.getName())).get(TIMEOUT);
+//        } catch (Exception e) {
+//            e.printStackTrace();
+//
+//            ensureCacheDirEmpty(2, dfltCacheCfg.getName());
+//
+//            fail();
+//        }
 
         IgniteCache<Object, Object> cache = ignite.cache(dfltCacheCfg.getName());
 
@@ -566,7 +574,8 @@ public class IgniteClusterSnapshoRestoreSelfTest extends AbstractSnapshotSelfTes
 
         fut.get(TIMEOUT);
 
-        IgniteCache<Object, Object> cache = ignite.cache(dfltCacheCfg.getName());
+        // todo get proxy from another
+        IgniteCache<Object, Object> cache = grid(0).cache(dfltCacheCfg.getName());
 
         assertTrue(cache.indexReadyFuture().isDone());
 

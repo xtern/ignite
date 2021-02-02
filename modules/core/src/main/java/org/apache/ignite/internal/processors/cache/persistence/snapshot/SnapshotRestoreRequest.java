@@ -29,7 +29,7 @@ import org.apache.ignite.internal.util.typedef.internal.S;
 /**
  * Request to perform snapshot restore.
  */
-public class SnapshotRestorePrepareRequest implements Serializable {
+public class SnapshotRestoreRequest implements Serializable {
     /** Serial version uid. */
     private static final long serialVersionUID = 0L;
 
@@ -53,7 +53,7 @@ public class SnapshotRestorePrepareRequest implements Serializable {
      * @param reqId Request ID.
      * @param updateMetaNodeId Node ID from which to update the binary metadata.
      */
-    public SnapshotRestorePrepareRequest(UUID reqId, String snpName, Collection<String> grps, Collection<UUID> nodes, List<StoredCacheData> ccfgs, UUID updateMetaNodeId) {
+    public SnapshotRestoreRequest(UUID reqId, String snpName, Collection<String> grps, Collection<UUID> nodes, List<StoredCacheData> ccfgs, UUID updateMetaNodeId) {
         this.reqId = reqId;
         this.snpName = snpName;
         this.grps = grps;
@@ -95,6 +95,6 @@ public class SnapshotRestorePrepareRequest implements Serializable {
 
     /** {@inheritDoc} */
     @Override public String toString() {
-        return S.toString(SnapshotRestorePrepareRequest.class, this);
+        return S.toString(SnapshotRestoreRequest.class, this);
     }
 }

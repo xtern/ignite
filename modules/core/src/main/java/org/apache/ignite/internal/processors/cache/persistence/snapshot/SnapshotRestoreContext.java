@@ -67,6 +67,8 @@ class SnapshotRestoreContext {
     /** Restored cache groups. */
     private final Map<String, GroupRestoreContext> grps = new ConcurrentHashMap<>();
 
+    private volatile boolean restored;
+
     /**
      * @param reqId Request ID.
      * @param snpName Snapshot name.
@@ -230,6 +232,18 @@ class SnapshotRestoreContext {
                 rollbackLock.unlock();
             }
         }
+    }
+
+    /**
+     * @return If restore phase has finished.
+     */
+    public boolean restored() {
+        return restored;
+    }
+
+    public void rollback() {
+        for (String grp : groups())
+            rollback(grp);
     }
 
     /**
