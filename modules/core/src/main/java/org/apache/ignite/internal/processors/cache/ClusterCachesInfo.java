@@ -2287,6 +2287,7 @@ public class ClusterCachesInfo {
         if (startedCacheCfg.isEncryptionEnabled())
             ctx.encryption().beforeCacheGroupStart(grpId, encKey);
 
+        U.dumpStack(">xxx> registeredCacheGrps " + grpDesc.cacheOrGroupName());
         CacheGroupDescriptor old = registeredCacheGrps.put(grpId, grpDesc);
 
         assert old == null : old;

@@ -18,56 +18,49 @@
 package org.apache.ignite.internal.processors.cache.persistence.snapshot;
 
 import java.io.Serializable;
-import java.util.UUID;
+import java.util.Collection;
+import org.apache.ignite.internal.util.tostring.GridToStringInclude;
 import org.apache.ignite.internal.util.typedef.internal.S;
-import org.jetbrains.annotations.Nullable;
 
 /**
- * Request to finalize restored cache startup.
+ * Request to prepare snapshot restore.
  */
-public class SnapshotRestoreRollbackRequest implements Serializable {
+public class SnapshotInfoTaskArg implements Serializable {
     /** Serial version uid. */
     private static final long serialVersionUID = 0L;
 
-    /** Request ID. */
-    private final UUID reqId;
+    /** Snapshot name. */
+    private final String snpName;
 
-//    @GridToStringExclude
-//    private final List<StoredCacheData> ccfgs;
-
-    private final Throwable failure;
-
-    private final boolean activateCaches;
+    /** List of cache group names to restore from the snapshot. */
+    @GridToStringInclude
+    private final Collection<String> grps;
 
     /**
-     * @param reqId Request ID.
-     * @param updateMetaNodeId Node ID from which to update the binary metadata.
+     * @param snpName Snapshot name.
+     * @param grps List of cache group names to restore from the snapshot.
      */
-    public SnapshotRestoreRollbackRequest(UUID reqId, boolean activateCaches, @Nullable Throwable failure) {
-        assert activateCaches || failure != null;
-
-        this.reqId = reqId;
-        this.activateCaches = activateCaches;
-        this.failure = failure;
+    public SnapshotInfoTaskArg(String snpName, Collection<String> grps) {
+        this.snpName = snpName;
+        this.grps = grps;
     }
 
     /**
-     * @return Request ID.
+     * @return List of cache group names to restore from the snapshot.
      */
-    public UUID requestId() {
-        return reqId;
+    public Collection<String> groups() {
+        return grps;
     }
 
-    public boolean activateCaches() {
-        return activateCaches;
-    }
-
-    public @Nullable Throwable failure() {
-        return failure;
+    /**
+     * @return Snapshot name.
+     */
+    public String snapshotName() {
+        return snpName;
     }
 
     /** {@inheritDoc} */
     @Override public String toString() {
-        return S.toString(SnapshotRestoreRollbackRequest.class, this);
+        return S.toString(SnapshotInfoTaskArg.class, this);
     }
 }

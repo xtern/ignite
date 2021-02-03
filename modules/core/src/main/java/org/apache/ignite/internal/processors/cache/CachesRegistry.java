@@ -246,8 +246,6 @@ public class CachesRegistry {
     ) {
         waitLastRegistration();
 
-        U.dumpStack(">xxx> registerAllCachesAndGroups: " + F.viewReadOnly(cacheDescriptors, desc -> desc.cacheName()));
-
         for (CacheGroupDescriptor grpDesc : groupDescriptors)
             registerGroup(grpDesc);
 

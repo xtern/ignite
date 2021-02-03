@@ -120,6 +120,9 @@ public abstract class AbstractSnapshotSelfTest extends GridCommonAbstractTest {
 
         discoSpi.setIpFinder(((TcpDiscoverySpi)cfg.getDiscoverySpi()).getIpFinder());
 
+        if (dfltCacheCfg != null)
+            cfg.setCacheConfiguration(dfltCacheCfg);
+
         return cfg.setConsistentId(igniteInstanceName)
             .setCommunicationSpi(new TestRecordingCommunicationSpi())
             .setDataStorageConfiguration(new DataStorageConfiguration()
@@ -128,7 +131,6 @@ public abstract class AbstractSnapshotSelfTest extends GridCommonAbstractTest {
                     .setPersistenceEnabled(persistence))
                 .setCheckpointFrequency(3000)
                 .setPageSize(4096))
-            .setCacheConfiguration(dfltCacheCfg)
             .setClusterStateOnStart(INACTIVE)
             .setIncludeEventTypes(EVTS_CLUSTER_SNAPSHOT)
             .setDiscoverySpi(discoSpi);

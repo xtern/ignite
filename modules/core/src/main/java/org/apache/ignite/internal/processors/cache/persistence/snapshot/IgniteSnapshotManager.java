@@ -219,6 +219,9 @@ public class IgniteSnapshotManager extends GridCacheSharedManagerAdapter
     /** Check previously performed snapshot operation and delete uncompleted files if need. */
     private final DistributedProcess<SnapshotOperationRequest, SnapshotOperationResponse> endSnpProc;
 
+    /** Distributed process to restore cache group from the snapshot. */
+    private final SnapshotRestoreCacheGroupProcess restoreCacheGrpProc;
+
     /** Resolved persistent data storage settings. */
     private volatile PdsFolderSettings pdsSettings;
 
@@ -258,11 +261,13 @@ public class IgniteSnapshotManager extends GridCacheSharedManagerAdapter
     /** {@code true} if recovery process occurred for snapshot. */
     private volatile boolean recovered;
 
+    private volatile boolean rollbacked;
+
     /** Last seen cluster snapshot operation. */
     private volatile ClusterSnapshotFuture lastSeenSnpFut = new ClusterSnapshotFuture();
 
-    /** Distributed process to restore cache group from the snapshot. */
-    private final SnapshotRestoreCacheGroupProcess restoreCacheGrpProc;
+    /** Cache group restore context. */
+    private volatile SnapshotRestoreContext lastRestoreCtx;
 
     /**
      * @param ctx Kernal context.
@@ -418,88 +423,20 @@ public class IgniteSnapshotManager extends GridCacheSharedManagerAdapter
         }
     }
 
-    private volatile Collection<String> grpsToDestroy = null;
-
     public Collection<String> destroyGroups() {
-        return grpsToDestroy == null ? Collections.emptyList() : grpsToDestroy;
-//        if (metaStorage == null)
-//            return Collections.emptyList();
-//
-//        cctx.database().checkpointReadLock();
-//
-//        try {
-//            Collection<String> res = (Collection<String>)metaStorage.read(RESTORE_GRP_KEY);
-//
-//            return res == null ? Collections.emptyList() : res;
-//        }
-//        catch (IgniteCheckedException e) {
-//            throw new IgniteException(e);
-//        }
-//        finally {
-//            cctx.database().checkpointReadUnlock();
-//        }
+        return lastRestoreCtx == null ? Collections.emptyList() : lastRestoreCtx.groups();
     }
 
     /** {@inheritDoc} */
     @Override public void onActivate(GridKernalContext kctx) {
-        // No-op.
-        if (grpsToDestroy == null)
+        SnapshotRestoreContext restoreCtx = lastRestoreCtx;
+
+        if (restoreCtx == null)
             return;
 
-        for (String grp : grpsToDestroy) {
-            // todo
-            File snpDir = resolveSnapshotCacheDir("testSnapshot", grp);
+        restoreCtx.rollback();
 
-            File cacheDir = null;
-            try {
-                cacheDir = U.resolveWorkDirectory(cctx.kernalContext().config().getWorkDirectory(), DFLT_STORE_DIR +
-                    File.separator + pdsSettings.folderName() + File.separator + snpDir.getName(), false);
-            }
-            catch (IgniteCheckedException e) {
-                throw new IgniteException(e);
-            }
-
-            System.out.println(">xxx> cleanup " + cacheDir);
-
-            U.delete(cacheDir);
-        }
-
-        if (true)
-            return;
-
-        //restoreCacheGrpProc.cleanupIfNeeded();
-        cctx.database().checkpointReadLock();
-
-        try {
-            Collection<String> grps = (Collection<String>)metaStorage.read(RESTORE_GRP_KEY);
-
-            if (grps != null) {
-                // perform cleanup
-                for (String grp : grps) {
-                    U.delete(resolveSnapshotCacheDir("testSnapshot", grp));
-                }
-                //restoreCacheGrpProc.cleanup(grps);
-
-//                if (U.isLocalNodeCoordinator(cctx.kernalContext().discovery())) {
-//                    try {
-//                        cctx.kernalContext().cache().dynamicDestroyCaches(grps, true).listen(f -> {
-//                            if (f.error() != null)
-//                                log.error("Unable to destroy caches", f.error());
-//                        });
-//                    } catch (Exception e) {
-//                        log.error("Unable to destroy caches", e);
-//                    }
-//                }
-            }
-        }
-        catch (IgniteCheckedException e) {
-            //todo
-            log.error("Unable to cleanup restored groups", e);
-            assert false;
-        }
-        finally {
-            cctx.database().checkpointReadUnlock();
-        }
+        lastRestoreCtx = null;
     }
 
     /** {@inheritDoc} */
@@ -779,17 +716,6 @@ public class IgniteSnapshotManager extends GridCacheSharedManagerAdapter
     }
 
     /**
-     * Callback from cache startup during cache group restore operation.
-     *
-     * @param cacheName Started cache name.
-     * @param grpName Started cache group name.
-     * @param err Error if any.
-     */
-    public void afterRestoredCacheStarted(String cacheName, @Nullable String grpName, @Nullable Throwable err) {
-        restoreCacheGrpProc.handleCacheStart(cacheName, grpName, err);
-    }
-
-    /**
      * @return List of all known snapshots on the local node.
      */
     public List<String> localSnapshotNames() {
@@ -1032,17 +958,29 @@ public class IgniteSnapshotManager extends GridCacheSharedManagerAdapter
         }
     }
 
-    protected void updateRestoredGroups(@Nullable Collection<String> grps) throws IgniteCheckedException {
+    protected void updateRestoredGroups(@Nullable SnapshotRestoreContext opCtx) throws IgniteCheckedException {
+        lastRestoreCtx = opCtx;
+
+        if (!cctx.kernalContext().state().clusterState().state().active()) {
+            log.info("Skip updating metastore key on cahe group restore, cluster is not active.");
+
+            return;
+        }
+
         cctx.database().checkpointReadLock();
 
         try {
-            if (grps == null) {
-                grpsToDestroy = null;
+            if (opCtx == null) {
+                lastRestoreCtx = null;
                 metaStorage.remove(RESTORE_GRP_KEY);
-            } else {
-                grpsToDestroy = grps;
 
-                metaStorage.write(RESTORE_GRP_KEY, new ArrayList<>(grps));
+                log.info(">xxx> cleaning up grps ");
+            } else {
+                lastRestoreCtx = opCtx;
+
+                metaStorage.write(RESTORE_GRP_KEY, new ArrayList<>(opCtx.groups()));
+
+                log.info(">xxx> writing grps " + opCtx.groups());
             }
         }
         finally {
@@ -1100,6 +1038,11 @@ public class IgniteSnapshotManager extends GridCacheSharedManagerAdapter
 
             recovered = false;
         }
+
+        if (rollbacked)
+            updateRestoredGroups(null);
+
+        rollbacked = false;
     }
 
     /** {@inheritDoc} */
@@ -1107,20 +1050,40 @@ public class IgniteSnapshotManager extends GridCacheSharedManagerAdapter
         // Snapshot which has not been completed due to the local node crashed must be deleted.
         String snpName = (String)metaStorage.read(SNP_RUNNING_KEY);
 
-        if (snpName == null)
+        if (snpName != null) {
+            recovered = true;
+
+            for (File tmp : snapshotTmpDir().listFiles())
+                U.delete(tmp);
+
+            deleteSnapshot(snapshotLocalDir(snpName), pdsSettings.folderName());
+
+            if (log.isInfoEnabled()) {
+                log.info("Previous attempt to create snapshot fail due to the local node crash. All resources " +
+                    "related to snapshot operation have been deleted: " + snpName);
+            }
+        }
+
+        Collection<String> grps = (Collection<String>)metaStorage.read(RESTORE_GRP_KEY);
+
+        if (grps == null)
             return;
 
-        recovered = true;
+        for (String grp : grps) {
+            File snpDir = resolveSnapshotCacheDir("testSnapshot", grp);
 
-        for (File tmp : snapshotTmpDir().listFiles())
-            U.delete(tmp);
+            try {
+                File cacheDir = U.resolveWorkDirectory(cctx.kernalContext().config().getWorkDirectory(), DFLT_STORE_DIR +
+                    File.separator + pdsSettings.folderName() + File.separator + snpDir.getName(), false);
 
-        deleteSnapshot(snapshotLocalDir(snpName), pdsSettings.folderName());
-
-        if (log.isInfoEnabled()) {
-            log.info("Previous attempt to create snapshot fail due to the local node crash. All resources " +
-                "related to snapshot operation have been deleted: " + snpName);
+                U.delete(cacheDir);
+            }
+            catch (IgniteCheckedException e) {
+                throw new IgniteException(e);
+            }
         }
+
+        rollbacked = true;
     }
 
     /**

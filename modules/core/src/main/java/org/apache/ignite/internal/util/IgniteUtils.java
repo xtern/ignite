@@ -3719,6 +3719,8 @@ public abstract class IgniteUtils {
                     }
                 }
             } catch (IOException e) {
+                e.printStackTrace();
+
                 return false;
             }
         }

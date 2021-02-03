@@ -813,12 +813,6 @@ public class CacheAffinitySharedManager<K, V> extends GridCacheSharedManagerAdap
         cachesRegistry.unregisterGroup(grpCtx.groupId());
     }
 
-
-    public void stopCacheGroupOnReconnect(int grpId) {
-        cachesRegistry.unregisterGroup(grpId);
-        cachesRegistry.unregisterCache(grpId);
-    }
-
     /** {@inheritDoc} */
     @Override public void onDisconnected(IgniteFuture<?> reconnectFut) {
         Iterator<Integer> it = grpHolders.keySet().iterator();

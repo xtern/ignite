@@ -32,6 +32,7 @@ import org.apache.ignite.IgniteSnapshot;
 import org.apache.ignite.binary.BinaryObject;
 import org.apache.ignite.binary.BinaryObjectBuilder;
 import org.apache.ignite.binary.BinaryType;
+import org.apache.ignite.cache.CacheExistsException;
 import org.apache.ignite.cache.CacheMode;
 import org.apache.ignite.cache.QueryEntity;
 import org.apache.ignite.cache.QueryIndex;
@@ -40,6 +41,7 @@ import org.apache.ignite.cluster.ClusterState;
 import org.apache.ignite.configuration.CacheConfiguration;
 import org.apache.ignite.configuration.IgniteConfiguration;
 import org.apache.ignite.internal.IgniteEx;
+import org.apache.ignite.internal.IgniteInternalFuture;
 import org.apache.ignite.internal.TestRecordingCommunicationSpi;
 import org.apache.ignite.internal.processors.cache.CacheGroupDescriptor;
 import org.apache.ignite.internal.processors.cache.distributed.dht.IgniteClusterReadOnlyException;
@@ -51,12 +53,15 @@ import org.apache.ignite.internal.util.typedef.internal.U;
 import org.apache.ignite.lang.IgniteFuture;
 import org.apache.ignite.spi.IgniteSpiException;
 import org.apache.ignite.testframework.GridTestUtils;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import static org.apache.ignite.internal.processors.cache.persistence.file.FilePageStoreManager.CACHE_DIR_PREFIX;
 import static org.apache.ignite.internal.processors.cache.persistence.file.FilePageStoreManager.CACHE_GRP_DIR_PREFIX;
 import static org.apache.ignite.internal.processors.cache.persistence.file.FilePageStoreManager.DFLT_STORE_DIR;
+import static org.apache.ignite.internal.util.distributed.DistributedProcess.DistributedProcessType.RESTORE_CACHE_GROUP_SNAPSHOT_FINISH;
 import static org.apache.ignite.internal.util.distributed.DistributedProcess.DistributedProcessType.RESTORE_CACHE_GROUP_SNAPSHOT_PREPARE;
+import static org.apache.ignite.internal.util.distributed.DistributedProcess.DistributedProcessType.RESTORE_CACHE_GROUP_SNAPSHOT_START;
 import static org.apache.ignite.testframework.GridTestUtils.runAsync;
 
 /**
@@ -81,7 +86,7 @@ public class IgniteClusterSnapshoRestoreSelfTest extends AbstractSnapshotSelfTes
 
         if (cacheCfgs != null)
             cfg.setCacheConfiguration(cacheCfgs);
-        else {
+        else if (dfltCacheCfg != null) {
             dfltCacheCfg.setSqlIndexMaxInlineSize(255);
             dfltCacheCfg.setQueryEntities(
                 Arrays.asList(queryEntity(BIN_TYPE_NAME), queryEntity(IndexedObject.class.getName())));
@@ -101,7 +106,11 @@ public class IgniteClusterSnapshoRestoreSelfTest extends AbstractSnapshotSelfTes
             .setIndexes(Arrays.asList(new QueryIndex("id"), new QueryIndex("name")));
     }
 
-//    @Test
+    @Override public void afterTestSnapshot() throws Exception {
+        stopAllGrids();
+    }
+
+    //    @Test
 //    public void computeTest() throws Exception {
 //        IgniteEx node = startGrid(4);
 //
@@ -113,18 +122,9 @@ public class IgniteClusterSnapshoRestoreSelfTest extends AbstractSnapshotSelfTes
     public void testBasicClusterSnapshotRestore() throws Exception {
         int keysCnt = 10_000;
 
-        IgniteEx ignite = startGridsWithSnapshot(2, keysCnt);
+        IgniteEx ignite = startGridsWithSnapshot(2, keysCnt, true);
 
-//        try {
-            ignite.snapshot().restoreCacheGroups(
-                SNAPSHOT_NAME, Collections.singleton(dfltCacheCfg.getName())).get(TIMEOUT);
-//        } catch (Exception e) {
-//            e.printStackTrace();
-//
-//            ensureCacheDirEmpty(2, dfltCacheCfg.getName());
-//
-//            fail();
-//        }
+        grid(0).snapshot().restoreCacheGroups(SNAPSHOT_NAME, Collections.singleton(dfltCacheCfg.getName())).get(TIMEOUT);
 
         IgniteCache<Object, Object> cache = ignite.cache(dfltCacheCfg.getName());
 
@@ -149,8 +149,7 @@ public class IgniteClusterSnapshoRestoreSelfTest extends AbstractSnapshotSelfTes
 
         forceCheckpoint();
 
-        ignite.snapshot().restoreCacheGroups(
-            SNAPSHOT_NAME, Collections.singleton(dfltCacheCfg.getName())).get(TIMEOUT);
+        ignite.snapshot().restoreCacheGroups(SNAPSHOT_NAME, Collections.singleton(dfltCacheCfg.getName())).get(TIMEOUT);
 
         IgniteCache<Object, Object> cache = ignite.cache(dfltCacheCfg.getName()).withKeepBinary();
 
@@ -177,6 +176,7 @@ public class IgniteClusterSnapshoRestoreSelfTest extends AbstractSnapshotSelfTes
 
     /** @throws Exception If failed. */
     @Test
+    @Ignore
     public void testRestoreWithMissedPartitions() throws Exception {
         IgniteEx ignite = startGridsWithCache(2, CACHE_KEYS_RANGE, valBuilder, dfltCacheCfg.setBackups(0));
 
@@ -463,15 +463,29 @@ public class IgniteClusterSnapshoRestoreSelfTest extends AbstractSnapshotSelfTes
      * @throws Exception if failed
      */
     @Test
-    public void testParallelCacheStartWithTheSameNameOnPerform() throws Exception {
-        checkCacheStartWithTheSameName(false);
+    public void testParallelCacheStartWithTheSameNameOnPrepare() throws Exception {
+        checkCacheStartWithTheSameName(RESTORE_CACHE_GROUP_SNAPSHOT_PREPARE, IgniteCheckedException.class,
+            "Cache start failed. A cache named \"cache1\" is currently being restored from a snapshot.");
     }
 
     /**
-     * @param prepare {@code True} to start cache during prepare phase, {@code False} to start cache during perform phase.
+     * @throws Exception if failed
+     */
+    @Test
+    public void testParallelCacheStartWithTheSameNameOnStart() throws Exception {
+        checkCacheStartWithTheSameName(RESTORE_CACHE_GROUP_SNAPSHOT_START, CacheExistsException.class,
+            "Failed to start cache (a cache with the same name is already started):");
+    }
+
+    /**
+     * @param procType The type of distributed process on which communication is blocked.
      * @throws Exception if failed.
      */
-    private void checkCacheStartWithTheSameName(boolean prepare) throws Exception {
+    private void checkCacheStartWithTheSameName(
+        DistributedProcessType procType,
+        Class<? extends Throwable> expCls,
+        String expMsg
+    ) throws Exception {
         String grpName = "shared";
         String cacheName = "cache1";
 
@@ -481,48 +495,16 @@ public class IgniteClusterSnapshoRestoreSelfTest extends AbstractSnapshotSelfTes
 
         TestRecordingCommunicationSpi spi = TestRecordingCommunicationSpi.spi(grid(1));
 
-        IgniteFuture<Void> fut = waitForBlockOnRestore(spi, prepare ?
-            RESTORE_CACHE_GROUP_SNAPSHOT_PREPARE : RESTORE_CACHE_GROUP_SNAPSHOT_PREPARE, grpName);
+        IgniteFuture<Void> fut = waitForBlockOnRestore(spi, procType, grpName);
 
-        String msgFormat = "Cache start failed. A cache named \"%s\" is currently being restored from a snapshot.";
-
-        GridTestUtils.assertThrowsAnyCause(
-            log,
-            () -> ignite.createCache(grpName),
-            IgniteCheckedException.class,
-            String.format(msgFormat, grpName)
-        );
-
-        if (prepare)
-            ignite.createCache(cacheName);
-        else {
-            GridTestUtils.assertThrowsAnyCause(
-                log,
-                () -> ignite.createCache(cacheName),
-                IgniteCheckedException.class,
-                String.format(msgFormat, cacheName)
-            );
-        }
+        GridTestUtils.assertThrowsAnyCause(log, () -> ignite.createCache(grpName), IgniteCheckedException.class, null);
+        GridTestUtils.assertThrowsAnyCause(log, () -> ignite.createCache(cacheName), expCls, expMsg);
 
         spi.stopBlock();
 
-        // We don't know shared cache names during prepare phase - so we just interrupting process.
-        if (prepare) {
-            GridTestUtils.assertThrowsAnyCause(
-                log,
-                () -> fut.get(TIMEOUT),
-                IgniteException.class,
-                "Cache \"" + cacheName + "\" should be destroyed manually before perform restore operation."
-            );
+        fut.get(TIMEOUT);
 
-            ensureCacheDirEmpty(0, grpName);
-            ensureCacheDirEmpty(1, grpName);
-        }
-        else {
-            fut.get(TIMEOUT);
-
-            checkCacheKeys(grid(0).cache(cacheName), CACHE_KEYS_RANGE);
-        }
+        checkCacheKeys(grid(0).cache(cacheName), CACHE_KEYS_RANGE);
     }
 
     /** @throws Exception If failed. */
@@ -551,16 +533,30 @@ public class IgniteClusterSnapshoRestoreSelfTest extends AbstractSnapshotSelfTes
         IgniteFuture<Void> fut = waitForBlockOnRestore(spi, RESTORE_CACHE_GROUP_SNAPSHOT_PREPARE, dfltCacheCfg.getName());
 
         if (stopNode) {
-            runAsync(() -> stopGrid(3, true));
+            IgniteInternalFuture<?> fut0 = runAsync(() -> stopGrid(3, true));
 
             GridTestUtils.assertThrowsAnyCause(
                 log,
                 () -> fut.get(TIMEOUT),
                 IgniteException.class,
-                "Cache group restore operation was rejected. Baseline node has left the cluster"
+                "Cache group restore operation was rejected. Baseline node(s) has left the cluster"
             );
 
-            ensureCacheDirEmpty(3, dfltCacheCfg.getName());
+            fut0.get(TIMEOUT);
+
+            String cacheName = dfltCacheCfg.getName();
+
+            awaitPartitionMapExchange();
+
+            dfltCacheCfg = null;
+
+            startGrid(3);
+
+            resetBaselineTopology();
+
+            awaitPartitionMapExchange();
+
+            ensureCacheDirEmpty(4, cacheName);
 
             return;
         }
@@ -576,76 +572,77 @@ public class IgniteClusterSnapshoRestoreSelfTest extends AbstractSnapshotSelfTes
 
         fut.get(TIMEOUT);
 
-        // todo get proxy from another
-        IgniteCache<Object, Object> cache = grid(0).cache(dfltCacheCfg.getName());
+        IgniteCache<Object, Object> cache = ignite.cache(dfltCacheCfg.getName());
 
         assertTrue(cache.indexReadyFuture().isDone());
 
         checkCacheKeys(cache, keysCnt);
     }
 
-//    /**
-//     * @throws Exception if failed.
-//     */
-//    @Test
-//    public void testClusterStateChangeActiveReadonlyDuringPrepare() throws Exception {
-//        checkReadOnlyDuringRestoring(RESTORE_CACHE_GROUP_SNAPSHOT_PREPARE);
-//    }
-
-
     /**
      * @throws Exception if failed.
      */
     @Test
-    public void testClusterStateChangeActiveReadonlyDuringPerform() throws Exception {
-        checkReadOnlyDuringRestoring(RESTORE_CACHE_GROUP_SNAPSHOT_PREPARE);
-    }
-
-    /**
-     * @param procType The type of distributed process on which communication is blocked.
-     * @throws Exception if failed.
-     */
-    private void checkReadOnlyDuringRestoring(DistributedProcessType procType) throws Exception {
-        checkClusterStateChange(ClusterState.ACTIVE_READ_ONLY, procType, IgniteClusterReadOnlyException.class,
+    public void testClusterStateChangeActiveReadonlyDuringPrepare() throws Exception {
+        checkClusterStateChange(ClusterState.ACTIVE_READ_ONLY, RESTORE_CACHE_GROUP_SNAPSHOT_PREPARE,
+            IgniteClusterReadOnlyException.class,
             "Failed to perform start cache operation (cluster is in read-only mode)");
     }
 
-//    /**
-//     * @throws Exception if failed.
-//     */
-//    @Test
-//    public void testClusterDeactivateOnPrepare() throws Exception {
-//        checkDeactivationDuringRestoring(RESTORE_CACHE_GROUP_SNAPSHOT_PREPARE);
-//    }
+    /**
+     * @throws Exception if failed.
+     */
+    @Test
+    public void testClusterStateChangeActiveReadonlyDuringCacheStart() throws Exception {
+        checkClusterStateChange(ClusterState.ACTIVE_READ_ONLY, RESTORE_CACHE_GROUP_SNAPSHOT_START,
+            IgniteCheckedException.class, "Failed to start/stop cache, cluster state change is in progress");
+    }
 
     /**
      * @throws Exception if failed.
      */
     @Test
-    public void testClusterDeactivateOnPerform() throws Exception {
-        checkDeactivationDuringRestoring(RESTORE_CACHE_GROUP_SNAPSHOT_PREPARE);
+    public void testClusterStateChangeActiveReadonlyDuringFinish() throws Exception {
+        checkClusterStateChange(ClusterState.ACTIVE_READ_ONLY, RESTORE_CACHE_GROUP_SNAPSHOT_FINISH, null, null);
     }
 
     /**
-     * @param procType The type of distributed process on which communication is blocked.
      * @throws Exception if failed.
      */
-    private void checkDeactivationDuringRestoring(DistributedProcessType procType) throws Exception {
-        checkClusterStateChange(ClusterState.INACTIVE, procType, IgniteCheckedException.class,
-            "Cluster state has been changed.");
+    @Test
+    public void testClusterDeactivateOnPrepare() throws Exception {
+        checkClusterStateChange(ClusterState.INACTIVE, RESTORE_CACHE_GROUP_SNAPSHOT_PREPARE,
+            IgniteCheckedException.class, "Cluster state has been changed.");
+    }
+
+    /**
+     * @throws Exception if failed.
+     */
+    @Test
+    public void testClusterDeactivateOnCacheStart() throws Exception {
+        checkClusterStateChange(ClusterState.INACTIVE, RESTORE_CACHE_GROUP_SNAPSHOT_START,
+            IgniteCheckedException.class, "Failed to start/stop cache, cluster state change is in progress.");
+    }
+
+    /**
+     * @throws Exception if failed.
+     */
+    @Test
+    public void testClusterDeactivateOnComplete() throws Exception {
+        checkClusterStateChange(ClusterState.INACTIVE, RESTORE_CACHE_GROUP_SNAPSHOT_FINISH, null, null);
     }
 
     /**
      * @param state Cluster state.
      * @param procType The type of distributed process on which communication is blocked.
-     * @param expCls Expected exception class.
+     * @param exCls Expected exception class.
      * @param expMsg Expected exception message.
      * @throws Exception if failed.
      */
     private void checkClusterStateChange(
         ClusterState state,
         DistributedProcessType procType,
-        Class<? extends Throwable> expCls,
+        Class<? extends Throwable> exCls,
         String expMsg
     ) throws Exception {
         Ignite ignite = startGridsWithSnapshot(2, CACHE_KEYS_RANGE);
@@ -658,20 +655,19 @@ public class IgniteClusterSnapshoRestoreSelfTest extends AbstractSnapshotSelfTes
 
         spi.stopBlock();
 
-        GridTestUtils.assertThrowsAnyCause(log, () -> fut.get(TIMEOUT), expCls, expMsg);
+        if (exCls == null) {
+            fut.get(TIMEOUT);
+
+            ignite.cluster().state(ClusterState.ACTIVE);
+
+            checkCacheKeys(ignite.cache(dfltCacheCfg.getName()), CACHE_KEYS_RANGE);
+
+            return;
+        }
+
+        GridTestUtils.assertThrowsAnyCause(log, () -> fut.get(TIMEOUT), exCls, expMsg);
 
         ignite.cluster().state(ClusterState.ACTIVE);
-
-        forceCheckpoint();
-
-        awaitPartitionMapExchange();
-        U.sleep(5);
-
-        forceCheckpoint();
-
-        U.sleep(5);
-
-        awaitPartitionMapExchange();
 
         ensureCacheDirEmpty(2, dfltCacheCfg.getName());
 
@@ -691,7 +687,7 @@ public class IgniteClusterSnapshoRestoreSelfTest extends AbstractSnapshotSelfTes
 
             CacheGroupDescriptor desc = grid.context().cache().cacheGroupDescriptor(CU.cacheId(cacheName));
 
-            assert desc == null : cacheName;
+            assertNull("nodeIdx=" + nodeIdx + ", cache=" + cacheName, desc);
 
             GridTestUtils.waitForCondition(
                 () -> !grid.context().cache().context().snapshotMgr().isCacheRestoring(null),
@@ -732,7 +728,21 @@ public class IgniteClusterSnapshoRestoreSelfTest extends AbstractSnapshotSelfTes
      * @throws Exception if failed.
      */
     private IgniteEx startGridsWithSnapshot(int nodesCnt, int keysCnt) throws Exception {
+        return startGridsWithSnapshot(nodesCnt, keysCnt, false);
+    }
+
+    /**
+     * @param nodesCnt Nodes count.
+     * @param keysCnt Number of keys to create.
+     * @param startClient {@code True} to start an additional client node.
+     * @return Ignite coordinator instance.
+     * @throws Exception if failed.
+     */
+    private IgniteEx startGridsWithSnapshot(int nodesCnt, int keysCnt, boolean startClient) throws Exception {
         IgniteEx ignite = startGridsWithCache(nodesCnt, keysCnt, valBuilder, dfltCacheCfg);
+
+        if (startClient)
+            ignite = startClientGrid("client");
 
         ignite.snapshot().createSnapshot(SNAPSHOT_NAME).get(TIMEOUT);
 

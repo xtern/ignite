@@ -1402,6 +1402,10 @@ public class GridDhtPartitionsExchangeFuture extends GridDhtTopologyFutureAdapte
         else if (req.state().active()) {
             cctx.exchange().exchangerBlockingSectionBegin();
 
+            // todo
+            if (req.state() == ClusterState.ACTIVE)
+                cctx.cache().context().snapshotMgr().onActivate(cctx.kernalContext());
+
             // TODO: BLT changes on inactive cluster can't be handled easily because persistent storage hasn't been initialized yet.
             try {
                 if (!forceAffReassignment) {

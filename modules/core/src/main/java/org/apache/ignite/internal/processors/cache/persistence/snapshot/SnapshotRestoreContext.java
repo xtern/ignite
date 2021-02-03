@@ -67,8 +67,6 @@ class SnapshotRestoreContext {
     /** Restored cache groups. */
     private final Map<String, GroupRestoreContext> grps = new ConcurrentHashMap<>();
 
-    private volatile boolean restored;
-
     /**
      * @param reqId Request ID.
      * @param snpName Snapshot name.
@@ -140,62 +138,62 @@ class SnapshotRestoreContext {
         grpCtx.caches.add(cacheName);
     }
 
-    /**
-     * @param cacheName Cache name.
-     * @param grpName Group name.
-     * @param err Exception (if any).
-     * @param svc Executor service for asynchronous rollback.
-     * @param finishFut A future to be completed when all restored cache groups are started or rolled back.
-     */
-    public void processCacheStart(
-        String cacheName,
-        @Nullable String grpName,
-        @Nullable Throwable err,
-        ExecutorService svc,
-        GridFutureAdapter<Void> finishFut
-    ) {
-        String grpName0 = grpName != null ? grpName : cacheName;
-
-        GroupRestoreContext grp = grps.get(grpName0);
-
-        // If any of shared caches has been started - we cannot rollback changes.
-        if (grp.caches.remove(cacheName) && err == null)
-            grp.started = true;
-
-        if (!grp.caches.isEmpty()) {
-            if (err != null)
-                grp.startErr = err;
-
-            return;
-        }
-
-        if (err != null && !grp.started) {
-            svc.submit(() -> {
-                rollbackLock.lock();
-
-                try {
-                    rollback(grpName0);
-
-                    if (grps.isEmpty())
-                        finishFut.onDone(err);
-                }
-                finally {
-                    rollbackLock.unlock();
-                }
-            });
-
-            return;
-        }
-
-        rollbackLock.lock();
-
-        try {
-            if (grps.remove(grpName0) != null && grps.isEmpty())
-                finishFut.onDone(null, err == null ? grp.startErr : err);
-        } finally {
-            rollbackLock.unlock();
-        }
-    }
+//    /**
+//     * @param cacheName Cache name.
+//     * @param grpName Group name.
+//     * @param err Exception (if any).
+//     * @param svc Executor service for asynchronous rollback.
+//     * @param finishFut A future to be completed when all restored cache groups are started or rolled back.
+//     */
+//    public void processCacheStart(
+//        String cacheName,
+//        @Nullable String grpName,
+//        @Nullable Throwable err,
+//        ExecutorService svc,
+//        GridFutureAdapter<Void> finishFut
+//    ) {
+//        String grpName0 = grpName != null ? grpName : cacheName;
+//
+//        GroupRestoreContext grp = grps.get(grpName0);
+//
+//        // If any of shared caches has been started - we cannot rollback changes.
+//        if (grp.caches.remove(cacheName) && err == null)
+//            grp.started = true;
+//
+//        if (!grp.caches.isEmpty()) {
+//            if (err != null)
+//                grp.startErr = err;
+//
+//            return;
+//        }
+//
+//        if (err != null && !grp.started) {
+//            svc.submit(() -> {
+//                rollbackLock.lock();
+//
+//                try {
+//                    rollback(grpName0);
+//
+//                    if (grps.isEmpty())
+//                        finishFut.onDone(err);
+//                }
+//                finally {
+//                    rollbackLock.unlock();
+//                }
+//            });
+//
+//            return;
+//        }
+//
+//        rollbackLock.lock();
+//
+//        try {
+//            if (grps.remove(grpName0) != null && grps.isEmpty())
+//                finishFut.onDone(null, err == null ? grp.startErr : err);
+//        } finally {
+//            rollbackLock.unlock();
+//        }
+//    }
 
     /**
      * Restore specified cache groups from the local snapshot directory.
@@ -235,12 +233,8 @@ class SnapshotRestoreContext {
     }
 
     /**
-     * @return If restore phase has finished.
+     * Rollback changes made by process in specified cache group.
      */
-    public boolean restored() {
-        return restored;
-    }
-
     public void rollback() {
         for (String grp : groups())
             rollback(grp);
@@ -279,10 +273,10 @@ class SnapshotRestoreContext {
         /** Files created in the cache group folder during a restore operation. */
         final List<File> files = new ArrayList<>();
 
-        /** The flag indicates that one of the caches in this cache group has been started. */
-        volatile boolean started;
+//        /** The flag indicates that one of the caches in this cache group has been started. */
+//        volatile boolean started;
 
-        /** An exception that was thrown when starting a shared cache group (if any). */
-        volatile Throwable startErr;
+//        /** An exception that was thrown when starting a shared cache group (if any). */
+//        volatile Throwable startErr;
     }
 }

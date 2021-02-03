@@ -566,6 +566,9 @@ public class FilePageStore implements PageStore {
                             try {
                                 File cfgFile = pathProvider.apply().toFile();
 
+                                if (cfgFile.getName().contains("index") && cfgFile.getAbsolutePath().contains("cache-default"))
+                                    U.dumpStack("init index.bin: " + cfgFile);
+
                                 this.fileIO = fileIO = ioFactory.create(cfgFile, CREATE, READ, WRITE);
 
                                 fileExists = true;

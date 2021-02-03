@@ -2393,19 +2393,29 @@ public class GridCacheProcessor extends GridProcessorAdapter {
             if (proxy == null)
                 continue;
 
-            GridCacheContext<?, ?> cacheCtx = sharedCtx.cacheContext(CU.cacheId(proxy.getName()));
+            restartProxy(proxy);
+        }
+    }
 
-            if (cacheCtx == null)
-                continue;
+    /**
+     * Restart proxy of cache if marked as restarting. Requires external synchronization - shouldn't be
+     * called concurrently with another caches restart.
+     */
+    public void restartProxy(IgniteCacheProxy<?, ?> proxy) {
+        IgniteCacheProxyImpl<?, ?> proxyImpl = (IgniteCacheProxyImpl<?, ?>)proxy;
 
-            if (proxy.isRestarting()) {
-                caches.get(proxy.getName()).active(true);
+        GridCacheContext<?, ?> cacheCtx = sharedCtx.cacheContext(CU.cacheId(proxyImpl.getName()));
 
-                proxy.onRestarted(cacheCtx, cacheCtx.cache());
+        if (cacheCtx == null)
+            return;
 
-                if (cacheCtx.dataStructuresCache())
-                    ctx.dataStructures().restart(proxy.getName(), proxy.internalProxy());
-            }
+        if (proxyImpl.isRestarting()) {
+            caches.get(proxy.getName()).active(true);
+
+            proxyImpl.onRestarted(cacheCtx, cacheCtx.cache());
+
+            if (cacheCtx.dataStructuresCache())
+                ctx.dataStructures().restart(proxyImpl.getName(), proxyImpl.internalProxy());
         }
     }
 
@@ -2928,7 +2938,7 @@ public class GridCacheProcessor extends GridProcessorAdapter {
      * @param grpId Group ID.
      * @param destroy Group destroy flag.
      */
-    public void stopCacheGroup(int grpId, boolean destroy) {
+    private void stopCacheGroup(int grpId, boolean destroy) {
         CacheGroupContext grp = cacheGrps.remove(grpId);
 
         if (grp != null)
@@ -2970,11 +2980,6 @@ public class GridCacheProcessor extends GridProcessorAdapter {
 
             if (fut != null)
                 fut.onDone(success, err);
-        }
-
-        if (req.restoredCache()) {
-            ctx.cache().context().snapshotMgr().afterRestoredCacheStarted(req.cacheName(),
-                req.startCacheConfiguration().getGroupName(), err);
         }
     }
 
@@ -5441,6 +5446,9 @@ public class GridCacheProcessor extends GridProcessorAdapter {
 
         /** {@inheritDoc} */
         @Override public void onReadyForRead(ReadOnlyMetastorage metastorage) throws IgniteCheckedException {
+            // todo
+            ctx.cache().context().snapshotMgr().onReadyForRead(metastorage);
+
             CacheJoinNodeDiscoveryData data = locCfgMgr.restoreCacheConfigurations();
 
             cachesInfo.onStart(data);
