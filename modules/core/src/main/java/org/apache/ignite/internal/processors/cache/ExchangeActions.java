@@ -28,6 +28,7 @@ import java.util.Set;
 import org.apache.ignite.internal.util.typedef.C1;
 import org.apache.ignite.internal.util.typedef.F;
 import org.apache.ignite.internal.util.typedef.internal.CU;
+import org.apache.ignite.internal.util.typedef.internal.U;
 import org.jetbrains.annotations.Nullable;
 
 /**
@@ -289,6 +290,9 @@ public class ExchangeActions {
      * @param grpDesc Group descriptor.
      */
     void addCacheGroupToStart(CacheGroupDescriptor grpDesc) {
+        if ("default".equals(grpDesc.cacheOrGroupName()))
+            U.dumpStack("xxx> addCacheGroupToStart");
+
         assert grpDesc != null;
 
         if (cacheGrpsToStart == null)

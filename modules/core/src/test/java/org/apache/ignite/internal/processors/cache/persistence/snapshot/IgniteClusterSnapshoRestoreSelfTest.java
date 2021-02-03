@@ -41,10 +41,12 @@ import org.apache.ignite.configuration.CacheConfiguration;
 import org.apache.ignite.configuration.IgniteConfiguration;
 import org.apache.ignite.internal.IgniteEx;
 import org.apache.ignite.internal.TestRecordingCommunicationSpi;
+import org.apache.ignite.internal.processors.cache.CacheGroupDescriptor;
 import org.apache.ignite.internal.processors.cache.distributed.dht.IgniteClusterReadOnlyException;
 import org.apache.ignite.internal.util.distributed.DistributedProcess.DistributedProcessType;
 import org.apache.ignite.internal.util.distributed.SingleNodeMessage;
 import org.apache.ignite.internal.util.typedef.F;
+import org.apache.ignite.internal.util.typedef.internal.CU;
 import org.apache.ignite.internal.util.typedef.internal.U;
 import org.apache.ignite.lang.IgniteFuture;
 import org.apache.ignite.spi.IgniteSpiException;
@@ -630,7 +632,7 @@ public class IgniteClusterSnapshoRestoreSelfTest extends AbstractSnapshotSelfTes
      */
     private void checkDeactivationDuringRestoring(DistributedProcessType procType) throws Exception {
         checkClusterStateChange(ClusterState.INACTIVE, procType, IgniteCheckedException.class,
-            "The cluster has been deactivated.");
+            "Cluster state has been changed.");
     }
 
     /**
@@ -658,9 +660,20 @@ public class IgniteClusterSnapshoRestoreSelfTest extends AbstractSnapshotSelfTes
 
         GridTestUtils.assertThrowsAnyCause(log, () -> fut.get(TIMEOUT), expCls, expMsg);
 
-        ensureCacheDirEmpty(2, dfltCacheCfg.getName());
-
         ignite.cluster().state(ClusterState.ACTIVE);
+
+        forceCheckpoint();
+
+        awaitPartitionMapExchange();
+        U.sleep(5);
+
+        forceCheckpoint();
+
+        U.sleep(5);
+
+        awaitPartitionMapExchange();
+
+        ensureCacheDirEmpty(2, dfltCacheCfg.getName());
 
         ignite.snapshot().restoreCacheGroups(SNAPSHOT_NAME, Collections.singleton(dfltCacheCfg.getName())).get(TIMEOUT);
 
@@ -675,6 +688,10 @@ public class IgniteClusterSnapshoRestoreSelfTest extends AbstractSnapshotSelfTes
     private void ensureCacheDirEmpty(int nodesCnt, String cacheName) throws IgniteCheckedException {
         for (int nodeIdx = 0; nodeIdx < nodesCnt; nodeIdx++) {
             IgniteEx grid = grid(nodeIdx);
+
+            CacheGroupDescriptor desc = grid.context().cache().cacheGroupDescriptor(CU.cacheId(cacheName));
+
+            assert desc == null : cacheName;
 
             GridTestUtils.waitForCondition(
                 () -> !grid.context().cache().context().snapshotMgr().isCacheRestoring(null),

@@ -28,11 +28,18 @@ public class SnapshotRestoreRollbackResponse implements Serializable {
 
     private final Throwable failure;
 
-    public SnapshotRestoreRollbackResponse(Throwable failure) {
+    private final boolean completed;
+
+    public SnapshotRestoreRollbackResponse(Throwable failure, boolean completed) {
         this.failure = failure;
+        this.completed = completed;
     }
 
     public Throwable failure() {
         return failure;
+    }
+
+    public boolean completed() {
+        return completed;
     }
 }

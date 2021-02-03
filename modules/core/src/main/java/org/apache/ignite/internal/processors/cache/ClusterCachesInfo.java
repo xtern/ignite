@@ -1767,6 +1767,10 @@ public class ClusterCachesInfo {
             return exchangeActions;
 
         if (msg.activate()) {
+            Set<String> grps = new HashSet<>(ctx.cache().context().snapshotMgr().destroyGroups());
+
+            System.out.println(">xxx> grps " + grps);
+
             for (DynamicCacheDescriptor desc : orderedCaches(CacheComparators.DIRECT)) {
                 desc.startTopologyVersion(topVer);
 
@@ -1788,11 +1792,18 @@ public class ClusterCachesInfo {
                     req.locallyConfigured(true);
                 }
 
-                exchangeActions.addCacheToStart(req, desc);
+                if (grps.contains(desc.cacheName()))
+                    exchangeActions.addCacheToStop(req, desc);
+                else
+                    exchangeActions.addCacheToStart(req, desc);
             }
 
-            for (CacheGroupDescriptor grpDesc : registeredCacheGroups().values())
-                exchangeActions.addCacheGroupToStart(grpDesc);
+            for (CacheGroupDescriptor grpDesc : registeredCacheGroups().values()) {
+                if (grps.contains(grpDesc.cacheOrGroupName()))
+                    exchangeActions.addCacheGroupToStop(grpDesc, true);
+                else
+                    exchangeActions.addCacheGroupToStart(grpDesc);
+            }
 
             List<StoredCacheData> storedCfgs = msg.storedCacheConfigurations();
 
@@ -1804,7 +1815,7 @@ public class ClusterCachesInfo {
                 for (StoredCacheData storedCfg : storedCfgs) {
                     CacheConfiguration ccfg = storedCfg.config();
 
-                    if (!registeredCaches.containsKey(ccfg.getName())) {
+                    if (!grps.contains(storedCfg.config().getName()) && !grps.contains(storedCfg.config().getGroupName()) && !registeredCaches.containsKey(ccfg.getName())) {
                         DynamicCacheChangeRequest req = new DynamicCacheChangeRequest(msg.requestId(),
                             ccfg.getName(),
                             msg.initiatorNodeId());

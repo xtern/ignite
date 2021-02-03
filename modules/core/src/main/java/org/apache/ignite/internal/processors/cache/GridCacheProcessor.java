@@ -2928,7 +2928,7 @@ public class GridCacheProcessor extends GridProcessorAdapter {
      * @param grpId Group ID.
      * @param destroy Group destroy flag.
      */
-    private void stopCacheGroup(int grpId, boolean destroy) {
+    public void stopCacheGroup(int grpId, boolean destroy) {
         CacheGroupContext grp = cacheGrps.remove(grpId);
 
         if (grp != null)
@@ -3141,6 +3141,7 @@ public class GridCacheProcessor extends GridProcessorAdapter {
         AffinityTopologyVersion topVer,
         DiscoveryDataClusterState curState
     ) throws IgniteCheckedException {
+//        U.dumpStack(">xxx> onStateChangeRequest");
         return cachesInfo.onStateChangeRequest(msg, topVer, curState);
     }
 

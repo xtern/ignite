@@ -34,6 +34,7 @@ import org.apache.ignite.IgniteException;
 import org.apache.ignite.IgniteLogger;
 import org.apache.ignite.binary.BinaryObjectException;
 import org.apache.ignite.cluster.ClusterNode;
+import org.apache.ignite.cluster.ClusterState;
 import org.apache.ignite.compute.ComputeJob;
 import org.apache.ignite.compute.ComputeJobAdapter;
 import org.apache.ignite.compute.ComputeJobResult;
@@ -43,6 +44,9 @@ import org.apache.ignite.internal.GridKernalContext;
 import org.apache.ignite.internal.IgniteEx;
 import org.apache.ignite.internal.IgniteInternalFuture;
 import org.apache.ignite.internal.processors.affinity.AffinityTopologyVersion;
+import org.apache.ignite.internal.processors.cache.CacheGroupContext;
+import org.apache.ignite.internal.processors.cache.CacheGroupDescriptor;
+import org.apache.ignite.internal.processors.cache.GridCacheContext;
 import org.apache.ignite.internal.processors.cache.StoredCacheData;
 import org.apache.ignite.internal.processors.cache.persistence.file.FilePageStoreManager;
 import org.apache.ignite.internal.processors.cluster.DiscoveryDataClusterState;
@@ -52,6 +56,7 @@ import org.apache.ignite.internal.util.future.GridFutureAdapter;
 import org.apache.ignite.internal.util.future.IgniteFinishedFutureImpl;
 import org.apache.ignite.internal.util.future.IgniteFutureImpl;
 import org.apache.ignite.internal.util.typedef.F;
+import org.apache.ignite.internal.util.typedef.T2;
 import org.apache.ignite.internal.util.typedef.internal.CU;
 import org.apache.ignite.internal.util.typedef.internal.S;
 import org.apache.ignite.internal.util.typedef.internal.U;
@@ -108,7 +113,7 @@ public class SnapshotRestoreCacheGroupProcess {
             ctx, RESTORE_CACHE_GROUP_SNAPSHOT_START, this::startCaches, this::finishStartCaches);
 
         rollbackRestoreProc = new DistributedProcess<>(
-            ctx, RESTORE_CACHE_GROUP_SNAPSHOT_FINISH, this::rollback, this::finishRollback);
+            ctx, RESTORE_CACHE_GROUP_SNAPSHOT_FINISH, this::complete, this::finishComplete);
 
         fut.onDone();
     }
@@ -135,7 +140,7 @@ public class SnapshotRestoreCacheGroupProcess {
 
         DiscoveryDataClusterState clusterState = ctx.state().clusterState();
 
-        if (!clusterState.state().active())
+        if (ctx.state().clusterState().state() != ClusterState.ACTIVE)
             return new IgniteFinishedFutureImpl<>(new IgniteException(OP_REJECT_MSG + "The cluster should be active."));
 
         if (!clusterState.hasBaselineTopology()) {
@@ -281,7 +286,7 @@ public class SnapshotRestoreCacheGroupProcess {
                 new IgniteException(OP_REJECT_MSG + "The previous snapshot restore operation was not completed."));
         }
 
-        if (!ctx.state().clusterState().state().active())
+        if (ctx.state().clusterState().state() != ClusterState.ACTIVE)
             return new GridFinishedFuture<>(new IllegalStateException(OP_REJECT_MSG + "The cluster should be active."));
 
         // Skip creating future on initiator.
@@ -313,6 +318,8 @@ public class SnapshotRestoreCacheGroupProcess {
                     ensureCacheAbsent(cfg.config().getName());
             }
 
+            ctx.cache().context().snapshotMgr().updateRestoredGroups(opCtx0.groups());
+
             boolean updateMeta = ctx.localNodeId().equals(req.updateMetaNodeId());
 
             ctx.getSystemExecutorService().submit(() -> {
@@ -324,6 +331,8 @@ public class SnapshotRestoreCacheGroupProcess {
                             "[groups=" + opCtx0.groups() + ", snapshot=" + opCtx0.snapshotName() + ']', fut0.error());
 
                         opCtx0.rollback();
+
+                        ctx.cache().context().snapshotMgr().updateRestoredGroups(null);
 
                         retFut.onDone(fut0.error());
                     }
@@ -357,6 +366,13 @@ public class SnapshotRestoreCacheGroupProcess {
         if (failure != null) {
             opCtx.rollback();
 
+            try {
+                ctx.cache().context().snapshotMgr().updateRestoredGroups(null);
+            }
+            catch (IgniteCheckedException e) {
+                log.error("Unable to reset cache group restore state", e);
+            }
+
             fut0.onDone(failure);
 
             return;
@@ -387,7 +403,7 @@ public class SnapshotRestoreCacheGroupProcess {
             return new GridFinishedFuture<>(new IgniteException("Unknown snapshot restore operation was rejected."));
 
         if (!ctx.state().clusterState().state().active())
-            return new GridFinishedFuture<>(new IgniteCheckedException(OP_REJECT_MSG + "Cluster state has been changed"));
+            return new GridFinishedFuture<>(new IgniteCheckedException(OP_REJECT_MSG + "Cluster state has been changed."));
 
         if (!U.isLocalNodeCoordinator(ctx.discovery()))
             return new GridFinishedFuture<>();
@@ -448,7 +464,7 @@ public class SnapshotRestoreCacheGroupProcess {
      * @param req Request to perform snapshot restore.
      * @return Result future.
      */
-    private IgniteInternalFuture<SnapshotRestoreRollbackResponse> rollback(SnapshotRestoreRollbackRequest req) {
+    private IgniteInternalFuture<SnapshotRestoreRollbackResponse> complete(SnapshotRestoreRollbackRequest req) {
         System.out.println(">xxx> start rollback [0]");
 
         if (ctx.clientNode())
@@ -482,6 +498,15 @@ public class SnapshotRestoreCacheGroupProcess {
 
         assert req.failure() != null;
 
+        // todo should interrupt all operations on deactivation  -check "interrupted" flag and done future
+        if (ctx.state().clusterState().state() != ClusterState.ACTIVE) {
+            Throwable fail = req.failure();
+
+            fail.addSuppressed(new IgniteCheckedException("Rollback operation suspended, cluster state has been changed."));
+
+            return new GridFinishedFuture<>(new SnapshotRestoreRollbackResponse(fail, false));
+        }
+
         GridFutureAdapter<SnapshotRestoreRollbackResponse> retFut = new GridFutureAdapter<>();
 
         List<String> cacheNames = new ArrayList<>(F.viewReadOnly(opCtx.configs(), data -> data.config().getName()));
@@ -502,7 +527,7 @@ public class SnapshotRestoreCacheGroupProcess {
                         procFailure.addSuppressed(destroyErr);
                     }
 
-                    retFut.onDone(new SnapshotRestoreRollbackResponse(procFailure));
+                    retFut.onDone(new SnapshotRestoreRollbackResponse(procFailure, destroyErr == null));
                 }
             );
         } catch (Exception e) {
@@ -512,13 +537,13 @@ public class SnapshotRestoreCacheGroupProcess {
 
             err0.addSuppressed(e);
 
-            return new GridFinishedFuture<>(new SnapshotRestoreRollbackResponse(err0));
+            return new GridFinishedFuture<>(new SnapshotRestoreRollbackResponse(err0, false));
         }
 
         return retFut;
     }
 
-    private void finishRollback(UUID reqId, Map<UUID, SnapshotRestoreRollbackResponse> res, Map<UUID, Exception> errs) {
+    private void finishComplete(UUID reqId, Map<UUID, SnapshotRestoreRollbackResponse> res, Map<UUID, Exception> errs) {
         RestoreSnapshotFuture fut0 = fut;
 
         // todo restartProxies should be called on all nodes
@@ -529,6 +554,15 @@ public class SnapshotRestoreCacheGroupProcess {
 
         if (failure == null) {
             SnapshotRestoreRollbackResponse resp = F.first(F.viewReadOnly(res.values(), v -> v, v -> v != null));
+
+            if (resp == null || resp.completed()) {
+                try {
+                    ctx.cache().context().snapshotMgr().updateRestoredGroups(null);
+                }
+                catch (IgniteCheckedException e) {
+                    log.error("Unable to reset restored groups", e);
+                }
+            }
 
             if (resp != null)
                 fut0.onDone(resp.failure());
@@ -553,6 +587,53 @@ public class SnapshotRestoreCacheGroupProcess {
 //        assert failure != null;
 //
 //        fut0.onDone(failure);
+    }
+
+    public void cleanup(Collection<String> grps) {
+        for (String grpName : grps) {
+            CacheGroupDescriptor desc = ctx.cache().cacheGroupDescriptor(CU.cacheId(grpName));
+
+            // todo snapshot folder celanup folder
+            File cacheDir = ctx.cache().context().snapshotMgr().resolveSnapshotCacheDir("testSnapshot", grpName);
+            log.info("Cleaning up " + cacheDir);
+            U.delete(cacheDir);
+
+            if (desc == null)
+                continue;
+
+            ctx.cache().context().affinity().stopCacheGroupOnReconnect(CU.cacheId(grpName));
+
+            CacheGroupDescriptor obj = ctx.cache().cacheGroupDescriptors().remove(CU.cacheId(grpName));
+
+            assert obj != null : grpName;
+
+//            grp =
+//            CacheGroupContext grp = ctx.cache().cacheGroup(CU.cacheId(grpName));
+//
+//            if (grp != null) {
+//                ctx.cache().context().database().checkpointReadLock();
+//
+//                try {
+//                    for (GridCacheContext<?, ?> cacheCtx : grp.caches())
+//                        ctx.cache().prepareCacheStop(cacheCtx.name(), false);
+//                }
+//                finally {
+//                    ctx.cache().context().database().checkpointReadUnlock();
+//                }
+//
+//                ctx.cache().stopCacheGroup(grp.groupId(), false);
+//
+//                ctx.cache().context().database().onCacheGroupsStopped(Collections.singleton(new T2<>(grp, false)));
+//            }
+//            else
+//                assert false : grpName;
+
+            //ctx.cache().prepareCacheStop(grpName, true);
+
+//            desc = ctx.cache().cacheGroupDescriptor(CU.cacheId(grpName));
+
+//            assert desc == null : grpName;
+        }
     }
 
     private static class SnapshotRestoreCacheMeta implements Serializable {

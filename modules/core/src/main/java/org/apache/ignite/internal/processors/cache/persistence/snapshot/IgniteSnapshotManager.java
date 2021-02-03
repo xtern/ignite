@@ -194,6 +194,8 @@ public class IgniteSnapshotManager extends GridCacheSharedManagerAdapter
     /** Total number of thread to perform local snapshot. */
     private static final int SNAPSHOT_THREAD_POOL_SIZE = 4;
 
+    private static final String RESTORE_GRP_KEY = "snapshotRestoreGroups";
+
     /**
      * Local buffer to perform copy-on-write operations with pages for {@code SnapshotFutureTask.PageStoreSerialWriter}s.
      * It is important to have only only buffer per thread (instead of creating each buffer per
@@ -416,9 +418,88 @@ public class IgniteSnapshotManager extends GridCacheSharedManagerAdapter
         }
     }
 
+    private volatile Collection<String> grpsToDestroy = null;
+
+    public Collection<String> destroyGroups() {
+        return grpsToDestroy == null ? Collections.emptyList() : grpsToDestroy;
+//        if (metaStorage == null)
+//            return Collections.emptyList();
+//
+//        cctx.database().checkpointReadLock();
+//
+//        try {
+//            Collection<String> res = (Collection<String>)metaStorage.read(RESTORE_GRP_KEY);
+//
+//            return res == null ? Collections.emptyList() : res;
+//        }
+//        catch (IgniteCheckedException e) {
+//            throw new IgniteException(e);
+//        }
+//        finally {
+//            cctx.database().checkpointReadUnlock();
+//        }
+    }
+
     /** {@inheritDoc} */
     @Override public void onActivate(GridKernalContext kctx) {
         // No-op.
+        if (grpsToDestroy == null)
+            return;
+
+        for (String grp : grpsToDestroy) {
+            // todo
+            File snpDir = resolveSnapshotCacheDir("testSnapshot", grp);
+
+            File cacheDir = null;
+            try {
+                cacheDir = U.resolveWorkDirectory(cctx.kernalContext().config().getWorkDirectory(), DFLT_STORE_DIR +
+                    File.separator + pdsSettings.folderName() + File.separator + snpDir.getName(), false);
+            }
+            catch (IgniteCheckedException e) {
+                throw new IgniteException(e);
+            }
+
+            System.out.println(">xxx> cleanup " + cacheDir);
+
+            U.delete(cacheDir);
+        }
+
+        if (true)
+            return;
+
+        //restoreCacheGrpProc.cleanupIfNeeded();
+        cctx.database().checkpointReadLock();
+
+        try {
+            Collection<String> grps = (Collection<String>)metaStorage.read(RESTORE_GRP_KEY);
+
+            if (grps != null) {
+                // perform cleanup
+                for (String grp : grps) {
+                    U.delete(resolveSnapshotCacheDir("testSnapshot", grp));
+                }
+                //restoreCacheGrpProc.cleanup(grps);
+
+//                if (U.isLocalNodeCoordinator(cctx.kernalContext().discovery())) {
+//                    try {
+//                        cctx.kernalContext().cache().dynamicDestroyCaches(grps, true).listen(f -> {
+//                            if (f.error() != null)
+//                                log.error("Unable to destroy caches", f.error());
+//                        });
+//                    } catch (Exception e) {
+//                        log.error("Unable to destroy caches", e);
+//                    }
+//                }
+            }
+        }
+        catch (IgniteCheckedException e) {
+            //todo
+            log.error("Unable to cleanup restored groups", e);
+            assert false;
+        }
+        finally {
+            cctx.database().checkpointReadUnlock();
+        }
     }
 
     /** {@inheritDoc} */
@@ -948,6 +1029,24 @@ public class IgniteSnapshotManager extends GridCacheSharedManagerAdapter
         }
         catch (IOException e) {
             throw new IgniteCheckedException("Unable to copy file [snapshot=" + snpName + ", grp=" + grpName + ']', e);
+        }
+    }
+
+    protected void updateRestoredGroups(@Nullable Collection<String> grps) throws IgniteCheckedException {
+        cctx.database().checkpointReadLock();
+
+        try {
+            if (grps == null) {
+                grpsToDestroy = null;
+                metaStorage.remove(RESTORE_GRP_KEY);
+            } else {
+                grpsToDestroy = grps;
+
+                metaStorage.write(RESTORE_GRP_KEY, new ArrayList<>(grps));
+            }
+        }
+        finally {
+            cctx.database().checkpointReadUnlock();
         }
     }
 
