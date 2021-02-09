@@ -18,49 +18,43 @@
 package org.apache.ignite.internal.processors.cache.persistence.snapshot;
 
 import java.io.Serializable;
-import java.util.Collection;
-import org.apache.ignite.internal.util.tostring.GridToStringInclude;
-import org.apache.ignite.internal.util.typedef.internal.S;
+import java.util.List;
+import java.util.UUID;
+import org.apache.ignite.internal.processors.cache.StoredCacheData;
 
 /**
- * Request to prepare snapshot restore.
+ * Result of a cache group restore verification job.
  */
-public class SnapshotInfoTaskArg implements Serializable {
+public class SnapshotRestoreVerificationResult implements Serializable {
     /** Serial version uid. */
     private static final long serialVersionUID = 0L;
 
-    /** Snapshot name. */
-    private final String snpName;
+    /** List of stored cache configurations. */
+    private final List<StoredCacheData> ccfgs;
 
-    /** List of cache group names to restore from the snapshot. */
-    @GridToStringInclude
-    private final Collection<String> grps;
+    /** Local node ID. */
+    private final UUID locNodeId;
 
     /**
-     * @param snpName Snapshot name.
-     * @param grps List of cache group names to restore from the snapshot.
+     * @param ccfgs List of stored cache configurations.
+     * @param locNodeId Local node ID.
      */
-    public SnapshotInfoTaskArg(String snpName, Collection<String> grps) {
-        this.snpName = snpName;
-        this.grps = grps;
+    public SnapshotRestoreVerificationResult(List<StoredCacheData> ccfgs, UUID locNodeId) {
+        this.ccfgs = ccfgs;
+        this.locNodeId = locNodeId;
     }
 
     /**
-     * @return List of cache group names to restore from the snapshot.
+     * @return List of stored cache configurations.
      */
-    public Collection<String> groups() {
-        return grps;
+    public List<StoredCacheData> configs() {
+        return ccfgs;
     }
 
     /**
-     * @return Snapshot name.
+     * @return Local node ID.
      */
-    public String snapshotName() {
-        return snpName;
-    }
-
-    /** {@inheritDoc} */
-    @Override public String toString() {
-        return S.toString(SnapshotInfoTaskArg.class, this);
+    public UUID localNodeId() {
+        return locNodeId;
     }
 }

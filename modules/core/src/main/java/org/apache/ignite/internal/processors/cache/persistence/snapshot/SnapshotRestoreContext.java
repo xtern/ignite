@@ -27,20 +27,18 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ExecutorService;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.BooleanSupplier;
 import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.internal.GridKernalContext;
 import org.apache.ignite.internal.processors.cache.StoredCacheData;
-import org.apache.ignite.internal.util.GridConcurrentHashSet;
-import org.apache.ignite.internal.util.future.GridFutureAdapter;
 import org.apache.ignite.internal.util.typedef.F;
 import org.apache.ignite.internal.util.typedef.internal.CU;
 import org.apache.ignite.internal.util.typedef.internal.S;
-import org.jetbrains.annotations.Nullable;
 
 import static org.apache.ignite.internal.processors.cache.binary.CacheObjectBinaryProcessorImpl.binaryWorkDir;
+import static org.apache.ignite.internal.processors.cache.persistence.file.FilePageStoreManager.CACHE_DIR_PREFIX;
+import static org.apache.ignite.internal.processors.cache.persistence.file.FilePageStoreManager.CACHE_GRP_DIR_PREFIX;
 
 /**
  * Cache group restore from snapshot operation context.
@@ -71,13 +69,21 @@ class SnapshotRestoreContext {
      * @param reqId Request ID.
      * @param snpName Snapshot name.
      * @param reqNodes List of baseline node IDs that must be alive to complete the operation.
-     * @param grps List of cache group names to restore from the snapshot.
+     * @param configs Stored cache configurations.
      * @param ctx Kernal context.
      */
-    public SnapshotRestoreContext(UUID reqId, String snpName, Set<UUID> reqNodes, Collection<String> grps,
+    public SnapshotRestoreContext(UUID reqId, String snpName, Set<UUID> reqNodes, List<StoredCacheData> configs,
         GridKernalContext ctx) {
-        for (String grpName : grps)
-            this.grps.put(grpName, new GroupRestoreContext());
+        for (StoredCacheData cacheData : configs) {
+            String cacheName = cacheData.config().getName();
+
+            cacheCfgs.put(CU.cacheId(cacheName), cacheData);
+
+            boolean shared = cacheData.config().getGroupName() != null;
+
+            this.grps.computeIfAbsent(
+                shared ? cacheData.config().getGroupName() : cacheName, v -> new GroupRestoreContext(shared));
+        }
 
         this.reqId = reqId;
         this.reqNodes = reqNodes;
@@ -100,9 +106,19 @@ class SnapshotRestoreContext {
         return snpName;
     }
 
-    /** @return List of cache group names to restore from the snapshot. */
+    /**
+     * @return List of cache group names to restore from the snapshot.
+     */
     public Set<String> groups() {
         return grps.keySet();
+    }
+
+    /**
+     * @return Names of the directories of the restored caches.
+     */
+    public Collection<String> groupDirs() {
+        return F.viewReadOnly(grps.entrySet(),
+            e -> (e.getValue().shared ? CACHE_GRP_DIR_PREFIX : CACHE_DIR_PREFIX) + e.getKey());
     }
 
     /**
@@ -117,83 +133,6 @@ class SnapshotRestoreContext {
     public Collection<StoredCacheData> configs() {
         return cacheCfgs.values();
     }
-
-    /**
-     * @param cacheData Stored cache data.
-     */
-    public void addCacheData(StoredCacheData cacheData) {
-        String cacheName = cacheData.config().getName();
-
-        cacheCfgs.put(CU.cacheId(cacheName), cacheData);
-
-        String grpName = cacheData.config().getGroupName();
-
-        if (grpName == null)
-            return;
-
-        GroupRestoreContext grpCtx = grps.get(grpName);
-
-        assert grpCtx != null : grpName;
-
-        grpCtx.caches.add(cacheName);
-    }
-
-//    /**
-//     * @param cacheName Cache name.
-//     * @param grpName Group name.
-//     * @param err Exception (if any).
-//     * @param svc Executor service for asynchronous rollback.
-//     * @param finishFut A future to be completed when all restored cache groups are started or rolled back.
-//     */
-//    public void processCacheStart(
-//        String cacheName,
-//        @Nullable String grpName,
-//        @Nullable Throwable err,
-//        ExecutorService svc,
-//        GridFutureAdapter<Void> finishFut
-//    ) {
-//        String grpName0 = grpName != null ? grpName : cacheName;
-//
-//        GroupRestoreContext grp = grps.get(grpName0);
-//
-//        // If any of shared caches has been started - we cannot rollback changes.
-//        if (grp.caches.remove(cacheName) && err == null)
-//            grp.started = true;
-//
-//        if (!grp.caches.isEmpty()) {
-//            if (err != null)
-//                grp.startErr = err;
-//
-//            return;
-//        }
-//
-//        if (err != null && !grp.started) {
-//            svc.submit(() -> {
-//                rollbackLock.lock();
-//
-//                try {
-//                    rollback(grpName0);
-//
-//                    if (grps.isEmpty())
-//                        finishFut.onDone(err);
-//                }
-//                finally {
-//                    rollbackLock.unlock();
-//                }
-//            });
-//
-//            return;
-//        }
-//
-//        rollbackLock.lock();
-//
-//        try {
-//            if (grps.remove(grpName0) != null && grps.isEmpty())
-//                finishFut.onDone(null, err == null ? grp.startErr : err);
-//        } finally {
-//            rollbackLock.unlock();
-//        }
-//    }
 
     /**
      * Restore specified cache groups from the local snapshot directory.
@@ -267,16 +206,13 @@ class SnapshotRestoreContext {
 
     /** */
     private static class GroupRestoreContext {
-        /** List of caches of the cache group. */
-        final Set<String> caches = new GridConcurrentHashSet<>();
-
         /** Files created in the cache group folder during a restore operation. */
         final List<File> files = new ArrayList<>();
 
-//        /** The flag indicates that one of the caches in this cache group has been started. */
-//        volatile boolean started;
+        final boolean shared;
 
-//        /** An exception that was thrown when starting a shared cache group (if any). */
-//        volatile Throwable startErr;
+        private GroupRestoreContext(boolean shared) {
+            this.shared = shared;
+        }
     }
 }

@@ -17,39 +17,30 @@
 
 package org.apache.ignite.internal.processors.cache.persistence.snapshot;
 
-import java.io.File;
-import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
-import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.stream.Collectors;
 import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.IgniteException;
 import org.apache.ignite.IgniteLogger;
-import org.apache.ignite.binary.BinaryObjectException;
-import org.apache.ignite.cluster.ClusterNode;
 import org.apache.ignite.cluster.ClusterState;
-import org.apache.ignite.compute.ComputeJob;
-import org.apache.ignite.compute.ComputeJobAdapter;
-import org.apache.ignite.compute.ComputeJobResult;
-import org.apache.ignite.compute.ComputeTaskAdapter;
-import org.apache.ignite.configuration.CacheConfiguration;
 import org.apache.ignite.internal.GridKernalContext;
-import org.apache.ignite.internal.IgniteEx;
 import org.apache.ignite.internal.IgniteInternalFuture;
+import org.apache.ignite.internal.cluster.ClusterGroupAdapter;
 import org.apache.ignite.internal.processors.affinity.AffinityTopologyVersion;
 import org.apache.ignite.internal.processors.cache.CacheGroupContext;
 import org.apache.ignite.internal.processors.cache.CacheGroupDescriptor;
 import org.apache.ignite.internal.processors.cache.GridCacheContext;
 import org.apache.ignite.internal.processors.cache.IgniteCacheProxy;
 import org.apache.ignite.internal.processors.cache.StoredCacheData;
-import org.apache.ignite.internal.processors.cache.persistence.file.FilePageStoreManager;
 import org.apache.ignite.internal.processors.cluster.DiscoveryDataClusterState;
 import org.apache.ignite.internal.util.distributed.DistributedProcess;
 import org.apache.ignite.internal.util.future.GridFinishedFuture;
@@ -58,14 +49,10 @@ import org.apache.ignite.internal.util.future.IgniteFinishedFutureImpl;
 import org.apache.ignite.internal.util.future.IgniteFutureImpl;
 import org.apache.ignite.internal.util.typedef.F;
 import org.apache.ignite.internal.util.typedef.internal.CU;
-import org.apache.ignite.internal.util.typedef.internal.S;
 import org.apache.ignite.internal.util.typedef.internal.U;
 import org.apache.ignite.lang.IgniteFuture;
-import org.apache.ignite.resources.IgniteInstanceResource;
-import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-import static org.apache.ignite.internal.processors.cache.binary.CacheObjectBinaryProcessorImpl.binaryWorkDir;
 import static org.apache.ignite.internal.util.distributed.DistributedProcess.DistributedProcessType.RESTORE_CACHE_GROUP_SNAPSHOT_FINISH;
 import static org.apache.ignite.internal.util.distributed.DistributedProcess.DistributedProcessType.RESTORE_CACHE_GROUP_SNAPSHOT_PREPARE;
 import static org.apache.ignite.internal.util.distributed.DistributedProcess.DistributedProcessType.RESTORE_CACHE_GROUP_SNAPSHOT_START;
@@ -83,18 +70,23 @@ public class SnapshotRestoreCacheGroupProcess {
     /** Cache group restore prepare phase. */
     private final DistributedProcess<SnapshotRestoreRequest, SnapshotRestoreResponse> prepareRestoreProc;
 
-    private final DistributedProcess<SnapshotRestoreRequest, SnapshotRestoreResponse> startCachesProc;
+    /** Cache group restore cache start phase. */
+    private final DistributedProcess<SnapshotRestoreRequest, SnapshotRestoreResponse> cacheStartProc;
 
+    /** Cache group restore finish phase. */
     private final DistributedProcess<SnapshotRestoreFinishRequest, SnapshotRestoreFinishResponse> finishRestoreProc;
 
     /** Logger. */
     private final IgniteLogger log;
 
     /** The future to be completed when the cache restore process is complete. */
-    private volatile RestoreSnapshotFuture fut = new RestoreSnapshotFuture();
+    private volatile GridFutureAdapter<Void> fut = new GridFutureAdapter<>();
 
     /** Snapshot restore operation context. */
     private volatile SnapshotRestoreContext opCtx;
+
+    /** The exception that led to the interruption of the process. */
+    private final AtomicReference<Throwable> errRef = new AtomicReference<>();
 
     /**
      * @param ctx Kernal context.
@@ -107,8 +99,8 @@ public class SnapshotRestoreCacheGroupProcess {
         prepareRestoreProc = new DistributedProcess<>(
             ctx, RESTORE_CACHE_GROUP_SNAPSHOT_PREPARE, this::prepare, this::finishPrepare);
 
-        startCachesProc = new DistributedProcess<>(
-            ctx, RESTORE_CACHE_GROUP_SNAPSHOT_START, this::startCaches, this::finishStartCaches);
+        cacheStartProc = new DistributedProcess<>(
+            ctx, RESTORE_CACHE_GROUP_SNAPSHOT_START, this::cacheStart, this::finishCacheStart);
 
         finishRestoreProc = new DistributedProcess<>(
             ctx, RESTORE_CACHE_GROUP_SNAPSHOT_FINISH, this::terminate, this::finishTerminate);
@@ -151,43 +143,51 @@ public class SnapshotRestoreCacheGroupProcess {
                 "A cluster snapshot operation is in progress."));
         }
 
-        Set<UUID> srvNodeIds = new HashSet<>(F.viewReadOnly(ctx.discovery().serverNodes(AffinityTopologyVersion.NONE),
+        Set<UUID> bltNodeIds = baselineNodes();
+
+        fut = new GridFutureAdapter<>();
+
+        ((ClusterGroupAdapter)ctx.cluster().get().forNodeIds(bltNodeIds)).compute().executeAsync(
+            new SnapshotRestoreVerificatioTask(), new SnapshotRestoreVerificationArg(snpName, cacheGrpNames)).listen(
+            f -> {
+                try {
+                    SnapshotRestoreVerificationResult res = f.get();
+
+                    Set<String> foundGrps = res == null ? Collections.emptySet() : res.configs().stream()
+                        .map(v -> v.config().getGroupName() != null ? v.config().getGroupName() : v.config().getName())
+                        .collect(Collectors.toSet());
+
+                    if (!foundGrps.containsAll(cacheGrpNames)) {
+                        Set<String> missedGroups = new HashSet<>(cacheGrpNames);
+
+                        missedGroups.removeAll(foundGrps);
+
+                        fut.onDone(new IllegalArgumentException(OP_REJECT_MSG +
+                            "Cache group(s) was not found in the snapshot [groups=" +
+                            F.concat(missedGroups, ", ") + ", snapshot=" + snpName + ']'));
+
+                        return;
+                    }
+
+                    SnapshotRestoreRequest req = new SnapshotRestoreRequest(
+                        UUID.randomUUID(), snpName, bltNodeIds, res.configs(), res.localNodeId());
+
+                    prepareRestoreProc.start(req.requestId(), req);
+                } catch (Throwable t) {
+                    fut.onDone(new IgniteException(OP_REJECT_MSG + t.getMessage(), t));
+                }
+            }
+        );
+
+        return new IgniteFutureImpl<>(fut);
+    }
+
+    /**
+     * @return Set of current baseline node IDs.
+     */
+    private Set<UUID> baselineNodes() {
+        return new HashSet<>(F.viewReadOnly(ctx.discovery().serverNodes(AffinityTopologyVersion.NONE),
             F.node2id(), (node) -> CU.baselineNode(node, ctx.state().clusterState())));
-
-        SnapshotInfoTask task = new SnapshotInfoTask();
-
-        try {
-            SnapshotRestoreCacheMeta meta =
-                ctx.task().execute(task, new SnapshotInfoTaskArg(snpName, cacheGrpNames)).get();
-
-            // todo
-            Set<String> foundGrps = new HashSet<>();
-
-            for (CacheConfiguration<?,?> ccfg : F.viewReadOnly(meta.configs(), StoredCacheData::config)) {
-                String grpName = ccfg.getGroupName() != null ? ccfg.getGroupName() : ccfg.getName();
-
-                foundGrps.add(grpName);
-            }
-
-            if (!foundGrps.containsAll(cacheGrpNames)) {
-                Set<String> missedGroups = new HashSet<>(cacheGrpNames);
-
-                missedGroups.removeAll(foundGrps);
-
-                throw new IllegalArgumentException("Cache group(s) not found in snapshot [groups=" +
-                    F.concat(missedGroups, ", ") + ", snapshot=" + snpName + ']');
-            }
-
-            SnapshotRestoreRequest req = new SnapshotRestoreRequest(
-                UUID.randomUUID(), snpName, cacheGrpNames, srvNodeIds, meta.configs(), meta.updateMetaNodeId);
-
-            prepareRestoreProc.start(req.requestId(), req);
-
-            return new IgniteFutureImpl<>(fut = new RestoreSnapshotFuture());
-        }
-        catch (IgniteCheckedException e) {
-            return new IgniteFinishedFutureImpl<>(e);
-        }
     }
 
     /**
@@ -196,16 +196,33 @@ public class SnapshotRestoreCacheGroupProcess {
      * @return {@code True} if cache group restore process is currently running.
      */
     public boolean inProgress(@Nullable String cacheName) {
-        RestoreSnapshotFuture fut0 = fut;
+        IgniteInternalFuture<Void> fut0 = fut;
 
         return !staleFuture(fut0) && (cacheName == null || opCtx.containsCache(cacheName));
+    }
+
+    /**
+     * @return Interrupted flag.
+     */
+    private boolean interrupted() {
+        return errRef.get() != null;
+    }
+
+    /**
+     * Interrupt process.
+     *
+     * @param err Error.
+     * @return {@code True} if process has been interrupted by this call.
+     */
+    private boolean interrupt(Exception err) {
+        return errRef.compareAndSet(null, err);
     }
 
     /**
      * @param fut The future of cache snapshot restore operation.
      * @return {@code True} if the future completed or not initiated.
      */
-    public boolean staleFuture(RestoreSnapshotFuture fut) {
+    public boolean staleFuture(IgniteInternalFuture<Void> fut) {
         return fut.isDone() || opCtx == null;
     }
 
@@ -215,14 +232,14 @@ public class SnapshotRestoreCacheGroupProcess {
      * @param leftNodeId Left node ID.
      */
     public void onNodeLeft(UUID leftNodeId) {
-        RestoreSnapshotFuture fut0 = fut;
+        IgniteInternalFuture<Void> fut0 = fut;
 
         if (staleFuture(fut0))
             return;
 
         if (opCtx.nodes().contains(leftNodeId)) {
-            fut0.interrupt(new IgniteException(OP_REJECT_MSG +
-                "Baseline node has left the cluster [nodeId=" + leftNodeId + ']'));
+            interrupt(new IgniteException(OP_REJECT_MSG +
+                "Baseline node(s) has left the cluster [nodeId=" + leftNodeId + ']'));
         }
     }
 
@@ -231,13 +248,13 @@ public class SnapshotRestoreCacheGroupProcess {
      *
      * @param reason Interruption reason.
      */
-    public void stop(String reason) {
-        RestoreSnapshotFuture fut0 = fut;
+    public void stop(Exception reason) {
+        IgniteInternalFuture<Void> fut0 = fut;
 
         if (staleFuture(fut0))
             return;
 
-        fut0.interrupt(new IgniteCheckedException("Restore process has been interrupted: " + reason));
+        interrupt(reason);
     }
 
     /**
@@ -256,11 +273,11 @@ public class SnapshotRestoreCacheGroupProcess {
     }
 
     /**
-     * @param req Request to prepare snapshot restore.
+     * @param req Request to prepare cache group restore from the snapshot.
      * @return Result future.
      */
     private IgniteInternalFuture<SnapshotRestoreResponse> prepare(SnapshotRestoreRequest req) {
-        if (ctx.clientNode())
+        if (!req.nodes().contains(ctx.localNodeId()))
             return new GridFinishedFuture<>();
 
         if (inProgress(null)) {
@@ -273,18 +290,21 @@ public class SnapshotRestoreCacheGroupProcess {
 
         // Skip creating future on initiator.
         if (fut.isDone())
-            fut = new RestoreSnapshotFuture();
+            fut = new GridFutureAdapter<>();
 
-        opCtx = new SnapshotRestoreContext(req.requestId(), req.snapshotName(), new HashSet<>(req.nodes()), req.groups(), ctx);
+        opCtx = new SnapshotRestoreContext(req.requestId(), req.snapshotName(), new HashSet<>(req.nodes()), req.configs(), ctx);
 
-        fut.listen(f -> opCtx = null);
+        fut.listen(f -> {
+            opCtx = null;
+            errRef.set(null);
+        });
 
-        RestoreSnapshotFuture fut0 = fut;
+        if (!baselineNodes().containsAll(req.nodes())) {
+            return new GridFinishedFuture<>(
+                new IgniteException(OP_REJECT_MSG + "Baseline node(s) has left the cluster."));
+        }
 
         SnapshotRestoreContext opCtx0 = opCtx;
-
-        for (StoredCacheData cacheData : req.configs())
-            opCtx0.addCacheData(cacheData);
 
         GridFutureAdapter<SnapshotRestoreResponse> retFut = new GridFutureAdapter<>();
 
@@ -306,17 +326,17 @@ public class SnapshotRestoreCacheGroupProcess {
 
             ctx.getSystemExecutorService().submit(() -> {
                 try {
-                    opCtx0.restore(updateMeta, fut0::interrupted);
+                    opCtx0.restore(updateMeta, this::interrupted);
 
-                    if (fut0.interrupted()) {
+                    if (interrupted()) {
                         log.error("Snapshot restore process has been interrupted " +
-                            "[groups=" + opCtx0.groups() + ", snapshot=" + opCtx0.snapshotName() + ']', fut0.error());
+                            "[groups=" + opCtx0.groups() + ", snapshot=" + opCtx0.snapshotName() + ']', errRef.get());
 
                         opCtx0.rollback();
 
                         ctx.cache().context().snapshotMgr().updateRestoredGroups(null);
 
-                        retFut.onDone(fut0.error());
+                        retFut.onDone(errRef.get());
                     }
                     else
                         retFut.onDone();
@@ -338,7 +358,7 @@ public class SnapshotRestoreCacheGroupProcess {
      * @param errs Errors.
      */
     private void finishPrepare(UUID reqId, Map<UUID, SnapshotRestoreResponse> res, Map<UUID, Exception> errs) {
-        RestoreSnapshotFuture fut0 = fut;
+        GridFutureAdapter<Void> fut0 = fut;
 
         if (fut0.isDone() || !reqId.equals(opCtx.requestId()))
             return;
@@ -361,26 +381,27 @@ public class SnapshotRestoreCacheGroupProcess {
         }
 
         if (U.isLocalNodeCoordinator(ctx.discovery()))
-            startCachesProc.start(reqId, new SnapshotRestoreRequest(reqId, null, null, null, null, null));
+            // todo
+            cacheStartProc.start(reqId, new SnapshotRestoreRequest(reqId, null, null, null, null));
     }
 
     /**
-     * @param req Request to start cache groups.
+     * @param req Request to start restored cache groups.
      * @return Result future.
      */
-    private IgniteInternalFuture<SnapshotRestoreResponse> startCaches(SnapshotRestoreRequest req) {
+    private IgniteInternalFuture<SnapshotRestoreResponse> cacheStart(SnapshotRestoreRequest req) {
         if (ctx.clientNode())
             return new GridFinishedFuture<>();
 
-        RestoreSnapshotFuture fut0 = fut;
+        SnapshotRestoreContext opCtx0 = opCtx;
 
-        if (fut0.isDone() || !req.requestId().equals(opCtx.requestId()))
+        if (fut.isDone() || !req.requestId().equals(opCtx0.requestId()))
             return new GridFinishedFuture<>();
 
-        if (!req.requestId().equals(opCtx.requestId()))
+        if (!req.requestId().equals(opCtx0.requestId()))
             return new GridFinishedFuture<>(new IgniteException("Unknown snapshot restore operation was rejected."));
 
-        if (!ctx.state().clusterState().state().active())
+        if (ctx.state().clusterState().state() != ClusterState.ACTIVE)
             return new GridFinishedFuture<>(new IgniteCheckedException(OP_REJECT_MSG + "Cluster state has been changed."));
 
         if (!U.isLocalNodeCoordinator(ctx.discovery()))
@@ -388,8 +409,11 @@ public class SnapshotRestoreCacheGroupProcess {
 
         GridFutureAdapter<SnapshotRestoreResponse> retFut = new GridFutureAdapter<>();
 
-        if (log.isInfoEnabled())
-            log.info("Starting restored caches: " + F.viewReadOnly(opCtx.configs(), c -> c.config().getName()));
+        if (log.isInfoEnabled()) {
+            log.info("Starting restored caches " +
+                "[snapshot=" + opCtx0.snapshotName() +
+                ", caches=" + F.viewReadOnly(opCtx0.configs(), c -> c.config().getName()) + ']');
+        }
 
         ctx.cache().dynamicStartCachesByStoredConf(opCtx.configs(), true, true, true, null, true).listen(
             f -> {
@@ -406,8 +430,13 @@ public class SnapshotRestoreCacheGroupProcess {
         return retFut;
     }
 
-    private void finishStartCaches(UUID reqId, Map<UUID, SnapshotRestoreResponse> res, Map<UUID, Exception> errs) {
-        RestoreSnapshotFuture fut0 = fut;
+    /**
+     * @param reqId Request ID.
+     * @param res Results.
+     * @param errs Errors.
+     */
+    private void finishCacheStart(UUID reqId, Map<UUID, SnapshotRestoreResponse> res, Map<UUID, Exception> errs) {
+        GridFutureAdapter<Void> fut0 = fut;
 
         if (fut0.isDone() || !reqId.equals(opCtx.requestId()))
             return;
@@ -423,18 +452,18 @@ public class SnapshotRestoreCacheGroupProcess {
         }
 
         if (U.isLocalNodeCoordinator(ctx.discovery()))
-            finishRestoreProc.start(reqId, new SnapshotRestoreFinishRequest(reqId, failure == null, failure));
+            finishRestoreProc.start(reqId, new SnapshotRestoreFinishRequest(reqId, failure));
     }
 
     /**
-     * @param req Request to perform snapshot restore.
+     * @param req Request to complete/rollback cache group restore process.
      * @return Result future.
      */
     private IgniteInternalFuture<SnapshotRestoreFinishResponse> terminate(SnapshotRestoreFinishRequest req) {
         if (ctx.clientNode())
             return new GridFinishedFuture<>();
 
-        RestoreSnapshotFuture fut0 = fut;
+        GridFutureAdapter<Void> fut0 = fut;
 
         if (fut0.isDone() || !req.requestId().equals(opCtx.requestId()))
             return new GridFinishedFuture<>();
@@ -442,14 +471,14 @@ public class SnapshotRestoreCacheGroupProcess {
         if (!req.requestId().equals(opCtx.requestId()))
             return new GridFinishedFuture<>(new IgniteException("Unknown snapshot restore operation was rejected."));
 
-        if (req.activateCaches()) {
-            if (fut.interrupted()) {
-                Throwable fail = req.failure();
+        if (req.error() == null) {
+            if (interrupted()) {
+                Throwable fail = req.error();
 
                 if (fail != null)
-                    fail.addSuppressed(fut.failure());
+                    fail.addSuppressed(errRef.get());
                 else
-                    fail = fut.failure();
+                    fail = errRef.get();
 
                 return new GridFinishedFuture<>(new SnapshotRestoreFinishResponse(fail, false));
             }
@@ -497,7 +526,7 @@ public class SnapshotRestoreCacheGroupProcess {
 
         List<String> cacheNames = new ArrayList<>(F.viewReadOnly(opCtx.configs(), data -> data.config().getName()));
 
-        Throwable procFailure = req.failure();
+        Throwable procFailure = req.error();
 
         try {
             ctx.cache().dynamicDestroyCaches(cacheNames, false, true).listen(
@@ -524,8 +553,13 @@ public class SnapshotRestoreCacheGroupProcess {
         return retFut;
     }
 
+    /**
+     * @param reqId Request ID.
+     * @param res Results.
+     * @param errs Errors.
+     */
     private void finishTerminate(UUID reqId, Map<UUID, SnapshotRestoreFinishResponse> res, Map<UUID, Exception> errs) {
-        RestoreSnapshotFuture fut0 = fut;
+        GridFutureAdapter<Void> fut0 = fut;
 
         if (fut0.isDone() || !reqId.equals(opCtx.requestId()))
             return;
@@ -533,7 +567,7 @@ public class SnapshotRestoreCacheGroupProcess {
         Exception failure = F.first(errs.values());
 
         if (failure == null) {
-            SnapshotRestoreFinishResponse resp = F.first(F.viewReadOnly(res.values(), v -> v, v -> v != null));
+            SnapshotRestoreFinishResponse resp = F.first(F.viewReadOnly(res.values(), v -> v, Objects::nonNull));
 
             if (resp == null || resp.completed()) {
                 try {
@@ -545,7 +579,7 @@ public class SnapshotRestoreCacheGroupProcess {
             }
 
             if (resp != null)
-                fut0.onDone(resp.failure());
+                fut0.onDone(resp.error());
             else
                 fut0.onDone();
 
@@ -553,212 +587,6 @@ public class SnapshotRestoreCacheGroupProcess {
         }
 
         if (U.isLocalNodeCoordinator(ctx.discovery()))
-            finishRestoreProc.start(reqId, new SnapshotRestoreFinishRequest(reqId, false, failure));
-    }
-
-    private static class SnapshotRestoreCacheMeta implements Serializable {
-        /** Serial version uid. */
-        private static final long serialVersionUID = 0L;
-
-        private List<StoredCacheData> ccfgs;
-
-        private Map<String, Set<Integer>> partIds;
-
-        private UUID updateMetaNodeId;
-
-        public SnapshotRestoreCacheMeta(List<StoredCacheData> ccfgs, Map<String, Set<Integer>> partIds, @Nullable UUID updateMetaNodeId) {
-            this.ccfgs = ccfgs;
-            this.partIds = partIds;
-            this.updateMetaNodeId = updateMetaNodeId;
-        }
-
-        public List<StoredCacheData> configs() {
-            return ccfgs;
-        }
-
-        public Map<String, Set<Integer>> partIds() {
-            return partIds;
-        }
-
-        public UUID updateMetaNodeId() {
-            return updateMetaNodeId;
-        }
-    }
-
-    private static class SnapshotInfoTask extends ComputeTaskAdapter<SnapshotInfoTaskArg, SnapshotRestoreCacheMeta> {
-        /** Serial version uid. */
-        private static final long serialVersionUID = 0L;
-
-        /** {@inheritDoc} */
-        @Override public @NotNull Map<? extends ComputeJob, ClusterNode> map(List<ClusterNode> subgrid,
-            SnapshotInfoTaskArg arg) throws IgniteException {
-            Map<ComputeJob, ClusterNode> jobs = new HashMap<>();
-
-            for (ClusterNode node : subgrid)
-                jobs.put(new SnapshotInfoJob(arg), node);
-
-            return jobs;
-
-        }
-
-        /** {@inheritDoc} */
-        @Nullable @Override public SnapshotRestoreCacheMeta reduce(List<ComputeJobResult> res) throws IgniteException {
-            Map<String, Set<Integer>> grpPartIds = new HashMap<>();
-            List<StoredCacheData> ccfgs = Collections.emptyList();
-            UUID firstSnapshotDataNode = null;
-
-            for (ComputeJobResult jobRes : res) {
-                SnapshotRestoreCacheMeta meta = jobRes.getData();
-
-                if (meta == null)
-                    continue;
-
-                if (firstSnapshotDataNode == null) {
-                    firstSnapshotDataNode = jobRes.getNode().id();
-                    ccfgs = meta.configs();
-                }
-                else if (meta.configs().size() != meta.configs().size()) {
-                    throw new IgniteException("Count of cache configs in shared group mismatch [" +
-                        "node1=" + firstSnapshotDataNode + ", cnt=" + ccfgs.size() +
-                        ", node2=" + jobRes.getNode().id() + ", cnt=" + meta.configs().size() + ']');
-                }
-
-                for (Map.Entry<String, Set<Integer>> e : meta.partIds().entrySet())
-                    grpPartIds.computeIfAbsent(e.getKey(), v -> new HashSet<>()).addAll(e.getValue());
-            }
-
-            for (StoredCacheData cacheData : ccfgs) {
-                CacheConfiguration<?, ?> ccfg = cacheData.config();
-
-                String grpName = ccfg.getGroupName() != null ? ccfg.getGroupName() : ccfg.getName();
-
-                Set<Integer> partIds = grpPartIds.get(grpName);
-
-                int reqParts = ccfg.getAffinity().partitions();
-                int availParts = partIds.size();
-
-                if (reqParts != availParts) {
-                    throw new IgniteException("Cannot restore snapshot, not all partitions available [" +
-                        "required=" + reqParts +
-                        ", avail=" + availParts +
-                        ", group=" + grpName + ']');
-                }
-            }
-
-            return new SnapshotRestoreCacheMeta(ccfgs, grpPartIds, firstSnapshotDataNode);
-        }
-    }
-
-    /** */
-    private static class SnapshotInfoJob extends ComputeJobAdapter {
-        /** Serial version uid. */
-        private static final long serialVersionUID = 0L;
-
-        /**
-         * Auto-injected grid instance.
-         */
-        @IgniteInstanceResource
-        private transient IgniteEx ignite;
-
-        private final SnapshotInfoTaskArg req;
-
-        public SnapshotInfoJob(SnapshotInfoTaskArg req) {
-            this.req = req;
-        }
-
-        @Override public Object execute() throws IgniteException {
-            try {
-                return execute0();
-            }
-            catch (BinaryObjectException e) {
-                //log.warning(OP_REJECT_MSG + "Incompatible binary types found", e);
-                throw new IgniteException(OP_REJECT_MSG + "Incompatible binary types found: " + e.getMessage());
-
-            } catch (IgniteCheckedException e) {
-                throw new IgniteException(e);
-            }
-        }
-
-        private SnapshotRestoreCacheMeta execute0() throws IgniteCheckedException {
-            IgniteSnapshotManager snapshotMgr = ignite.context().cache().context().snapshotMgr();
-
-            Map<String, StoredCacheData> cacheCfgs = new HashMap<>();
-            Map<String, Set<Integer>> partIds = new HashMap<>();
-
-            // Collect cache configuration(s).
-            for (String grpName : req.groups()) {
-                if (ignite.context().clientNode())
-                    return null;
-
-                File cacheDir = snapshotMgr.resolveSnapshotCacheDir(req.snapshotName(), grpName);
-
-                if (!cacheDir.exists())
-                    return null;
-
-                FilePageStoreManager pageStoreMgr = (FilePageStoreManager)ignite.context().cache().context().pageStore();
-
-                pageStoreMgr.readCacheConfigurations(cacheDir, cacheCfgs);
-
-                partIds.put(grpName, pageStoreMgr.scanPartitionIds(cacheDir));
-            }
-
-            if (cacheCfgs.isEmpty())
-                return null;
-
-            File binDir = binaryWorkDir(snapshotMgr.snapshotLocalDir(req.snapshotName()).getAbsolutePath(),
-                ignite.context().pdsFolderResolver().resolveFolders().folderName());
-
-            ignite.context().cacheObjects().checkMetadata(binDir);
-
-            return new SnapshotRestoreCacheMeta(new ArrayList<>(cacheCfgs.values()), partIds, null);
-        }
-    }
-
-    /** */
-    private class RestoreSnapshotFuture extends GridFutureAdapter<Void> {
-        /** The exception that led to the interruption of the process. */
-        private final AtomicReference<Throwable> errRef = new AtomicReference<>();
-
-        /**
-         * @return Interrupted flag.
-         */
-        public boolean interrupted() {
-            return errRef.get() != null;
-        }
-
-        public Throwable failure() {
-            return errRef.get();
-        }
-
-        public boolean interrupt(Throwable t) {
-            return errRef.compareAndSet(null, t);
-        }
-
-//        /** {@inheritDoc} */
-//        @Override protected boolean onDone(@Nullable Void res, @Nullable Throwable err, boolean cancel) {
-//            if (err == null)
-//                return super.onDone(res, err, cancel);
-//
-//            if (errRef.compareAndSet(null, err)) {
-//                SnapshotRestoreContext opCtx0 = opCtx;
-//
-//                Set<String> grpNames = opCtx0.groups();
-//
-//                log.error("Snapshot restore process has been interrupted " +
-//                    "[groups=" + grpNames + ", snapshot=" + opCtx0.snapshotName() + ']', err);
-//
-//                for (String grpName : grpNames)
-//                    opCtx0.rollback(grpName);
-//
-//                return super.onDone(res, err, cancel);
-//            }
-//
-//            return false;
-//        }
-
-        /** {@inheritDoc} */
-        @Override public String toString() {
-            return S.toString(RestoreSnapshotFuture.class, this);
-        }
+            finishRestoreProc.start(reqId, new SnapshotRestoreFinishRequest(reqId, failure));
     }
 }

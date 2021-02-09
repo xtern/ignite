@@ -20,25 +20,37 @@ package org.apache.ignite.internal.processors.cache.persistence.snapshot;
 import java.io.Serializable;
 
 /**
- * Snapshot restore perform operation single node response.
+ * Response of the final phase of cache group restore.
  */
 public class SnapshotRestoreFinishResponse implements Serializable {
     /** Serial version uid. */
     private static final long serialVersionUID = 0L;
 
-    private final Throwable failure;
+    /** Process execution error. */
+    private final Throwable err;
 
+    /** Completed flag. */
     private final boolean completed;
 
-    public SnapshotRestoreFinishResponse(Throwable failure, boolean completed) {
-        this.failure = failure;
+    /**
+     * @param err Process execution error.
+     * @param completed Completed flag.
+     */
+    public SnapshotRestoreFinishResponse(Throwable err, boolean completed) {
+        this.err = err;
         this.completed = completed;
     }
 
-    public Throwable failure() {
-        return failure;
+    /**
+     * @return Process execution error.
+     */
+    public Throwable error() {
+        return err;
     }
 
+    /**
+     * @return Completed flag.
+     */
     public boolean completed() {
         return completed;
     }

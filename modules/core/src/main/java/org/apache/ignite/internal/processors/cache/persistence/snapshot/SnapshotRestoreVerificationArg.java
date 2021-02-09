@@ -18,48 +18,43 @@
 package org.apache.ignite.internal.processors.cache.persistence.snapshot;
 
 import java.io.Serializable;
-import java.util.UUID;
-import org.apache.ignite.internal.util.typedef.internal.S;
-import org.jetbrains.annotations.Nullable;
+import java.util.Collection;
+import org.apache.ignite.internal.util.tostring.GridToStringInclude;
 
 /**
- * Request to complete/rollback cache group restore process.
+ * Verification task argument.
  */
-public class SnapshotRestoreFinishRequest implements Serializable {
+public class SnapshotRestoreVerificationArg implements Serializable {
     /** Serial version uid. */
     private static final long serialVersionUID = 0L;
 
-    /** Request ID. */
-    private final UUID reqId;
+    /** Snapshot name. */
+    private final String snpName;
 
-    /** Process execution error. */
-    private final Throwable err;
+    /** List of cache group names to restore from the snapshot. */
+    @GridToStringInclude
+    private final Collection<String> grps;
 
     /**
-     * @param reqId Request ID.
-     * @param err Process execution error.
+     * @param snpName Snapshot name.
+     * @param grps List of cache group names to restore from the snapshot.
      */
-    public SnapshotRestoreFinishRequest(UUID reqId, @Nullable Throwable err) {
-        this.reqId = reqId;
-        this.err = err;
+    public SnapshotRestoreVerificationArg(String snpName, Collection<String> grps) {
+        this.snpName = snpName;
+        this.grps = grps;
     }
 
     /**
-     * @return Request ID.
+     * @return List of cache group names to restore from the snapshot.
      */
-    public UUID requestId() {
-        return reqId;
+    public Collection<String> groups() {
+        return grps;
     }
 
     /**
-     * @return Process execution error.
+     * @return Snapshot name.
      */
-    public @Nullable Throwable error() {
-        return err;
-    }
-
-    /** {@inheritDoc} */
-    @Override public String toString() {
-        return S.toString(SnapshotRestoreFinishRequest.class, this);
+    public String snapshotName() {
+        return snpName;
     }
 }

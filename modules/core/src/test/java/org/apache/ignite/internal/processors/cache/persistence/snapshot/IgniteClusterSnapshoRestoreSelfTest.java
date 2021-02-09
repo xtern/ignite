@@ -292,7 +292,7 @@ public class IgniteClusterSnapshoRestoreSelfTest extends AbstractSnapshotSelfTes
             log,
             () -> snp.restoreCacheGroups(SNAPSHOT_NAME, Arrays.asList(cacheName1, cacheName2)).get(TIMEOUT),
             IllegalArgumentException.class,
-            "Cache group(s) not found in snapshot"
+            "Cache group(s) was not found in the snapshot"
         );
 
         cache2.destroy();
@@ -423,7 +423,7 @@ public class IgniteClusterSnapshoRestoreSelfTest extends AbstractSnapshotSelfTes
             log,
             () -> fut0.get(TIMEOUT),
             IgniteException.class,
-            "Cache group restore operation was rejected. Incompatible binary types found"
+            "Incompatible binary types found"
         );
 
         ensureCacheDirEmpty(2, dfltCacheCfg.getName());
@@ -585,8 +585,8 @@ public class IgniteClusterSnapshoRestoreSelfTest extends AbstractSnapshotSelfTes
     @Test
     public void testClusterStateChangeActiveReadonlyDuringPrepare() throws Exception {
         checkClusterStateChange(ClusterState.ACTIVE_READ_ONLY, RESTORE_CACHE_GROUP_SNAPSHOT_PREPARE,
-            IgniteClusterReadOnlyException.class,
-            "Failed to perform start cache operation (cluster is in read-only mode)");
+            IgniteCheckedException.class,
+            "Cluster state has been changed");
     }
 
     /**

@@ -261,7 +261,8 @@ public class IgniteSnapshotManager extends GridCacheSharedManagerAdapter
     /** {@code true} if recovery process occurred for snapshot. */
     private volatile boolean recovered;
 
-    private volatile boolean rollbacked;
+    /** {@code true} if recovery process occurred for snapshot restore. */
+    private volatile boolean restoreRecovered;
 
     /** Last seen cluster snapshot operation. */
     private volatile ClusterSnapshotFuture lastSeenSnpFut = new ClusterSnapshotFuture();
@@ -394,7 +395,7 @@ public class IgniteSnapshotManager extends GridCacheSharedManagerAdapter
         busyLock.block();
 
         try {
-            restoreCacheGrpProc.stop("Node is stopping.");
+            restoreCacheGrpProc.stop(new NodeStoppingException("Node is stopping."));
 
             // Try stop all snapshot processing if not yet.
             for (SnapshotFutureTask sctx : locSnpTasks.values())
@@ -441,7 +442,7 @@ public class IgniteSnapshotManager extends GridCacheSharedManagerAdapter
 
     /** {@inheritDoc} */
     @Override public void onDeActivate(GridKernalContext kctx) {
-        restoreCacheGrpProc.stop("The cluster has been deactivated.");
+        restoreCacheGrpProc.stop(new IgniteCheckedException("The cluster has been deactivated."));
     }
 
     /**
@@ -970,18 +971,10 @@ public class IgniteSnapshotManager extends GridCacheSharedManagerAdapter
         cctx.database().checkpointReadLock();
 
         try {
-            if (opCtx == null) {
-                lastRestoreCtx = null;
+            if (opCtx == null)
                 metaStorage.remove(RESTORE_GRP_KEY);
-
-                log.info(">xxx> cleaning up grps ");
-            } else {
-                lastRestoreCtx = opCtx;
-
-                metaStorage.write(RESTORE_GRP_KEY, new ArrayList<>(opCtx.groups()));
-
-                log.info(">xxx> writing grps " + opCtx.groups());
-            }
+            else
+                metaStorage.write(RESTORE_GRP_KEY, new ArrayList<>(opCtx.groupDirs()));
         }
         finally {
             cctx.database().checkpointReadUnlock();
@@ -1039,10 +1032,10 @@ public class IgniteSnapshotManager extends GridCacheSharedManagerAdapter
             recovered = false;
         }
 
-        if (rollbacked)
+        if (restoreRecovered)
             updateRestoredGroups(null);
 
-        rollbacked = false;
+        restoreRecovered = false;
     }
 
     /** {@inheritDoc} */
@@ -1063,18 +1056,21 @@ public class IgniteSnapshotManager extends GridCacheSharedManagerAdapter
                     "related to snapshot operation have been deleted: " + snpName);
             }
         }
+    }
 
+    public void cleanupRestoredCacheGroups(ReadOnlyMetastorage metaStorage) throws IgniteCheckedException {
         Collection<String> grps = (Collection<String>)metaStorage.read(RESTORE_GRP_KEY);
 
         if (grps == null)
             return;
 
-        for (String grp : grps) {
-            File snpDir = resolveSnapshotCacheDir("testSnapshot", grp);
+        for (String grpDirName : grps) {
+            // todo
+            //File snpDir = resolveSnapshotCacheDir("testSnapshot", grpDirName);
 
             try {
                 File cacheDir = U.resolveWorkDirectory(cctx.kernalContext().config().getWorkDirectory(), DFLT_STORE_DIR +
-                    File.separator + pdsSettings.folderName() + File.separator + snpDir.getName(), false);
+                    File.separator + pdsSettings.folderName() + File.separator + grpDirName, false);
 
                 U.delete(cacheDir);
             }
@@ -1083,7 +1079,7 @@ public class IgniteSnapshotManager extends GridCacheSharedManagerAdapter
             }
         }
 
-        rollbacked = true;
+        restoreRecovered = true;
     }
 
     /**
