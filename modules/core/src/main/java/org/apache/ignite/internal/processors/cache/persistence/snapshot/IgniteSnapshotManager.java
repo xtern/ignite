@@ -268,7 +268,7 @@ public class IgniteSnapshotManager extends GridCacheSharedManagerAdapter
     private volatile ClusterSnapshotFuture lastSeenSnpFut = new ClusterSnapshotFuture();
 
     /** Cache group restore context. */
-    private volatile SnapshotRestoreContext lastRestoreCtx;
+    private volatile SnapshotRestoreContext pendingRestoreCtx;
 
     /**
      * @param ctx Kernal context.
@@ -425,19 +425,20 @@ public class IgniteSnapshotManager extends GridCacheSharedManagerAdapter
     }
 
     public Collection<String> destroyGroups() {
-        return lastRestoreCtx == null ? Collections.emptyList() : lastRestoreCtx.groups();
+        return pendingRestoreCtx == null ? Collections.emptyList() : pendingRestoreCtx.groups();
     }
 
     /** {@inheritDoc} */
     @Override public void onActivate(GridKernalContext kctx) {
-        SnapshotRestoreContext restoreCtx = lastRestoreCtx;
+        SnapshotRestoreContext restoreCtx = pendingRestoreCtx;
 
         if (restoreCtx == null)
             return;
 
+        log.info(">xxx> performing rollback");
         restoreCtx.rollback();
 
-        lastRestoreCtx = null;
+        pendingRestoreCtx = null;
     }
 
     /** {@inheritDoc} */
@@ -938,6 +939,10 @@ public class IgniteSnapshotManager extends GridCacheSharedManagerAdapter
                     "[from=" + snapshotCacheDir + ", to=" + cacheDir + ']');
             }
 
+            // todo
+            if (!new File(snapshotCacheDir, INDEX_FILE_NAME).exists())
+                newFiles.add(new File(cacheDir, INDEX_FILE_NAME));
+
             for (File snpFile : snapshotCacheDir.listFiles()) {
                 if (stopChecker.getAsBoolean())
                     return;
@@ -960,7 +965,10 @@ public class IgniteSnapshotManager extends GridCacheSharedManagerAdapter
     }
 
     protected void updateRestoredGroups(@Nullable SnapshotRestoreContext opCtx) throws IgniteCheckedException {
-        lastRestoreCtx = opCtx;
+        pendingRestoreCtx = opCtx;
+
+        if (cctx.kernalContext().clientNode())
+            return;
 
         if (!cctx.kernalContext().state().clusterState().state().active()) {
             log.info("Skip updating metastore key on cahe group restore, cluster is not active.");

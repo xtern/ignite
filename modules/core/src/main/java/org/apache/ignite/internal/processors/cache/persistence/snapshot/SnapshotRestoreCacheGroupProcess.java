@@ -277,8 +277,8 @@ public class SnapshotRestoreCacheGroupProcess {
      * @return Result future.
      */
     private IgniteInternalFuture<SnapshotRestoreResponse> prepare(SnapshotRestoreRequest req) {
-        if (!req.nodes().contains(ctx.localNodeId()))
-            return new GridFinishedFuture<>();
+//        if (!req.nodes().contains(ctx.localNodeId()))
+//            return new GridFinishedFuture<>();
 
         if (inProgress(null)) {
             return new GridFinishedFuture<>(
@@ -309,9 +309,6 @@ public class SnapshotRestoreCacheGroupProcess {
         GridFutureAdapter<SnapshotRestoreResponse> retFut = new GridFutureAdapter<>();
 
         try {
-            if (!ctx.cache().context().snapshotMgr().snapshotLocalDir(opCtx0.snapshotName()).exists())
-                return new GridFinishedFuture<>();
-
             for (String grpName : opCtx0.groups())
                 ensureCacheAbsent(grpName);
 
@@ -321,6 +318,12 @@ public class SnapshotRestoreCacheGroupProcess {
             }
 
             ctx.cache().context().snapshotMgr().updateRestoredGroups(opCtx0);
+
+            if (ctx.clientNode())
+                return new GridFinishedFuture<>();
+
+            if (!ctx.cache().context().snapshotMgr().snapshotLocalDir(opCtx0.snapshotName()).exists())
+                return new GridFinishedFuture<>();
 
             boolean updateMeta = ctx.localNodeId().equals(req.updateMetaNodeId());
 
@@ -390,8 +393,8 @@ public class SnapshotRestoreCacheGroupProcess {
      * @return Result future.
      */
     private IgniteInternalFuture<SnapshotRestoreResponse> cacheStart(SnapshotRestoreRequest req) {
-        if (ctx.clientNode())
-            return new GridFinishedFuture<>();
+//        if (ctx.clientNode())
+//            return new GridFinishedFuture<>();
 
         SnapshotRestoreContext opCtx0 = opCtx;
 
@@ -565,10 +568,17 @@ public class SnapshotRestoreCacheGroupProcess {
             return;
 
         Exception failure = F.first(errs.values());
+        SnapshotRestoreFinishResponse resp = F.first(F.viewReadOnly(res.values(), v -> v, Objects::nonNull));
+
+        if (failure == null && !res.keySet().containsAll(opCtx.nodes()) && resp == null) {
+            Set<UUID> leftNodes = new HashSet<>(opCtx.nodes());
+
+            leftNodes.removeAll(res.keySet());
+
+            failure = new IgniteException(OP_REJECT_MSG + "Baseline node(s) has left the cluster [nodeId=" + leftNodes + ']');
+        }
 
         if (failure == null) {
-            SnapshotRestoreFinishResponse resp = F.first(F.viewReadOnly(res.values(), v -> v, Objects::nonNull));
-
             if (resp == null || resp.completed()) {
                 try {
                     ctx.cache().context().snapshotMgr().updateRestoredGroups(null);

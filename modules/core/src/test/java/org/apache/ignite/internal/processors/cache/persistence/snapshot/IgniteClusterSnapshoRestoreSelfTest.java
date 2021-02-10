@@ -53,6 +53,7 @@ import org.apache.ignite.internal.util.typedef.internal.U;
 import org.apache.ignite.lang.IgniteFuture;
 import org.apache.ignite.spi.IgniteSpiException;
 import org.apache.ignite.testframework.GridTestUtils;
+import org.jetbrains.annotations.Nullable;
 import org.junit.Ignore;
 import org.junit.Test;
 
@@ -583,7 +584,7 @@ public class IgniteClusterSnapshoRestoreSelfTest extends AbstractSnapshotSelfTes
      * @throws Exception if failed.
      */
     @Test
-    public void testClusterStateChangeActiveReadonlyDuringPrepare() throws Exception {
+    public void testClusterStateChangeActiveReadonlyOnPrepare() throws Exception {
         checkClusterStateChange(ClusterState.ACTIVE_READ_ONLY, RESTORE_CACHE_GROUP_SNAPSHOT_PREPARE,
             IgniteCheckedException.class,
             "Cluster state has been changed");
@@ -593,7 +594,7 @@ public class IgniteClusterSnapshoRestoreSelfTest extends AbstractSnapshotSelfTes
      * @throws Exception if failed.
      */
     @Test
-    public void testClusterStateChangeActiveReadonlyDuringCacheStart() throws Exception {
+    public void testClusterStateChangeActiveReadonlyOnCacheStart() throws Exception {
         checkClusterStateChange(ClusterState.ACTIVE_READ_ONLY, RESTORE_CACHE_GROUP_SNAPSHOT_START,
             IgniteCheckedException.class, "Failed to start/stop cache, cluster state change is in progress");
     }
@@ -602,7 +603,7 @@ public class IgniteClusterSnapshoRestoreSelfTest extends AbstractSnapshotSelfTes
      * @throws Exception if failed.
      */
     @Test
-    public void testClusterStateChangeActiveReadonlyDuringFinish() throws Exception {
+    public void testClusterStateChangeActiveReadonlyOnFinish() throws Exception {
         checkClusterStateChange(ClusterState.ACTIVE_READ_ONLY, RESTORE_CACHE_GROUP_SNAPSHOT_FINISH, null, null);
     }
 
@@ -621,15 +622,25 @@ public class IgniteClusterSnapshoRestoreSelfTest extends AbstractSnapshotSelfTes
     @Test
     public void testClusterDeactivateOnCacheStart() throws Exception {
         checkClusterStateChange(ClusterState.INACTIVE, RESTORE_CACHE_GROUP_SNAPSHOT_START,
-            IgniteCheckedException.class, "Failed to start/stop cache, cluster state change is in progress.");
+            IgniteCheckedException.class, null);
     }
 
     /**
      * @throws Exception if failed.
      */
     @Test
-    public void testClusterDeactivateOnComplete() throws Exception {
-        checkClusterStateChange(ClusterState.INACTIVE, RESTORE_CACHE_GROUP_SNAPSHOT_FINISH, null, null);
+    public void testClusterDeactivateOnFinish() throws Exception {
+        checkClusterStateChange(ClusterState.INACTIVE, RESTORE_CACHE_GROUP_SNAPSHOT_FINISH,
+            IgniteException.class, "Baseline node(s) has left the cluster", true);
+    }
+
+    private void checkClusterStateChange(
+        ClusterState state,
+        DistributedProcessType procType,
+        @Nullable Class<? extends Throwable> exCls,
+        @Nullable String expMsg
+    ) throws Exception {
+        checkClusterStateChange(state, procType, exCls, expMsg, false);
     }
 
     /**
@@ -642,18 +653,24 @@ public class IgniteClusterSnapshoRestoreSelfTest extends AbstractSnapshotSelfTes
     private void checkClusterStateChange(
         ClusterState state,
         DistributedProcessType procType,
-        Class<? extends Throwable> exCls,
-        String expMsg
+        @Nullable Class<? extends Throwable> exCls,
+        @Nullable String expMsg,
+        boolean stopNode
     ) throws Exception {
-        Ignite ignite = startGridsWithSnapshot(2, CACHE_KEYS_RANGE);
+        int nodesCnt = stopNode ? 3 : 2;
 
-        TestRecordingCommunicationSpi spi = TestRecordingCommunicationSpi.spi(grid(1));
+        Ignite ignite = startGridsWithSnapshot(nodesCnt, CACHE_KEYS_RANGE, true);
+
+        TestRecordingCommunicationSpi spi = TestRecordingCommunicationSpi.spi(grid(nodesCnt - 1));
 
         IgniteFuture<Void> fut = waitForBlockOnRestore(spi, procType, dfltCacheCfg.getName());
 
         ignite.cluster().state(state);
 
-        spi.stopBlock();
+        if (stopNode)
+            stopGrid(nodesCnt - 1);
+        else
+            spi.stopBlock();
 
         if (exCls == null) {
             fut.get(TIMEOUT);
@@ -669,11 +686,21 @@ public class IgniteClusterSnapshoRestoreSelfTest extends AbstractSnapshotSelfTes
 
         ignite.cluster().state(ClusterState.ACTIVE);
 
-        ensureCacheDirEmpty(2, dfltCacheCfg.getName());
+        ensureCacheDirEmpty(stopNode ? nodesCnt - 1 : nodesCnt, dfltCacheCfg.getName());
 
-        ignite.snapshot().restoreCacheGroups(SNAPSHOT_NAME, Collections.singleton(dfltCacheCfg.getName())).get(TIMEOUT);
+        String cacheName = dfltCacheCfg.getName();
 
-        checkCacheKeys(ignite.cache(dfltCacheCfg.getName()), CACHE_KEYS_RANGE);
+        if (stopNode) {
+            dfltCacheCfg = null;
+
+            startGrid(nodesCnt - 1);
+
+            resetBaselineTopology();
+        }
+
+        grid(nodesCnt - 1).snapshot().restoreCacheGroups(SNAPSHOT_NAME, Collections.singleton(cacheName)).get(TIMEOUT);
+
+        checkCacheKeys(ignite.cache(cacheName), CACHE_KEYS_RANGE);
     }
 
     /**
@@ -685,7 +712,7 @@ public class IgniteClusterSnapshoRestoreSelfTest extends AbstractSnapshotSelfTes
         for (int nodeIdx = 0; nodeIdx < nodesCnt; nodeIdx++) {
             IgniteEx grid = grid(nodeIdx);
 
-            CacheGroupDescriptor desc = grid.context().cache().cacheGroupDescriptor(CU.cacheId(cacheName));
+            CacheGroupDescriptor desc = grid.context().cache().cacheGroupDescriptors().get(CU.cacheId(cacheName));
 
             assertNull("nodeIdx=" + nodeIdx + ", cache=" + cacheName, desc);
 
@@ -739,7 +766,7 @@ public class IgniteClusterSnapshoRestoreSelfTest extends AbstractSnapshotSelfTes
      * @throws Exception if failed.
      */
     private IgniteEx startGridsWithSnapshot(int nodesCnt, int keysCnt, boolean startClient) throws Exception {
-        IgniteEx ignite = startGridsWithCache(nodesCnt, keysCnt, valBuilder, dfltCacheCfg);
+        IgniteEx ignite = startGridsWithCache(nodesCnt, keysCnt, valBuilder, dfltCacheCfg.setBackups(0));
 
         if (startClient)
             ignite = startClientGrid("client");

@@ -81,7 +81,7 @@ class SnapshotRestoreContext {
 
             boolean shared = cacheData.config().getGroupName() != null;
 
-            this.grps.computeIfAbsent(
+            grps.computeIfAbsent(
                 shared ? cacheData.config().getGroupName() : cacheName, v -> new GroupRestoreContext(shared));
         }
 

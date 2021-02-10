@@ -1769,7 +1769,18 @@ public class ClusterCachesInfo {
         if (msg.activate()) {
             Set<String> grps = new HashSet<>(ctx.cache().context().snapshotMgr().destroyGroups());
 
-            System.out.println(">xxx> grps " + grps);
+            log.info(">xxx> grps " + grps);
+
+            for (String grp : grps) {
+                locCfgsForActivation.remove(grp);
+
+                registeredCaches.remove(grp);
+
+                CacheGroupDescriptor desc = registeredCacheGrps.remove(CU.cacheId(grp));
+
+                ctx.discovery().removeCacheGroup(desc);
+                ctx.discovery().removeCacheFilter(grp);
+            }
 
             for (DynamicCacheDescriptor desc : orderedCaches(CacheComparators.DIRECT)) {
                 desc.startTopologyVersion(topVer);
@@ -1792,18 +1803,11 @@ public class ClusterCachesInfo {
                     req.locallyConfigured(true);
                 }
 
-                if (grps.contains(desc.cacheName()))
-                    exchangeActions.addCacheToStop(req, desc);
-                else
-                    exchangeActions.addCacheToStart(req, desc);
+                exchangeActions.addCacheToStart(req, desc);
             }
 
-            for (CacheGroupDescriptor grpDesc : registeredCacheGroups().values()) {
-                if (grps.contains(grpDesc.cacheOrGroupName()))
-                    exchangeActions.addCacheGroupToStop(grpDesc, true);
-                else
-                    exchangeActions.addCacheGroupToStart(grpDesc);
-            }
+            for (CacheGroupDescriptor grpDesc : registeredCacheGroups().values())
+                exchangeActions.addCacheGroupToStart(grpDesc);
 
             List<StoredCacheData> storedCfgs = msg.storedCacheConfigurations();
 
