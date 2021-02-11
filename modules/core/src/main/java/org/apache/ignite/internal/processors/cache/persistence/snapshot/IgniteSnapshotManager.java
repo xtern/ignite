@@ -425,20 +425,21 @@ public class IgniteSnapshotManager extends GridCacheSharedManagerAdapter
     }
 
     public Collection<String> destroyGroups() {
-        return pendingRestoreCtx == null ? Collections.emptyList() : pendingRestoreCtx.groups();
+        return Collections.emptyList();
     }
 
     /** {@inheritDoc} */
     @Override public void onActivate(GridKernalContext kctx) {
-        SnapshotRestoreContext restoreCtx = pendingRestoreCtx;
-
-        if (restoreCtx == null)
-            return;
-
-        log.info(">xxx> performing rollback");
-        restoreCtx.rollback();
-
-        pendingRestoreCtx = null;
+//        SnapshotRestoreContext restoreCtx = pendingRestoreCtx;
+//
+//        if (restoreCtx == null)
+//            return;
+//
+//        log.info(">xxx> performing rollback");
+//        restoreCtx.rollback();
+//
+//        pendingRestoreCtx = null;
+        // No-op.
     }
 
     /** {@inheritDoc} */

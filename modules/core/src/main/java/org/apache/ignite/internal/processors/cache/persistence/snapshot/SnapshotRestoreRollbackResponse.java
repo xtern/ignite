@@ -18,48 +18,40 @@
 package org.apache.ignite.internal.processors.cache.persistence.snapshot;
 
 import java.io.Serializable;
-import java.util.UUID;
-import org.apache.ignite.internal.util.typedef.internal.S;
-import org.jetbrains.annotations.Nullable;
 
 /**
- * Request to complete/rollback cache group restore process.
+ * Response of the final phase of cache group restore.
  */
-public class SnapshotRestoreFinishRequest implements Serializable {
+public class SnapshotRestoreRollbackResponse implements Serializable {
     /** Serial version uid. */
     private static final long serialVersionUID = 0L;
-
-    /** Request ID. */
-    private final UUID reqId;
 
     /** Process execution error. */
     private final Throwable err;
 
-    /**
-     * @param reqId Request ID.
-     * @param err Process execution error.
-     */
-    public SnapshotRestoreFinishRequest(UUID reqId, @Nullable Throwable err) {
-        this.reqId = reqId;
-        this.err = err;
-    }
+    /** Completed flag. */
+    private final boolean completed;
 
     /**
-     * @return Request ID.
+     * @param err Process execution error.
+     * @param completed Completed flag.
      */
-    public UUID requestId() {
-        return reqId;
+    public SnapshotRestoreRollbackResponse(Throwable err, boolean completed) {
+        this.err = err;
+        this.completed = completed;
     }
 
     /**
      * @return Process execution error.
      */
-    public @Nullable Throwable error() {
+    public Throwable error() {
         return err;
     }
 
-    /** {@inheritDoc} */
-    @Override public String toString() {
-        return S.toString(SnapshotRestoreFinishRequest.class, this);
+    /**
+     * @return Completed flag.
+     */
+    public boolean completed() {
+        return completed;
     }
 }
