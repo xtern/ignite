@@ -27,6 +27,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ThreadLocalRandom;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.apache.ignite.Ignite;
 import org.apache.ignite.IgniteCache;
@@ -52,6 +53,7 @@ import org.apache.ignite.internal.processors.metric.MetricRegistry;
 import org.apache.ignite.internal.util.typedef.G;
 import org.apache.ignite.internal.util.typedef.T2;
 import org.apache.ignite.internal.util.typedef.internal.CU;
+import org.apache.ignite.internal.util.typedef.internal.U;
 import org.apache.ignite.spi.metric.BooleanMetric;
 import org.apache.ignite.spi.metric.LongMetric;
 import org.apache.ignite.testframework.GridTestUtils;
@@ -88,6 +90,9 @@ public class CacheGroupReencryptionTest extends AbstractEncryptionTest {
     /** The number of pages that is scanned during re-encryption under checkpoint lock. */
     private int pageScanBatchSize = EncryptionConfiguration.DFLT_REENCRYPTION_BATCH_SIZE;
 
+    /** Checkpoint frequency (seconds). */
+    private long checkpointFreq = 30;
+
     /** {@inheritDoc} */
     @Override protected IgniteConfiguration getConfiguration(String name) throws Exception {
         IgniteConfiguration cfg = super.getConfiguration(name);
@@ -109,7 +114,7 @@ public class CacheGroupReencryptionTest extends AbstractEncryptionTest {
             .setWalSegmentSize(10 * 1024 * 1024)
             .setWalSegments(4)
             .setMaxWalArchiveSize(100 * 1024 * 1024L)
-            .setCheckpointFrequency(30 * 1000L)
+            .setCheckpointFrequency(TimeUnit.SECONDS.toMillis(checkpointFreq))
             .setWalMode(LOG_ONLY)
             .setFileIOFactory(new FailingFileIOFactory(new RandomAccessFileIOFactory(), failFileIO))
             .setEncryptionConfiguration(encCfg);
@@ -429,6 +434,7 @@ public class CacheGroupReencryptionTest extends AbstractEncryptionTest {
     public void testPartitionFileDestroyAndRecreate() throws Exception {
         backups = 1;
         pageScanRate = 1;
+        checkpointFreq = 120;
 
         T2<IgniteEx, IgniteEx> nodes = startTestGrids(true);
 
@@ -461,17 +467,35 @@ public class CacheGroupReencryptionTest extends AbstractEncryptionTest {
         // Trigger partitions re-create.
         stopGrid(GRID_2);
 
+        System.out.println(">xxx> Trigger partitions re-create");
+
         resetBaselineTopology();
 
         awaitPartitionMapExchange(true, true, null);
 
-        stopAllGrids();
+//        U.sleep(10_000);
 
-        nodes = startTestGrids(false);
+//        stopAllGrids();
+//
+//        nodes = startTestGrids(false);
+//
+        forceCheckpoint();
 
         checkEncryptedCaches(nodes.get1(), nodes.get2());
+//
 
-        checkGroupKey(CU.cacheId(cacheName()), INITIAL_KEY_ID + 1, MAX_AWAIT_MILLIS);
+
+        forceCheckpoint();
+
+        U.sleep(5_000);
+
+        forceCheckpoint();
+
+        U.sleep(5_000);
+
+        forceCheckpoint();
+
+        checkGroupKey(CU.cacheId(cacheName()), INITIAL_KEY_ID + 1, getTestTimeout());
     }
 
     /**
@@ -634,6 +658,7 @@ public class CacheGroupReencryptionTest extends AbstractEncryptionTest {
     public void testChangeBaseline() throws Exception {
         backups = 1;
         pageScanRate = 2;
+        checkpointFreq = 10;
 
         T2<IgniteEx, IgniteEx> nodes = startTestGrids(true);
 

@@ -904,9 +904,23 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
      * @param grp Cache group.
      * @param partId Partition ID.
      */
-    public void onDestroyPartitionStore(CacheGroupContext grp, int partId) {
-        if (pageScanner.excludePartition(grp.groupId(), partId))
-            setEncryptionState(grp, partId, 0, 0);
+    public void onDestroyPartitionStore(CacheGroupContext grp, int partId, boolean destroyed) {
+        System.out.println(Thread.currentThread().getName() + " >xxx> grpId=" + grp.groupId() + ", p=" + partId + ", destroyed="+destroyed);
+
+        if (destroyed) {
+            if (pageScanner.excludePartition(grp.groupId(), partId))
+                setEncryptionState(grp, partId, 0, 0);
+        } else {
+            pageScanner.includeEvicted(grp.groupId(), partId);
+        }
+    }
+
+    public void onPartitionEvicted(int grpId, int partId) {
+        pageScanner.markForDestroy(grpId, partId);
+    }
+
+    public void onCacPartitionEvicted(int grpId, int partId) {
+        // todo
     }
 
     /**

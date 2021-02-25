@@ -19,6 +19,7 @@ package org.apache.ignite.internal.processors.cache.persistence.checkpoint;
 
 import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.internal.util.future.GridFutureAdapter;
+import org.apache.ignite.internal.util.typedef.internal.U;
 
 /**
  * Partition destroy request.
@@ -58,6 +59,8 @@ public class PartitionDestroyRequest {
         }
 
         cancelled = true;
+
+        U.dumpStack(">xxx> cancel destroy grp=" + grpId + ", p=" + partId);
 
         return true;
     }

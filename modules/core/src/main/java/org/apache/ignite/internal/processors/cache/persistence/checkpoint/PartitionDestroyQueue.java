@@ -61,10 +61,10 @@ public class PartitionDestroyQueue {
      * @param partId Partition ID.
      * @return Destroy request to wait for if destroy has begun.
      */
-    public PartitionDestroyRequest cancelDestroy(int grpId, int partId) {
+    public PartitionDestroyRequest removeRequest(int grpId, int partId) {
         PartitionDestroyRequest rmvd = pendingReqs.remove(new T2<>(grpId, partId));
 
-        return rmvd == null ? null : !rmvd.cancel() ? rmvd : null;
+        return rmvd;
     }
 
     /**

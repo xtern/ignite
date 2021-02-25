@@ -2879,6 +2879,7 @@ public class GridCacheDatabaseSharedManager extends IgniteCacheDatabaseSharedMan
      * @param partId Partition ID.
      */
     public void schedulePartitionDestroy(int grpId, int partId) {
+        System.out.println(Thread.currentThread().getName() + " >xxx> scheduled grpId=" + grpId + ", p=" + partId);
         checkpointManager.schedulePartitionDestroy(cctx.cache().cacheGroup(grpId), grpId, partId);
     }
 
@@ -2888,9 +2889,10 @@ public class GridCacheDatabaseSharedManager extends IgniteCacheDatabaseSharedMan
      * @param grpId Group ID.
      * @param partId Partition ID.
      * @throws IgniteCheckedException If failed.
+     * @return {@code True} if the request to destroy the partition was canceled.
      */
-    public void cancelOrWaitPartitionDestroy(int grpId, int partId) throws IgniteCheckedException {
-        checkpointManager.cancelOrWaitPartitionDestroy(grpId, partId);
+    public boolean cancelOrWaitPartitionDestroy(int grpId, int partId) throws IgniteCheckedException {
+        return checkpointManager.cancelOrWaitPartitionDestroy(grpId, partId);
     }
 
     /**
