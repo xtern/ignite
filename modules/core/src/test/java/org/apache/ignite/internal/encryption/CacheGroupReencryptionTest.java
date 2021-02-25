@@ -434,7 +434,6 @@ public class CacheGroupReencryptionTest extends AbstractEncryptionTest {
     public void testPartitionFileDestroyAndRecreate() throws Exception {
         backups = 1;
         pageScanRate = 1;
-        checkpointFreq = 120;
 
         T2<IgniteEx, IgniteEx> nodes = startTestGrids(true);
 
@@ -467,35 +466,17 @@ public class CacheGroupReencryptionTest extends AbstractEncryptionTest {
         // Trigger partitions re-create.
         stopGrid(GRID_2);
 
-        System.out.println(">xxx> Trigger partitions re-create");
-
         resetBaselineTopology();
 
         awaitPartitionMapExchange(true, true, null);
 
-//        U.sleep(10_000);
+        stopAllGrids();
 
-//        stopAllGrids();
-//
-//        nodes = startTestGrids(false);
-//
-        forceCheckpoint();
+        nodes = startTestGrids(false);
 
         checkEncryptedCaches(nodes.get1(), nodes.get2());
-//
 
-
-        forceCheckpoint();
-
-        U.sleep(5_000);
-
-        forceCheckpoint();
-
-        U.sleep(5_000);
-
-        forceCheckpoint();
-
-        checkGroupKey(CU.cacheId(cacheName()), INITIAL_KEY_ID + 1, getTestTimeout());
+        checkGroupKey(CU.cacheId(cacheName()), INITIAL_KEY_ID + 1, MAX_AWAIT_MILLIS);
     }
 
     /**
