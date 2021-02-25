@@ -492,16 +492,21 @@ public class CacheGroupPageScanner implements CheckpointListener {
         @Override public void run() {
             try {
                 for (int partId : parts) {
+                    System.out.println(">xxx> starting reencryption " + partId);
                     if (partId != PageIdAllocator.INDEX_PARTITION) {
                         GridDhtLocalPartition part = grp.topology().localPartition(partId);
 
                         if (part == null || grp.topology().localPartition(partId).state() == GridDhtPartitionState.EVICTED) {
+                            synchronized (this) {
+                                if (parts.contains(partId)) {
+                                    System.out.println(Thread.currentThread().getName() + " >xxx> partId=" + partId + " is null=" + (part == null));
 
-                            System.out.println(Thread.currentThread().getName() + " >xxx> partId=" + partId + " is null ");
+                                    evictedSet.add(partId);
+                                }
 
-                            evictedSet.add(partId);
+                                continue;
 
-                            continue;
+                            }
                         }
                     }
 
