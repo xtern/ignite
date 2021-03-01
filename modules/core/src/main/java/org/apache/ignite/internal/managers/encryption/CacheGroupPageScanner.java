@@ -211,8 +211,7 @@ public class CacheGroupPageScanner implements CheckpointListener {
                 return prevState;
             }
 
-            Set<Integer> parts = new HashSet<>();
-            long[] pagesLeft = new long[1];
+            GroupScanContext grpScanCtx = new GroupScanContext(grp);
 
             forEachPageStore(grp, new IgniteInClosureX<Integer>() {
                 @Override public void applyx(Integer partId) {
@@ -225,22 +224,18 @@ public class CacheGroupPageScanner implements CheckpointListener {
                         return;
                     }
 
-                    parts.add(partId);
-
-                    pagesLeft[0] += (ReencryptStateUtils.pageCount(encState) - ReencryptStateUtils.pageIndex(encState));
+                    grpScanCtx.addPartition(partId, encState);
                 }
             });
-
-            GroupScanContext grpScan = new GroupScanContext(grp, parts, pagesLeft[0]);
-
-            grpScan.start();
 
             if (log.isInfoEnabled())
                 log.info("Scheduled reencryption [grpId=" + grpId + "]");
 
-            grps.put(grpId, grpScan);
+            grps.put(grpId, grpScanCtx);
 
-            return grpScan;
+            grpScanCtx.checkComplete();
+
+            return grpScanCtx;
         }
         finally {
             lock.unlock();
@@ -286,12 +281,8 @@ public class CacheGroupPageScanner implements CheckpointListener {
     public boolean excludePartition(int grpId, int partId) {
         GroupScanContext grpScanTask = grps.get(grpId);
 
-        System.out.println(Thread.currentThread().getName() + ">xxx> exclude grp=" + grpId + ", p=" + partId + " grpScanTask=" + (grpScanTask != null));
-
         if (grpScanTask == null)
             return false;
-
-        // todo signal evictQueue thread
 
         return grpScanTask.excludePartition(partId);
     }
@@ -411,7 +402,7 @@ public class CacheGroupPageScanner implements CheckpointListener {
         private final CacheGroupContext grp;
 
         /** Partition IDs. */
-        private final Set<Integer> parts;
+        private final Set<Integer> parts = new GridConcurrentHashSet<>();
 
         private final Set<Integer> evictSet = new HashSet<>();
 
@@ -421,19 +412,39 @@ public class CacheGroupPageScanner implements CheckpointListener {
         private final PageMemoryEx pageMem;
 
         /** Total memory pages left for reencryption. */
-        private final AtomicLong remainingPagesCntr;
+        private final AtomicLong remainingPagesCntr = new AtomicLong();
 
         private volatile boolean scanning;
 
         /**
          * @param grp Cache group.
          */
-        public GroupScanContext(CacheGroupContext grp, Set<Integer> parts, long remainingPagesCnt) {
+        public GroupScanContext(CacheGroupContext grp) {
             this.grp = grp;
-            this.parts = new GridConcurrentHashSet<>(parts);
 
-            remainingPagesCntr = new AtomicLong(remainingPagesCnt);
             pageMem = (PageMemoryEx)grp.dataRegion().pageMemory();
+        }
+
+        public synchronized void addPartition(int partId, long encState) {
+            parts.add(partId);
+
+            remainingPagesCntr.addAndGet(
+                ReencryptStateUtils.pageCount(encState) - ReencryptStateUtils.pageIndex(encState));
+
+            if (partId != PageIdAllocator.INDEX_PARTITION) {
+                GridDhtLocalPartition part = grp.topology().localPartition(partId);
+
+                assert part != null : "grp=" + grp.cacheOrGroupName() + ", p=" + partId;
+
+                if (grp.topology().localPartition(partId).state() == GridDhtPartitionState.EVICTED) {
+                    evictSet.add(partId);
+                    parts.remove(partId);
+
+                    return;
+                }
+            }
+
+            schedulePartitionScanning(partId, encState);
         }
 
         /** {@inheritDoc} */
@@ -451,10 +462,6 @@ public class CacheGroupPageScanner implements CheckpointListener {
             long state = ctx.encryption().getEncryptionState(groupId(), partId);
 
             remainingPagesCntr.addAndGet(ReencryptStateUtils.pageIndex(state) - ReencryptStateUtils.pageCount(state));
-
-//            boolean rmvd = false;
-//
-//            rmvd |= parts.remove(partId);
 
             evictSet.remove(partId);
 
@@ -495,40 +502,6 @@ public class CacheGroupPageScanner implements CheckpointListener {
          */
         public long remainingPagesCount() {
             return remainingPagesCntr.get();
-        }
-
-        /**
-         * Start partitions scanning.
-         */
-        public synchronized void start() {
-            Set<Integer> partsCp = new HashSet<>(parts);
-
-            for (int partId : partsCp) {
-                long state = ctx.encryption().getEncryptionState(grp.groupId(), partId);
-
-                if (state == 0) {
-                    parts.remove(partId);
-
-                    continue;
-                }
-
-                if (partId != PageIdAllocator.INDEX_PARTITION) {
-                    GridDhtLocalPartition part = grp.topology().localPartition(partId);
-
-                    assert part != null : "grp=" + grp.cacheOrGroupName() + ", p=" + partId;
-
-                    if (grp.topology().localPartition(partId).state() == GridDhtPartitionState.EVICTED) {
-                        evictSet.add(partId);
-                        parts.remove(partId);
-
-                        continue;
-                    }
-                }
-
-                schedulePartitionScanning(partId, state);
-            }
-
-            checkComplete();
         }
 
         private void schedulePartitionScanning(int partId, long state) {
