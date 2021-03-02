@@ -39,8 +39,6 @@ import org.apache.ignite.internal.pagemem.PageIdAllocator;
 import org.apache.ignite.internal.pagemem.PageIdUtils;
 import org.apache.ignite.internal.pagemem.store.IgnitePageStoreManager;
 import org.apache.ignite.internal.processors.cache.CacheGroupContext;
-import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtLocalPartition;
-import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtPartitionState;
 import org.apache.ignite.internal.processors.cache.persistence.GridCacheDatabaseSharedManager;
 import org.apache.ignite.internal.processors.cache.persistence.checkpoint.CheckpointListener;
 import org.apache.ignite.internal.processors.cache.persistence.pagemem.PageMemoryEx;
@@ -55,6 +53,7 @@ import org.apache.ignite.internal.util.typedef.internal.CU;
 import org.apache.ignite.thread.IgniteThreadPoolExecutor;
 import org.apache.ignite.thread.OomExceptionHandler;
 
+import static org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtPartitionState.EVICTED;
 import static org.apache.ignite.internal.util.IgniteUtils.MB;
 
 /**
@@ -414,8 +413,6 @@ public class CacheGroupPageScanner implements CheckpointListener {
         /** Total memory pages left for reencryption. */
         private final AtomicLong remainingPagesCntr = new AtomicLong();
 
-        private volatile boolean scanning;
-
         /**
          * @param grp Cache group.
          */
@@ -425,26 +422,13 @@ public class CacheGroupPageScanner implements CheckpointListener {
             pageMem = (PageMemoryEx)grp.dataRegion().pageMemory();
         }
 
-        public synchronized void addPartition(int partId, long encState) {
-            parts.add(partId);
+        public synchronized void addPartition(int partId, long state) {
+            remainingPagesCntr.addAndGet(ReencryptStateUtils.pageCount(state) - ReencryptStateUtils.pageIndex(state));
 
-            remainingPagesCntr.addAndGet(
-                ReencryptStateUtils.pageCount(encState) - ReencryptStateUtils.pageIndex(encState));
-
-            if (partId != PageIdAllocator.INDEX_PARTITION) {
-                GridDhtLocalPartition part = grp.topology().localPartition(partId);
-
-                assert part != null : "grp=" + grp.cacheOrGroupName() + ", p=" + partId;
-
-                if (grp.topology().localPartition(partId).state() == GridDhtPartitionState.EVICTED) {
-                    evictSet.add(partId);
-                    parts.remove(partId);
-
-                    return;
-                }
-            }
-
-            schedulePartitionScanning(partId, encState);
+            if (partId != PageIdAllocator.INDEX_PARTITION && grp.topology().localPartition(partId).state() == EVICTED)
+                evictSet.add(partId);
+            else
+                schedulePartitionScanning(partId);
         }
 
         /** {@inheritDoc} */
@@ -461,11 +445,13 @@ public class CacheGroupPageScanner implements CheckpointListener {
         public synchronized boolean excludePartition(int partId) {
             long state = ctx.encryption().getEncryptionState(groupId(), partId);
 
-            remainingPagesCntr.addAndGet(ReencryptStateUtils.pageIndex(state) - ReencryptStateUtils.pageCount(state));
+            long pagesLeft = remainingPagesCntr.addAndGet(
+                ReencryptStateUtils.pageIndex(state) - ReencryptStateUtils.pageCount(state));
 
             evictSet.remove(partId);
 
-            checkComplete();
+            if (pagesLeft == 0)
+                checkComplete();
 
             return destroySet.add(partId);
         }
@@ -483,11 +469,8 @@ public class CacheGroupPageScanner implements CheckpointListener {
             evictSet.remove(partId);
 
             // if partition has not been started to process - nothing to do.
-            if (!parts.contains(partId)) {
-                parts.add(partId);
-
-                schedulePartitionScanning(partId, ctx.encryption().getEncryptionState(grp.groupId(), partId));
-            }
+            if (!parts.contains(partId))
+                schedulePartitionScanning(partId);
         }
 
         /**
@@ -504,36 +487,34 @@ public class CacheGroupPageScanner implements CheckpointListener {
             return remainingPagesCntr.get();
         }
 
-        private void schedulePartitionScanning(int partId, long state) {
-            singleExecSvc.submit(() ->
-                scanPartition(partId, ReencryptStateUtils.pageIndex(state), ReencryptStateUtils.pageCount(state)));
+        private void schedulePartitionScanning(int partId) {
+            parts.add(partId);
+
+            singleExecSvc.submit(() -> scanPartition(partId));
         }
 
         private synchronized void checkComplete() {
-            // todo parts.isEmpty - just shows that we have empty QUEUE, but we still can processing some partition
-            if (!isDone() && parts.isEmpty() && evictSet.isEmpty() && !scanning) {
-                boolean added = cpWaitGrps.add(this);
-
-                assert added;
-            }
+            if (!isDone() && parts.isEmpty() && evictSet.isEmpty() && !cpWaitGrps.contains(this))
+                cpWaitGrps.add(this);
         }
 
         /**
          * @param partId Partition ID.
-         * @param off Start page offset.
-         * @param cnt Count of pages to scan.
          */
-        private void scanPartition(int partId, int off, int cnt) {
-            if (log.isDebugEnabled()) {
-                log.debug("Partition reencryption is started [grpId=" + grp.groupId() +
-                    ", p=" + partId + ", remain=" + (cnt - off) + ", total=" + cnt + "]");
-            }
-
+        private void scanPartition(int partId) {
             // todo think sync
             if (!parts.remove(partId))
                 return;
 
-            scanning = true;
+            long state = ctx.encryption().getEncryptionState(grp.groupId(), partId);
+
+            int off = ReencryptStateUtils.pageIndex(state);
+            int cnt = ReencryptStateUtils.pageCount(state);
+
+            if (log.isDebugEnabled()) {
+                log.debug("Partition reencryption is started [grpId=" + grp.groupId() +
+                    ", p=" + partId + ", remain=" + (cnt - off) + ", total=" + cnt + "]");
+            }
 
             try {
                 while (off < cnt) {
@@ -565,8 +546,6 @@ public class CacheGroupPageScanner implements CheckpointListener {
                 else
                     onDone(t);
             } finally {
-                scanning = false;
-
                 checkComplete();
 
                 if (log.isDebugEnabled()) {
