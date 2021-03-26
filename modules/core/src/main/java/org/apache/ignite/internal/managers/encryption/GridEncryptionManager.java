@@ -1103,6 +1103,8 @@ public class GridEncryptionManager extends GridManagerAdapter<EncryptionSpi> imp
 
             return null;
         });
+
+        startReencryption(reencryptGroups.keySet());
     }
 
     /** {@inheritDoc} */
