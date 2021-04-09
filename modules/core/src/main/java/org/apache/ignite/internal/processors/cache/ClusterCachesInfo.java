@@ -599,22 +599,22 @@ public class ClusterCachesInfo {
             return false;
         }
 
-        if (!F.isEmpty(batch.topologyNodes())) {
-            for (UUID nodeId : batch.topologyNodes()) {
-                ClusterNode node = ctx.discovery().node(nodeId);
-
-                if (node != null && CU.baselineNode(node, state) && ctx.discovery().alive(node))
-                    continue;
-
-                ClusterTopologyCheckedException err =
-                    new ClusterTopologyCheckedException("Required node has left the cluster [nodeId=" + nodeId + ']');
-
-                for (DynamicCacheChangeRequest req : batch.requests())
-                    ctx.cache().completeCacheStartFuture(req, false, err);
-
-                return false;
-            }
-        }
+//        if (!F.isEmpty(batch.topologyNodes())) {
+//            for (UUID nodeId : batch.topologyNodes()) {
+//                ClusterNode node = ctx.discovery().node(nodeId);
+//
+//                if (node != null && CU.baselineNode(node, state) && ctx.discovery().alive(node))
+//                    continue;
+//
+//                ClusterTopologyCheckedException err =
+//                    new ClusterTopologyCheckedException("Required node has left the cluster [nodeId=" + nodeId + ']');
+//
+//                for (DynamicCacheChangeRequest req : batch.requests())
+//                    ctx.cache().completeCacheStartFuture(req, false, err);
+//
+//                return false;
+//            }
+//        }
 
         ExchangeActions exchangeActions = new ExchangeActions();
 

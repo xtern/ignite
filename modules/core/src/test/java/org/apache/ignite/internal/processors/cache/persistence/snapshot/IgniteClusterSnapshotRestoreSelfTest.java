@@ -46,6 +46,7 @@ import org.apache.ignite.internal.TestRecordingCommunicationSpi;
 import org.apache.ignite.internal.cluster.ClusterTopologyCheckedException;
 import org.apache.ignite.internal.processors.cache.CacheGroupDescriptor;
 import org.apache.ignite.internal.processors.cache.DynamicCacheChangeBatch;
+import org.apache.ignite.internal.processors.cache.distributed.dht.preloader.GridDhtPartitionsSingleMessage;
 import org.apache.ignite.internal.processors.cache.persistence.file.FilePageStoreManager;
 import org.apache.ignite.internal.util.distributed.DistributedProcess.DistributedProcessType;
 import org.apache.ignite.internal.util.distributed.SingleNodeMessage;
@@ -126,6 +127,90 @@ public class IgniteClusterSnapshotRestoreSelfTest extends AbstractSnapshotSelfTe
         stopGrid(2, true);
 
         discoSpi.unblock();
+
+        GridTestUtils.assertThrowsAnyCause(log, () -> fut.get(TIMEOUT), ClusterTopologyCheckedException.class, null);
+
+        ensureCacheDirEmpty(2, dfltCacheCfg);
+    }
+
+    /**
+     * Ensures that the cache doesn't start if one of the baseline nodes fails.
+     *
+     * @throws Exception If failed.
+     */
+    @Test
+    public void testCacheStartFailOnNodeLeft2() throws Exception {
+        int keysCnt = 10_000;
+
+        startGridsWithSnapshot(3, keysCnt, true);
+
+//        BlockingCustomMessageDiscoverySpi discoSpi = discoSpi(grid(0));
+
+        TestRecordingCommunicationSpi spi = TestRecordingCommunicationSpi.spi(grid(2));
+
+        spi.blockMessages((node, msg) ->
+            msg instanceof GridDhtPartitionsSingleMessage);
+
+        TestRecordingCommunicationSpi spi1 = TestRecordingCommunicationSpi.spi(grid(1));
+
+        spi1.blockMessages((node, msg) ->
+            msg instanceof GridDhtPartitionsSingleMessage);
+
+//        IgniteFuture<Void> fut =
+//            grid(0).snapshot().restoreSnapshot(SNAPSHOT_NAME, Collections.singleton(grpName));
+//
+//        spi.waitForBlocked();
+//
+//        discoSpi.block((msg) -> msg instanceof DynamicCacheChangeBatch);
+
+        IgniteFuture<Void> fut =
+            grid(0).snapshot().restoreSnapshot(SNAPSHOT_NAME, Collections.singleton(dfltCacheCfg.getName()));
+
+        spi.waitForBlocked();
+        spi1.waitForBlocked();
+
+        stopGrid(2, true);
+
+        spi1.stopBlock();
+
+        GridTestUtils.assertThrowsAnyCause(log, () -> fut.get(TIMEOUT), ClusterTopologyCheckedException.class, null);
+
+        ensureCacheDirEmpty(2, dfltCacheCfg);
+    }
+
+    /**
+     * Ensures that the cache doesn't start if one of the baseline nodes fails.
+     *
+     * @throws Exception If failed.
+     */
+    @Test
+    public void testCacheStartFailOnNodeLeft3() throws Exception {
+        int keysCnt = 10_000;
+
+        startGridsWithSnapshot(3, keysCnt, true);
+
+//        BlockingCustomMessageDiscoverySpi discoSpi = discoSpi(grid(0));
+
+        TestRecordingCommunicationSpi spi = TestRecordingCommunicationSpi.spi(grid(2));
+
+        spi.blockMessages((node, msg) ->
+            msg instanceof GridDhtPartitionsSingleMessage);
+
+//        IgniteFuture<Void> fut =
+//            grid(0).snapshot().restoreSnapshot(SNAPSHOT_NAME, Collections.singleton(grpName));
+//
+//        spi.waitForBlocked();
+//
+//        discoSpi.block((msg) -> msg instanceof DynamicCacheChangeBatch);
+
+        IgniteFuture<Void> fut =
+            grid(0).snapshot().restoreSnapshot(SNAPSHOT_NAME, Collections.singleton(dfltCacheCfg.getName()));
+
+        spi.waitForBlocked();
+
+        stopGrid(2, true);
+
+//        spi.stopBlock();
 
         GridTestUtils.assertThrowsAnyCause(log, () -> fut.get(TIMEOUT), ClusterTopologyCheckedException.class, null);
 

@@ -3820,29 +3820,35 @@ public class GridDhtPartitionsExchangeFuture extends GridDhtTopologyFutureAdapte
             return;
 
         try {
-            if (dynamicCacheStartExchange() && isRollbackSupported()) {
-                if (!F.isEmpty(exchangeGlobalExceptions)) {
-                    sendExchangeFailureMessage();
+            if (dynamicCacheStartExchange() && !exchangeGlobalExceptions.isEmpty()) {
+                sendExchangeFailureMessage();
 
-                    return;
-                }
-
-                for (UUID nodeId : exchActions.cacheStartTopologySnapshot()) {
-                    ClusterNode node = cctx.discovery().node(nodeId);
-
-                    if (node != null &&
-                        cctx.discovery().alive(node) &&
-                        CU.baselineNode(node, cctx.kernalContext().state().clusterState()))
-                        continue;
-
-                    exchangeGlobalExceptions.put(cctx.localNodeId(), new ClusterTopologyCheckedException(
-                        "Required node has left the cluster [nodeId=" + nodeId + ']'));
-
-                    sendExchangeFailureMessage();
-
-                    return;
-                }
+                return;
             }
+
+//            if (dynamicCacheStartExchange() && isRollbackSupported()) {
+//                if (!F.isEmpty(exchangeGlobalExceptions)) {
+//                    sendExchangeFailureMessage();
+//
+//                    return;
+//                }
+//
+//                for (UUID nodeId : exchActions.cacheStartTopologySnapshot()) {
+//                    ClusterNode node = cctx.discovery().node(nodeId);
+//
+//                    if (node != null &&
+//                        cctx.discovery().alive(node) &&
+//                        CU.baselineNode(node, cctx.kernalContext().state().clusterState()))
+//                        continue;
+//
+//                    exchangeGlobalExceptions.put(cctx.localNodeId(), new ClusterTopologyCheckedException(
+//                        "Required node has left the cluster [nodeId=" + nodeId + ']'));
+//
+//                    sendExchangeFailureMessage();
+//
+//                    return;
+//                }
+//            }
 
             AffinityTopologyVersion resTopVer = exchCtx.events().topologyVersion();
 
@@ -5068,6 +5074,8 @@ public class GridDhtPartitionsExchangeFuture extends GridDhtTopologyFutureAdapte
                     if (isDone() || !enterBusy())
                         return;
 
+                    U.dumpStack(">xxx> nodeLeft >>>");
+
                     try {
                         boolean crdChanged = false;
                         boolean allReceived = false;
@@ -5137,6 +5145,41 @@ public class GridDhtPartitionsExchangeFuture extends GridDhtTopologyFutureAdapte
 
                             if (crd0 == null)
                                 finishState = new FinishState(null, initialVersion(), null);
+
+                            if (dynamicCacheStartExchange() && isRollbackSupported()) {
+//                                if (!F.isEmpty(exchangeGlobalExceptions)) {
+//                                    sendExchangeFailureMessage();
+//
+//                                    return;
+//                                }
+
+                                if (exchActions.cacheStartTopologySnapshot().contains(node.id())) {
+                                    exchangeLocE = new ClusterTopologyCheckedException(
+                                        "Required node has left the cluster [nodeId=" + node.id() + ']');
+
+                                    exchangeGlobalExceptions.put(cctx.localNodeId(), new ClusterTopologyCheckedException(
+                                        "Required node has left the cluster [nodeId=" + node.id() + ']'));
+                                }
+
+//                                for (UUID nodeId : exchActions.cacheStartTopologySnapshot()) {
+//                                    ClusterNode node = cctx.discovery().node(nodeId);
+//
+//                                    if (node != null &&
+//                                        cctx.discovery().alive(node) &&
+//                                        CU.baselineNode(node, cctx.kernalContext().state().clusterState()))
+//                                        continue;
+//
+////                                    exchangeGlobalExceptions.put(cctx.localNodeId(), new ClusterTopologyCheckedException(
+////                                        "Required node has left the cluster [nodeId=" + nodeId + ']'));
+//
+//                                    exchangeLocE = new ClusterTopologyCheckedException(
+//                                        "Required node has left the cluster [nodeId=" + nodeId + ']');
+//
+////                                    sendExchangeFailureMessage();
+////
+////                                    return;
+//                                }
+                            }
                         }
 
                         if (crd0 == null) {
