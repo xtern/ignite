@@ -3827,10 +3827,17 @@ public class GridDhtPartitionsExchangeFuture extends GridDhtTopologyFutureAdapte
             return;
 
         try {
-            if (!F.isEmpty(exchangeGlobalExceptions) && dynamicCacheStartExchange() && isRollbackSupported()) {
-                sendExchangeFailureMessage();
+            if (dynamicCacheStartExchange() && isRollbackSupported()) {
+                Exception err = cctx.snapshotMgr().checkNodeLeftOnCacheStart();
 
-                return;
+                if (err != null)
+                    exchangeGlobalExceptions.put(cctx.localNodeId(), err);
+
+                if (!F.isEmpty(exchangeGlobalExceptions)) {
+                    sendExchangeFailureMessage();
+
+                    return;
+                }
             }
 
             AffinityTopologyVersion resTopVer = exchCtx.events().topologyVersion();
@@ -5126,12 +5133,6 @@ public class GridDhtPartitionsExchangeFuture extends GridDhtTopologyFutureAdapte
 
                             if (crd0 == null)
                                 finishState = new FinishState(null, initialVersion(), null);
-
-                            if (dynamicCacheStartExchange() && exchangeLocE == null &&
-                                exchActions.cacheStartRequiredAliveNodes().contains(node.id())) {
-                                exchangeGlobalExceptions.put(cctx.localNodeId(), exchangeLocE = new ClusterTopologyCheckedException(
-                                    "Required node has left the cluster [nodeId=" + node.id() + ']'));
-                            }
                         }
 
                         if (crd0 == null) {

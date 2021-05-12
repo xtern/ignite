@@ -51,6 +51,7 @@ import org.apache.ignite.internal.cluster.ClusterTopologyCheckedException;
 import org.apache.ignite.internal.processors.affinity.AffinityTopologyVersion;
 import org.apache.ignite.internal.processors.cache.GridCacheSharedContext;
 import org.apache.ignite.internal.processors.cache.StoredCacheData;
+import org.apache.ignite.internal.processors.cache.distributed.dht.preloader.PartitionsExchangeAware;
 import org.apache.ignite.internal.processors.cache.persistence.file.FilePageStoreManager;
 import org.apache.ignite.internal.processors.cache.persistence.snapshot.IgniteSnapshotManager.ClusterSnapshotFuture;
 import org.apache.ignite.internal.processors.cache.verify.IdleVerifyResultV2;
@@ -77,7 +78,7 @@ import static org.apache.ignite.internal.util.distributed.DistributedProcess.Dis
 /**
  * Distributed process to restore cache group from the snapshot.
  */
-public class SnapshotRestoreProcess {
+public class SnapshotRestoreProcess implements PartitionsExchangeAware {
     /** Temporary cache directory prefix. */
     public static final String TMP_CACHE_DIR_PREFIX = "_tmp_snp_restore_";
 
@@ -371,6 +372,20 @@ public class SnapshotRestoreProcess {
     }
 
     /**
+     * Check that the required topology nodes are alive.
+     *
+     * @return Exception if any of required nodes has left the cluster.
+     */
+    public Exception checkNodeLeftOnCacheStart() {
+        SnapshotRestoreContext opCtx0 = opCtx;
+
+        if (opCtx0 == null)
+            return null;
+
+        return opCtx0.err.get();
+    }
+
+    /**
      * Abort the currently running restore procedure (if any).
      *
      * @param reason Interruption reason.
@@ -455,7 +470,7 @@ public class SnapshotRestoreProcess {
                     ", cache(s)=" + F.viewReadOnly(opCtx0.cfgs.values(), data -> data.config().getName()) + ']');
             }
 
-            Consumer<Throwable> errHnd = (ex) -> opCtx.err.compareAndSet(null, ex);
+            Consumer<Exception> errHnd = (ex) -> opCtx.err.compareAndSet(null, ex);
             BooleanSupplier stopChecker = () -> opCtx.err.get() != null;
             GridFutureAdapter<ArrayList<StoredCacheData>> retFut = new GridFutureAdapter<>();
 
@@ -467,7 +482,7 @@ public class SnapshotRestoreProcess {
             restoreAsync(opCtx0.snpName, opCtx0.dirs, ctx.localNodeId().equals(req.operationalNodeId()), stopChecker, errHnd)
                 .thenAccept(res -> {
                     try {
-                        Throwable err = opCtx.err.get();
+                        Exception err = opCtx.err.get();
 
                         if (err != null)
                             throw err;
@@ -475,11 +490,11 @@ public class SnapshotRestoreProcess {
                         for (File src : opCtx0.dirs)
                             Files.move(formatTmpDirName(src).toPath(), src.toPath(), StandardCopyOption.ATOMIC_MOVE);
                     }
-                    catch (Throwable t) {
+                    catch (Exception e) {
                         log.error("Unable to restore cache group(s) from the snapshot " +
-                            "[reqId=" + opCtx.reqId + ", snapshot=" + opCtx.snpName + ']', t);
+                            "[reqId=" + opCtx.reqId + ", snapshot=" + opCtx.snpName + ']', e);
 
-                        retFut.onDone(t);
+                        retFut.onDone(e);
 
                         return;
                     }
@@ -520,7 +535,7 @@ public class SnapshotRestoreProcess {
         Collection<File> dirs,
         boolean updateMeta,
         BooleanSupplier stopChecker,
-        Consumer<Throwable> errHnd
+        Consumer<Exception> errHnd
     ) throws IgniteCheckedException {
         IgniteSnapshotManager snapshotMgr = ctx.cache().context().snapshotMgr();
         String pdsFolderName = ctx.pdsFolderResolver().resolveFolders().folderName();
@@ -534,8 +549,8 @@ public class SnapshotRestoreProcess {
                 try {
                     ctx.cacheObjects().updateMetadata(binDir, stopChecker);
                 }
-                catch (Throwable t) {
-                    errHnd.accept(t);
+                catch (Exception e) {
+                    errHnd.accept(e);
                 }
             }, snapshotMgr.snapshotExecutorService()));
         }
@@ -567,8 +582,8 @@ public class SnapshotRestoreProcess {
 
                         IgniteSnapshotManager.copy(snapshotMgr.ioFactory(), snpFile, target, snpFile.length());
                     }
-                    catch (Throwable t) {
-                        errHnd.accept(t);
+                    catch (Exception e) {
+                        errHnd.accept(e);
                     }
                 }, ctx.cache().context().snapshotMgr().snapshotExecutorService()));
             }
@@ -680,7 +695,7 @@ public class SnapshotRestoreProcess {
         }
 
         if (failure == null)
-            failure = checkNodeLeft(opCtx0.nodes, res.keySet());
+            failure = checkNodeLeftOnCacheStart(opCtx0.nodes, res.keySet());
 
         // Context has been created - should rollback changes cluster-wide.
         if (failure != null) {
@@ -734,9 +749,7 @@ public class SnapshotRestoreProcess {
                 ", caches=" + F.viewReadOnly(ccfgs, c -> c.config().getName()) + ']');
         }
 
-        // We set the topology node IDs required to successfully start the cache, if any of the required nodes leave
-        // the cluster during the cache startup, the whole procedure will be rolled back.
-        return ctx.cache().dynamicStartCachesByStoredConf(ccfgs, true, true, false, null, true, opCtx0.nodes);
+        return ctx.cache().dynamicStartCachesByStoredConf(ccfgs, true, true, false, null, true);
     }
 
     /**
@@ -751,7 +764,7 @@ public class SnapshotRestoreProcess {
         SnapshotRestoreContext opCtx0 = opCtx;
 
         Exception failure = errs.values().stream().findFirst().
-            orElse(checkNodeLeft(opCtx0.nodes, res.keySet()));
+            orElse(checkNodeLeftOnCacheStart(opCtx0.nodes, res.keySet()));
 
         if (failure == null) {
             finishProcess(reqId);
@@ -770,7 +783,7 @@ public class SnapshotRestoreProcess {
      * @param respNodes Set of responding topology nodes.
      * @return Error, if no response was received from the required topology node.
      */
-    private Exception checkNodeLeft(Set<UUID> reqNodes, Set<UUID> respNodes) {
+    private Exception checkNodeLeftOnCacheStart(Set<UUID> reqNodes, Set<UUID> respNodes) {
         if (!respNodes.containsAll(reqNodes)) {
             Set<UUID> leftNodes = new HashSet<>(reqNodes);
 
@@ -802,37 +815,38 @@ public class SnapshotRestoreProcess {
             opCtx0.stopFut = new IgniteFutureImpl<>(retFut.chain(f -> null));
 
             try {
-                ctx.cache().context().snapshotMgr().snapshotExecutorService().execute(() -> {
-                    if (log.isInfoEnabled()) {
-                        log.info("Removing restored cache directories [reqId=" + reqId +
-                            ", snapshot=" + opCtx0.snpName + ", dirs=" + opCtx0.dirs + ']');
-                    }
-
-                    IgniteCheckedException ex = null;
-
-                    for (File cacheDir : opCtx0.dirs) {
-                        File tmpCacheDir = formatTmpDirName(cacheDir);
-
-                        if (tmpCacheDir.exists() && !U.delete(tmpCacheDir)) {
-                            log.error("Unable to perform rollback routine completely, cannot remove temp directory " +
-                                "[reqId=" + reqId + ", snapshot=" + opCtx0.snpName + ", dir=" + tmpCacheDir + ']');
-
-                            ex = new IgniteCheckedException("Unable to remove temporary cache directory " + cacheDir);
+                ctx.cache().context().exchange().lastTopologyFuture().listen(f ->
+                    ctx.cache().context().snapshotMgr().snapshotExecutorService().execute(() -> {
+                        if (log.isInfoEnabled()) {
+                            log.info("Removing restored cache directories [reqId=" + reqId +
+                                ", snapshot=" + opCtx0.snpName + ", dirs=" + opCtx0.dirs + ']');
                         }
 
-                        if (cacheDir.exists() && !U.delete(cacheDir)) {
-                            log.error("Unable to perform rollback routine completely, cannot remove cache directory " +
-                                "[reqId=" + reqId + ", snapshot=" + opCtx0.snpName + ", dir=" + cacheDir + ']');
+                        IgniteCheckedException ex = null;
 
-                            ex = new IgniteCheckedException("Unable to remove cache directory " + cacheDir);
+                        for (File cacheDir : opCtx0.dirs) {
+                            File tmpCacheDir = formatTmpDirName(cacheDir);
+
+                            if (tmpCacheDir.exists() && !U.delete(tmpCacheDir)) {
+                                log.error("Unable to perform rollback routine completely, cannot remove temp directory " +
+                                    "[reqId=" + reqId + ", snapshot=" + opCtx0.snpName + ", dir=" + tmpCacheDir + ']');
+
+                                ex = new IgniteCheckedException("Unable to remove temporary cache directory " + cacheDir);
+                            }
+
+                            if (cacheDir.exists() && !U.delete(cacheDir)) {
+                                log.error("Unable to perform rollback routine completely, cannot remove cache directory " +
+                                    "[reqId=" + reqId + ", snapshot=" + opCtx0.snpName + ", dir=" + cacheDir + ']');
+
+                                ex = new IgniteCheckedException("Unable to remove cache directory " + cacheDir);
+                            }
                         }
-                    }
 
-                    if (ex != null)
-                        retFut.onDone(ex);
-                    else
-                        retFut.onDone(true);
-                });
+                        if (ex != null)
+                            retFut.onDone(ex);
+                        else
+                            retFut.onDone(true);
+                    }));
             }
             catch (RejectedExecutionException e) {
                 log.error("Unable to perform rollback routine, task has been rejected " +
@@ -890,7 +904,7 @@ public class SnapshotRestoreProcess {
         private final Collection<File> dirs;
 
         /** The exception that led to the interruption of the process. */
-        private final AtomicReference<Throwable> err = new AtomicReference<>();
+        private final AtomicReference<Exception> err = new AtomicReference<>();
 
         /** Cache ID to configuration mapping. */
         private volatile Map<Integer, StoredCacheData> cfgs;

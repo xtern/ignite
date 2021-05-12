@@ -3747,32 +3747,6 @@ public class GridCacheProcessor extends GridProcessorAdapter {
         IgniteUuid restartId,
         boolean internal
     ) {
-        return dynamicStartCachesByStoredConf(storedCacheDataList, failIfExists, checkThreadTx, disabledAfterStart,
-            restartId, internal, null);
-    }
-
-    /**
-     * Dynamically starts multiple caches.
-     *
-     * @param storedCacheDataList Collection of stored cache data.
-     * @param failIfExists Fail if exists flag.
-     * @param checkThreadTx If {@code true} checks that current thread does not have active transactions.
-     * @param disabledAfterStart If true, cache proxies will be only activated after {@link #restartProxies()}.
-     * @param restartId Restart requester id (it'll allow to start this cache only him).
-     * @param internal Flag indicating that the cache was started internally and not by the user.
-     * @param topNodes Server nodes on which a successful start of the cache(s) is required, if any of these nodes fails
-     *                 when starting the cache(s), the whole procedure is rolled back.
-     * @return Future that will be completed when all caches are deployed.
-     */
-    public IgniteInternalFuture<Boolean> dynamicStartCachesByStoredConf(
-        Collection<StoredCacheData> storedCacheDataList,
-        boolean failIfExists,
-        boolean checkThreadTx,
-        boolean disabledAfterStart,
-        IgniteUuid restartId,
-        boolean internal,
-        @Nullable Set<UUID> topNodes
-    ) {
         if (checkThreadTx) {
             sharedCtx.tm().checkEmptyTransactions(() -> {
                 List<String> cacheNames = storedCacheDataList.stream()
@@ -3833,7 +3807,7 @@ public class GridCacheProcessor extends GridProcessorAdapter {
 
             GridCompoundFuture<?, Boolean> compoundFut = new GridCompoundFuture<>();
 
-            for (DynamicCacheStartFuture fut : initiateCacheChanges(srvReqs, topNodes))
+            for (DynamicCacheStartFuture fut : initiateCacheChanges(srvReqs))
                 compoundFut.add((IgniteInternalFuture)fut);
 
             if (clientReqs != null) {
@@ -4084,22 +4058,7 @@ public class GridCacheProcessor extends GridProcessorAdapter {
      * @param reqs Requests.
      * @return Collection of futures.
      */
-    private Collection<DynamicCacheStartFuture> initiateCacheChanges(
-        Collection<DynamicCacheChangeRequest> reqs
-    ) {
-        return initiateCacheChanges(reqs, null);
-    }
-
-    /**
-     * @param reqs Requests.
-     * @param rqNodes Server nodes on which a successful start of the cache(s) is required, if any of these nodes fails
-     *                when starting the cache(s), the whole procedure is rolled back.
-     * @return Collection of futures.
-     */
-    private Collection<DynamicCacheStartFuture> initiateCacheChanges(
-        Collection<DynamicCacheChangeRequest> reqs,
-        @Nullable Collection<UUID> rqNodes
-    ) {
+    private Collection<DynamicCacheStartFuture> initiateCacheChanges(Collection<DynamicCacheChangeRequest> reqs) {
         Collection<DynamicCacheStartFuture> res = new ArrayList<>(reqs.size());
 
         Collection<DynamicCacheChangeRequest> sndReqs = new ArrayList<>(reqs.size());
@@ -4154,7 +4113,7 @@ public class GridCacheProcessor extends GridProcessorAdapter {
 
         if (!sndReqs.isEmpty()) {
             try {
-                ctx.discovery().sendCustomEvent(new DynamicCacheChangeBatch(sndReqs, rqNodes));
+                ctx.discovery().sendCustomEvent(new DynamicCacheChangeBatch(sndReqs));
 
                 err = checkNodeState();
             }
@@ -4719,7 +4678,7 @@ public class GridCacheProcessor extends GridProcessorAdapter {
         Exception err = null;
 
         try {
-            ctx.discovery().sendCustomEvent(new DynamicCacheChangeBatch(Collections.singleton(req), null));
+            ctx.discovery().sendCustomEvent(new DynamicCacheChangeBatch(Collections.singleton(req)));
 
             if (ctx.isStopping()) {
                 err = new IgniteCheckedException("Failed to execute dynamic cache change request, " +

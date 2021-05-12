@@ -1176,6 +1176,15 @@ public class IgniteSnapshotManager extends GridCacheSharedManagerAdapter
             ((DiscoveryCustomEvent)evt).customMessage() instanceof SnapshotStartDiscoveryMessage;
     }
 
+    /**
+     * Check that the required topology nodes are alive.
+     *
+     * @return Exception if any of required nodes has left the cluster.
+     */
+    public Exception checkNodeLeftOnCacheStart() {
+        return restoreCacheGrpProc.checkNodeLeftOnCacheStart();
+    }
+
     /** {@inheritDoc} */
     @Override public void onDoneBeforeTopologyUnlock(GridDhtPartitionsExchangeFuture fut) {
         if (clusterSnpReq == null || cctx.kernalContext().clientNode())
