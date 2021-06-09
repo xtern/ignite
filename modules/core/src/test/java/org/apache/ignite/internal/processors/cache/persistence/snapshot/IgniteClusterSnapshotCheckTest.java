@@ -19,6 +19,7 @@ package org.apache.ignite.internal.processors.cache.persistence.snapshot;
 
 import java.io.File;
 import java.io.IOException;
+import java.io.Serializable;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.file.Files;
@@ -40,8 +41,10 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.IgniteException;
 import org.apache.ignite.cache.affinity.rendezvous.RendezvousAffinityFunction;
+import org.apache.ignite.cluster.ClusterNode;
 import org.apache.ignite.compute.ComputeJobResult;
 import org.apache.ignite.configuration.CacheConfiguration;
+import org.apache.ignite.configuration.IgniteConfiguration;
 import org.apache.ignite.internal.GridJobExecuteRequest;
 import org.apache.ignite.internal.GridTopic;
 import org.apache.ignite.internal.IgniteEx;
@@ -75,6 +78,11 @@ import org.apache.ignite.internal.util.typedef.internal.CU;
 import org.apache.ignite.internal.util.typedef.internal.U;
 import org.apache.ignite.internal.visor.verify.CacheFilterEnum;
 import org.apache.ignite.internal.visor.verify.VisorIdleVerifyTaskArg;
+import org.apache.ignite.plugin.AbstractTestPluginProvider;
+import org.apache.ignite.plugin.PluginConfiguration;
+import org.apache.ignite.plugin.PluginContext;
+import org.apache.ignite.plugin.PluginProvider;
+import org.apache.ignite.testframework.GridTestUtils;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Before;
 import org.junit.Test;
@@ -106,10 +114,23 @@ public class IgniteClusterSnapshotCheckTest extends AbstractSnapshotSelfTest {
     /** Optional cache name to be created on demand. */
     private static final String OPTIONAL_CACHE_NAME = "CacheName";
 
+    /** Optional snapshot check plugin. */
+    private PluginProvider<PluginConfiguration> snpCheckPlugin;
+
     /** Cleanup data of task execution results if need. */
     @Before
     public void beforeCheck() {
         jobResults.clear();
+    }
+
+    /** {@inheritDoc} */
+    @Override protected IgniteConfiguration getConfiguration(String igniteInstanceName) throws Exception {
+        IgniteConfiguration cfg = super.getConfiguration(igniteInstanceName);
+
+        if (snpCheckPlugin != null)
+            cfg.setPluginProviders(snpCheckPlugin);
+
+        return cfg;
     }
 
     /** @throws Exception If fails. */
@@ -130,6 +151,45 @@ public class IgniteClusterSnapshotCheckTest extends AbstractSnapshotSelfTest {
         assertTrue(F.isEmpty(res.exceptions()));
         assertPartitionsSame(res);
         assertContains(log, b.toString(), "The check procedure has finished, no conflicts have been found");
+    }
+
+    /** @throws Exception If fails. */
+    @Test
+    public void testClusterSnapshotOptionalCheck() throws Exception {
+        String exMsg = "Test verification exception message.";
+
+        snpCheckPlugin = new AbstractTestPluginProvider() {
+            @Override public String name() {
+                return "SnapshotVerifier";
+            }
+
+            @Override public void validateNewNode(ClusterNode node, Serializable data) {
+                // No-op.
+            }
+
+            @Override public <T> @Nullable T createComponent(PluginContext ctx, Class<T> cls) {
+                if (cls != SnapshotVerifier.class)
+                    return null;
+
+                return (T)(SnapshotVerifier)((path) -> {
+                    throw new SnapshotVerifierException(exMsg);
+                });
+            }
+        };
+
+        IgniteEx ignite = startGridsWithCache(3, dfltCacheCfg, CACHE_KEYS_RANGE);
+
+        startClientGrid();
+
+        ignite.snapshot().createSnapshot(SNAPSHOT_NAME)
+            .get();
+
+        GridTestUtils.assertThrowsAnyCause(
+            log,
+            () -> snp(ignite).checkSnapshot(SNAPSHOT_NAME).get(),
+            IgniteSnapshotVerifyException.class,
+            exMsg
+        );
     }
 
     /** @throws Exception If fails. */

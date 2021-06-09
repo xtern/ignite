@@ -30,6 +30,7 @@ import org.apache.ignite.compute.ComputeJobResultPolicy;
 import org.apache.ignite.compute.ComputeTaskAdapter;
 import org.apache.ignite.internal.IgniteEx;
 import org.apache.ignite.internal.processors.task.GridInternal;
+import org.apache.ignite.internal.util.typedef.F;
 import org.apache.ignite.internal.util.typedef.internal.U;
 import org.apache.ignite.resources.IgniteInstanceResource;
 import org.jetbrains.annotations.NotNull;
@@ -54,8 +55,19 @@ public class SnapshotMetadataCollectorTask
                         private transient IgniteEx ignite;
 
                         @Override public List<SnapshotMetadata> execute() throws IgniteException {
-                            return ignite.context().cache().context().snapshotMgr()
+                            IgniteSnapshotManager snpMgr = ignite.context().cache().context().snapshotMgr();
+
+                            List<SnapshotMetadata> metas = ignite.context().cache().context().snapshotMgr()
                                 .readSnapshotMetadatas(snpName);
+
+                            try {
+                                snpMgr.optionalSnapshotCheck(metas);
+                            }
+                            catch (SnapshotVerifierException e) {
+                                throw F.wrap(e);
+                            }
+
+                            return metas;
                         }
                     }, node);
         }
