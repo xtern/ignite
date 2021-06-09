@@ -54,8 +54,18 @@ public class SnapshotMetadataCollectorTask
                         private transient IgniteEx ignite;
 
                         @Override public List<SnapshotMetadata> execute() throws IgniteException {
-                            return ignite.context().cache().context().snapshotMgr()
-                                .readSnapshotMetadatas(snpName);
+                            IgniteSnapshotManager snpMgr = ignite.context().cache().context().snapshotMgr();
+
+                            List<SnapshotMetadata> metas = snpMgr.readSnapshotMetadatas(snpName);
+
+                            try {
+                                snpMgr.optionalSnapshotCheck(metas);
+                            }
+                            catch (SnapshotVerifierException e) {
+                                throw new IgniteException(e);
+                            }
+
+                            return metas;
                         }
                     }, node);
         }

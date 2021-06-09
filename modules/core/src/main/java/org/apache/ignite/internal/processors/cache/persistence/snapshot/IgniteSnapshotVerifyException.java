@@ -21,6 +21,7 @@ import java.util.HashMap;
 import java.util.Map;
 import org.apache.ignite.IgniteException;
 import org.apache.ignite.cluster.ClusterNode;
+import org.apache.ignite.internal.util.typedef.internal.SB;
 
 /**
  * Compound snapshot verification exception from the nodes where the verification process executed.
@@ -44,5 +45,15 @@ public class IgniteSnapshotVerifyException extends IgniteException {
      */
     public Map<ClusterNode, Exception> exceptions() {
         return exs;
+    }
+
+    /** {@inheritDoc} */
+    @Override public String getMessage() {
+        SB buf = new SB();
+
+        for (Map.Entry<ClusterNode, Exception> entry : exs.entrySet())
+            buf.a("Snapshot check failed [nodeId=").a(entry.getKey().id()).a(", reason=").a(entry.getValue()).a("]. ");
+
+        return buf.toString();
     }
 }

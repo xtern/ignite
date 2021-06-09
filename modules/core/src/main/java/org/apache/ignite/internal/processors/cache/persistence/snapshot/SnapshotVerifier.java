@@ -30,5 +30,4 @@ public interface SnapshotVerifier {
      * @throws SnapshotVerifierException Thrown if snapshot integrity is corrupted or impossible to check.
      */
     public void verify(Path snpDir) throws SnapshotVerifierException;
-
 }

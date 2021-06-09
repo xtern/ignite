@@ -309,6 +309,9 @@ public class IgniteSnapshotManager extends GridCacheSharedManagerAdapter
     /** Last seen cluster snapshot operation. */
     private volatile ClusterSnapshotFuture lastSeenSnpFut = new ClusterSnapshotFuture();
 
+    /** Optional user snapshot verification. */
+    private SnapshotVerifier optSnpCheck;
+
     /**
      * @param ctx Kernal context.
      */
@@ -379,6 +382,8 @@ public class IgniteSnapshotManager extends GridCacheSharedManagerAdapter
 
         U.ensureDirectory(locSnpDir, "snapshot work directory", log);
         U.ensureDirectory(tmpWorkDir, "temp directory for snapshot creation", log);
+
+        optSnpCheck = ctx.plugins().createComponent(SnapshotVerifier.class);
 
         MetricRegistry mreg = cctx.kernalContext().metric().registry(SNAPSHOT_METRICS);
 
@@ -1399,6 +1404,22 @@ public class IgniteSnapshotManager extends GridCacheSharedManagerAdapter
             null, null, null, null, null, null);
 
         return new DataPageIterator(sctx, coctx, pageStore, partId);
+    }
+
+    /**
+     * @param metas List of snapshot metadata.
+     * @throws SnapshotVerifierException If optional verification has failed.
+     */
+    void optionalSnapshotCheck(List<SnapshotMetadata> metas) throws SnapshotVerifierException {
+        if (optSnpCheck == null)
+            return;
+
+        SnapshotMetadata meta = F.first(metas);
+
+        if (!meta.consistentId().equals(cctx.localNode().consistentId().toString()))
+            return;
+
+        optSnpCheck.verify(snapshotLocalDir(meta.snapshotName()).toPath());
     }
 
     /**
