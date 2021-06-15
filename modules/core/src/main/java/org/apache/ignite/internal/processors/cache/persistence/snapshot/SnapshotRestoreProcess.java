@@ -172,7 +172,7 @@ public class SnapshotRestoreProcess {
                 throw new IgniteException(OP_REJECT_MSG + "A cluster snapshot operation is in progress.");
 
             synchronized (this) {
-                if (isRestoring() || fut != null)
+                if (snapshotName() != null)
                     throw new IgniteException(OP_REJECT_MSG + "The previous snapshot restore operation was not completed.");
 
                 fut = new ClusterSnapshotFuture(UUID.randomUUID(), snpName);
@@ -193,6 +193,12 @@ public class SnapshotRestoreProcess {
 
             if (!F.isEmpty(f.result().exceptions())) {
                 finishProcess(fut0.rqId, F.first(f.result().exceptions().values()));
+
+                return;
+            }
+
+            if (fut0.interruptEx != null) {
+                finishProcess(fut0.rqId, fut0.interruptEx);
 
                 return;
             }
@@ -267,12 +273,19 @@ public class SnapshotRestoreProcess {
     }
 
     /**
-     * Check if snapshot restore process is currently running.
+     * Get the name of the snapshot currently being restored
      *
-     * @return {@code True} if the snapshot restore operation is in progress.
+     * @return Name of the snapshot currently being restored or {@code null} if the restore process is not running.
      */
-    public boolean isRestoring() {
-        return isRestoring(null, null);
+    public @Nullable String snapshotName() {
+        SnapshotRestoreContext opCtx0 = opCtx;
+
+        if (opCtx0 != null)
+            return opCtx0.snpName;
+
+        ClusterSnapshotFuture fut0 = fut;
+
+        return fut0 != null ? fut0.name : null;
     }
 
     /**
@@ -282,14 +295,13 @@ public class SnapshotRestoreProcess {
      * @param grpName Cache group name.
      * @return {@code True} if the cache or group with the specified name is currently being restored.
      */
-    public boolean isRestoring(@Nullable String cacheName, @Nullable String grpName) {
+    public boolean isRestoring(String cacheName, @Nullable String grpName) {
+        assert cacheName != null;
+
         SnapshotRestoreContext opCtx0 = opCtx;
 
         if (opCtx0 == null)
             return false;
-
-        if (cacheName == null)
-            return true;
 
         Map<Integer, StoredCacheData> cacheCfgs = opCtx0.cfgs;
 
@@ -384,23 +396,36 @@ public class SnapshotRestoreProcess {
      * Abort the currently running restore procedure (if any).
      *
      * @param reason Interruption reason.
+     * @param snpName Snapshot name or {@code null} to stop any running snapshot restore process.
+     * @return Future that will be finished when process the process is complete. The result of this future will be
+     * {@code false} if the restore process with the specified snapshot name is not running at all.
      */
-    public void interrupt(Exception reason) {
+    public IgniteInternalFuture<Boolean> interrupt(Exception reason, @Nullable String snpName) {
         SnapshotRestoreContext opCtx0 = opCtx;
+        boolean ctxStop = opCtx0 != null && (snpName == null || opCtx0.snpName.equals(snpName));
 
-        if (opCtx0 == null)
-            return;
+        if (ctxStop) {
+            opCtx0.err.compareAndSet(null, reason);
 
-        opCtx0.err.compareAndSet(null, reason);
+            IgniteFuture<?> stopFut;
 
-        IgniteFuture<?> stopFut;
+            synchronized (this) {
+                stopFut = opCtx0.stopFut;
+            }
 
-        synchronized (this) {
-            stopFut = opCtx0.stopFut;
+            if (stopFut != null)
+                stopFut.get();
         }
 
-        if (stopFut != null)
-            stopFut.get();
+        ClusterSnapshotFuture fut0 = fut;
+
+        if (fut0 != null && (snpName == null || fut0.name.equals(snpName))) {
+            fut0.interruptEx = reason;
+
+            return fut0.chain(f -> true);
+        }
+
+        return new GridFinishedFuture<>(ctxStop);
     }
 
     /**
@@ -443,9 +468,18 @@ public class SnapshotRestoreProcess {
                 }
             }
 
-            opCtx = prepareContext(req);
+            SnapshotRestoreContext opCtx0 = opCtx = prepareContext(req);
+            ClusterSnapshotFuture fut0 = fut;
 
-            SnapshotRestoreContext opCtx0 = opCtx;
+            if (fut0 != null) {
+                Exception err = fut0.interruptEx;
+
+                if (err != null) {
+                    opCtx0.err.set(err);
+
+                    throw new IgniteCheckedException(err);
+                }
+            }
 
             if (opCtx0.dirs.isEmpty())
                 return new GridFinishedFuture<>();
@@ -806,7 +840,7 @@ public class SnapshotRestoreProcess {
 
         SnapshotRestoreContext opCtx0 = opCtx;
 
-        if (F.isEmpty(opCtx0.dirs))
+        if (opCtx0 == null || F.isEmpty(opCtx0.dirs))
             return new GridFinishedFuture<>();
 
         GridFutureAdapter<Boolean> retFut = new GridFutureAdapter<>();
