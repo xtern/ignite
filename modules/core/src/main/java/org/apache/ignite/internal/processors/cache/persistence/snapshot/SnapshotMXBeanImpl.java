@@ -17,9 +17,14 @@
 
 package org.apache.ignite.internal.processors.cache.persistence.snapshot;
 
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashSet;
 import org.apache.ignite.internal.GridKernalContext;
+import org.apache.ignite.internal.util.typedef.F;
 import org.apache.ignite.lang.IgniteFuture;
 import org.apache.ignite.mxbean.SnapshotMXBean;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * Snapshot MBean features.
@@ -46,5 +51,41 @@ public class SnapshotMXBeanImpl implements SnapshotMXBean {
     /** {@inheritDoc} */
     @Override public void cancelSnapshot(String snpName) {
         mgr.cancelSnapshot(snpName).get();
+    }
+
+    /** {@inheritDoc} */
+    @Override public void restoreSnapshot(String name, String cacheGroupNames) {
+        IgniteFuture<Void> fut = mgr.restoreSnapshot(name, parseStringList(cacheGroupNames));
+
+        if (fut.isDone())
+            fut.get();
+    }
+
+
+    /** {@inheritDoc} */
+    @Override public void cancelSnapshotRestore(String name) {
+        mgr.cancelSnapshotRestore(name).get();
+    }
+
+    /**
+     * @param grpNamesStr Comma-separated list of group names.
+     * @return Collection of group names.
+     */
+    private @Nullable Collection<String> parseStringList(String grpNamesStr) {
+        if (F.isEmpty(grpNamesStr))
+            return null;
+
+        Collection<String> grpNames = new HashSet<>();
+
+        for (String name : grpNamesStr.split(",")) {
+            String trimmed = name.trim();
+
+            if (trimmed.isEmpty())
+                throw new IllegalArgumentException("Non-empty string expected.");
+
+            grpNames.add(trimmed);
+        }
+
+        return grpNames;
     }
 }
