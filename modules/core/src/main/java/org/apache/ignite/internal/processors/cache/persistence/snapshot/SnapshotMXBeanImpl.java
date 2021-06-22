@@ -17,7 +17,6 @@
 
 package org.apache.ignite.internal.processors.cache.persistence.snapshot;
 
-import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashSet;
 import org.apache.ignite.internal.GridKernalContext;
@@ -55,7 +54,7 @@ public class SnapshotMXBeanImpl implements SnapshotMXBean {
 
     /** {@inheritDoc} */
     @Override public void restoreSnapshot(String name, String cacheGroupNames) {
-        IgniteFuture<Void> fut = mgr.restoreSnapshot(name, parseStringList(cacheGroupNames));
+        IgniteFuture<Void> fut = mgr.restoreSnapshot(name, parseStringSet(cacheGroupNames));
 
         if (fut.isDone())
             fut.get();
@@ -71,7 +70,7 @@ public class SnapshotMXBeanImpl implements SnapshotMXBean {
      * @param grpNamesStr Comma-separated list of group names.
      * @return Collection of group names.
      */
-    private @Nullable Collection<String> parseStringList(String grpNamesStr) {
+    private @Nullable Collection<String> parseStringSet(String grpNamesStr) {
         if (F.isEmpty(grpNamesStr))
             return null;
 
