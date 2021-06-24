@@ -60,7 +60,6 @@ public class SnapshotMXBeanImpl implements SnapshotMXBean {
             fut.get();
     }
 
-
     /** {@inheritDoc} */
     @Override public void cancelSnapshotRestore(String name) {
         mgr.cancelSnapshotRestore(name).get();
@@ -80,7 +79,7 @@ public class SnapshotMXBeanImpl implements SnapshotMXBean {
             String trimmed = name.trim();
 
             if (trimmed.isEmpty())
-                throw new IllegalArgumentException("Non-empty string expected.");
+                continue;
 
             grpNames.add(trimmed);
         }
