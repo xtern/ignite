@@ -130,8 +130,8 @@ public class IgniteSnapshotMXBeanTest extends AbstractSnapshotSelfTest {
         assertEquals(0, getLongMetric("processedPartitions", restoreMBean));
         assertEquals(0, getLongMetric("totalPartitionsSize", restoreMBean));
         assertEquals(0, getLongMetric("processedPartitionsSize", restoreMBean));
-        assertNull(restoreMBean.getAttribute("snapshotName"));
-        assertNull(restoreMBean.getAttribute("cacheGroupNames"));
+        assertTrue(String.valueOf(restoreMBean.getAttribute("snapshotName")).isEmpty());
+        assertTrue(String.valueOf(restoreMBean.getAttribute("cacheGroupNames")).isEmpty());
 
         Set<String> grpNames = new HashSet<>(F.asList(ccfg1.getName(), ccfg2.getName()));
 

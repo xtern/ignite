@@ -1070,7 +1070,7 @@ public class SnapshotRestoreProcess {
          */
         private SnapshotRestoreMetrics() {
             startTime = 0;
-            name = cacheGrpNames = null;
+            name = cacheGrpNames = "";
         }
 
         /**
@@ -1081,7 +1081,7 @@ public class SnapshotRestoreProcess {
         private SnapshotRestoreMetrics(long startTime, String name, Collection<String> cacheGrpNames) {
             this.startTime = startTime;
             this.name = name;
-            this.cacheGrpNames = cacheGrpNames == null ? null : F.concat(cacheGrpNames, ",");
+            this.cacheGrpNames = cacheGrpNames == null ? "" : F.concat(cacheGrpNames, ",");
         }
     }
 }
