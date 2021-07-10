@@ -1274,6 +1274,12 @@ public class CacheContinuousQueryManager<K, V> extends GridCacheManagerAdapter<K
             if (impl instanceof Closeable)
                 U.closeQuiet((Closeable)impl);
         }
+
+        /** {@inheritDoc} */
+        @Override public void close() throws IOException {
+            if (impl instanceof Closeable)
+                ((Closeable)impl).close();
+        }
     }
 
     /**
