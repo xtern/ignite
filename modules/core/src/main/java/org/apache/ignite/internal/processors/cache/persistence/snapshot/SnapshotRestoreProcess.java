@@ -107,13 +107,13 @@ public class SnapshotRestoreProcess {
     private final IgniteLogger log;
 
     /** Future to be completed when the cache restore process is complete (this future will be returned to the user). */
-    private volatile ClusterSnapshotFuture fut;
+    private volatile ClusterSnapshotFuture fut = new ClusterSnapshotFuture();
 
     /** Snapshot restore operation context. */
     private volatile SnapshotRestoreContext opCtx;
 
-    /** Snapshot restore operation local metrics. */
-    private volatile SnapshotRestoreMetrics metrics = new SnapshotRestoreMetrics();
+    /** Last snapshot restore operation context. */
+    private volatile SnapshotRestoreContext lastOpCtx = new SnapshotRestoreContext();
 
     /**
      * @param ctx Kernal context.
@@ -157,21 +157,21 @@ public class SnapshotRestoreProcess {
     protected void registerMetrics() {
         MetricRegistry mreg = ctx.metric().registry(SNAPSHOT_RESTORE_METRICS);
 
-        mreg.register("startTime", () -> metrics.startTime,
+        mreg.register("startTime", () -> lastOpCtx.startTime,
             "The system time of the start of the cluster snapshot restore operation on this node.");
-        mreg.register("endTime", () -> metrics.endTime,
+        mreg.register("endTime", () -> lastOpCtx.endTime,
             "The system time when the restore operation of a cluster snapshot on this node ended.");
-        mreg.register("snapshotName", () -> metrics.name, String.class,
+        mreg.register("snapshotName", () -> lastOpCtx.snpName, String.class,
             "The snapshot name of the last running cluster snapshot restore operation on this node.");
-        mreg.register("cacheGroupNames", () -> metrics.cacheGrpNames, String.class,
+        mreg.register("cacheGroupNames", () -> lastOpCtx.cacheGrpNames, String.class,
             "The names of the cache groups that are being restored from the snapshot.");
-        mreg.register("totalPartitions", () -> metrics.totalParts,
+        mreg.register("totalPartitions", () -> lastOpCtx.totalParts,
             "The total number of partitions to be restored on this node.");
-        mreg.register("processedPartitions", () -> metrics.processedParts.get(),
+        mreg.register("processedPartitions", () -> lastOpCtx.processedParts.get(),
             "The number of processed partitions on this node.");
-        mreg.register("totalPartitionsSize", () -> metrics.totalPartsSize,
+        mreg.register("totalPartitionsSize", () -> lastOpCtx.totalPartsSize,
             "The total size of the partitions to be restored on this node.");
-        mreg.register("processedPartitionsSize", () -> metrics.processedPartsSize.get(),
+        mreg.register("processedPartitionsSize", () -> lastOpCtx.processedPartsSize.get(),
             "The total size of processed partitions on this node.");
     }
 
@@ -208,7 +208,8 @@ public class SnapshotRestoreProcess {
                     throw new IgniteException(OP_REJECT_MSG + "The previous snapshot restore operation was not completed.");
 
                 fut0 = fut = new ClusterSnapshotFuture(UUID.randomUUID(), snpName);
-                metrics = new SnapshotRestoreMetrics(fut0.startTime, snpName, cacheGrpNames);
+                // todo
+//                metrics = new SnapshotRestoreMetrics(fut0.startTime, snpName, cacheGrpNames);
             }
         }
         catch (IgniteException e) {
@@ -316,7 +317,7 @@ public class SnapshotRestoreProcess {
 
         ClusterSnapshotFuture fut0 = fut;
 
-        return fut0 != null ? fut0.name : null;
+        return fut0.isDone() ? null : fut0.name;
     }
 
     /**
@@ -389,19 +390,18 @@ public class SnapshotRestoreProcess {
         if (opCtx0 != null && reqId.equals(opCtx0.reqId)) {
             opCtx = null;
 
-            metrics.endTime = U.currentTimeMillis();
+            opCtx0.endTime = U.currentTimeMillis();
         }
 
         synchronized (this) {
             ClusterSnapshotFuture fut0 = fut;
 
-            if (fut0 != null && reqId.equals(fut0.rqId)) {
-                fut = null;
+            if (!fut0.isDone() && reqId.equals(fut0.rqId)) {
+                ctx.getSystemExecutorService().submit(() -> {
+                    fut0.endTime = U.currentTimeMillis();
 
-                ctx.getSystemExecutorService().submit(() -> fut0.onDone(null, err));
-
-                if (metrics.endTime == 0)
-                    metrics.endTime = U.currentTimeMillis();
+                    fut0.onDone(null, err);
+                });
             }
         }
     }
@@ -435,7 +435,7 @@ public class SnapshotRestoreProcess {
         synchronized (this) {
             opCtx0 = opCtx;
 
-            if (fut != null && fut.name.equals(snpName)) {
+            if (!fut.isDone() && fut.name.equals(snpName)) {
                 fut0 = fut;
 
                 fut0.interruptEx = reason;
@@ -522,17 +522,14 @@ public class SnapshotRestoreProcess {
                 }
             }
 
-            if (fut == null)
-                metrics = new SnapshotRestoreMetrics(U.currentTimeMillis(), req.snapshotName(), req.groups());
-
             SnapshotRestoreContext opCtx0 = prepareContext(req);
 
             synchronized (this) {
-                opCtx = opCtx0;
+                lastOpCtx = opCtx = opCtx0;
 
                 ClusterSnapshotFuture fut0 = fut;
 
-                if (fut0 != null && fut0.interruptEx != null)
+                if (!fut0.isDone() && fut0.interruptEx != null)
                     opCtx0.err.compareAndSet(null, fut0.interruptEx);
             }
 
@@ -563,7 +560,7 @@ public class SnapshotRestoreProcess {
 
             opCtx0.stopFut = new IgniteFutureImpl<>(retFut.chain(f -> null));
 
-            restoreAsync(opCtx0.snpName, opCtx0.dirs, ctx.localNodeId().equals(req.operationalNodeId()), stopChecker, errHnd)
+            restoreAsync(opCtx0, ctx.localNodeId().equals(req.operationalNodeId()), stopChecker, errHnd)
                 .thenAccept(res -> {
                     try {
                         Throwable err = opCtx.err.get();
@@ -607,16 +604,14 @@ public class SnapshotRestoreProcess {
     /**
      * Copy partition files and update binary metadata.
      *
-     * @param snpName Snapshot name.
-     * @param dirs Cache directories to restore from the snapshot.
+     * @param opCtx Snapshot restore operation context.
      * @param updateMeta Update binary metadata flag.
      * @param stopChecker Process interrupt checker.
      * @param errHnd Error handler.
      * @throws IgniteCheckedException If failed.
      */
     private CompletableFuture<Void> restoreAsync(
-        String snpName,
-        Collection<File> dirs,
+        SnapshotRestoreContext opCtx,
         boolean updateMeta,
         BooleanSupplier stopChecker,
         Consumer<Throwable> errHnd
@@ -627,7 +622,7 @@ public class SnapshotRestoreProcess {
         List<CompletableFuture<Void>> futs = new ArrayList<>();
 
         if (updateMeta) {
-            File binDir = binaryWorkDir(snapshotMgr.snapshotLocalDir(snpName).getAbsolutePath(), pdsFolderName);
+            File binDir = binaryWorkDir(snapshotMgr.snapshotLocalDir(opCtx.snpName).getAbsolutePath(), pdsFolderName);
 
             futs.add(CompletableFuture.runAsync(() -> {
                 try {
@@ -639,9 +634,9 @@ public class SnapshotRestoreProcess {
             }, snapshotMgr.snapshotExecutorService()));
         }
 
-        for (File cacheDir : dirs) {
+        for (File cacheDir : opCtx.dirs) {
             File tmpCacheDir = formatTmpDirName(cacheDir);
-            File snpCacheDir = new File(ctx.cache().context().snapshotMgr().snapshotLocalDir(snpName),
+            File snpCacheDir = new File(ctx.cache().context().snapshotMgr().snapshotLocalDir(opCtx.snpName),
                 Paths.get(databaseRelativePath(pdsFolderName), cacheDir.getName()).toString());
 
             assert snpCacheDir.exists() : "node=" + ctx.localNodeId() + ", dir=" + snpCacheDir;
@@ -659,7 +654,7 @@ public class SnapshotRestoreProcess {
 
                         if (log.isDebugEnabled()) {
                             log.debug("Copying file from the snapshot " +
-                                "[snapshot=" + snpName +
+                                "[snapshot=" + opCtx.snpName +
                                 ", src=" + snpFile +
                                 ", target=" + target + "]");
                         }
@@ -667,8 +662,8 @@ public class SnapshotRestoreProcess {
                         IgniteSnapshotManager.copy(snapshotMgr.ioFactory(), snpFile, target, snpFile.length());
 
                         if (snpFile.getName().endsWith(FilePageStoreManager.FILE_SUFFIX)) {
-                            metrics.processedParts.incrementAndGet();
-                            metrics.processedPartsSize.addAndGet(snpFile.length());
+                            opCtx.processedParts.incrementAndGet();
+                            opCtx.processedPartsSize.addAndGet(snpFile.length());
                         }
                     }
                     catch (Throwable t) {
@@ -699,7 +694,7 @@ public class SnapshotRestoreProcess {
         SnapshotMetadata meta = F.first(cctx.snapshotMgr().readSnapshotMetadatas(req.snapshotName()));
 
         if (meta == null || !meta.consistentId().equals(cctx.localNode().consistentId().toString()))
-            return new SnapshotRestoreContext(req, Collections.emptyList(), Collections.emptyMap());
+            return new SnapshotRestoreContext(req, Collections.emptyList(), Collections.emptyMap(), 0, 0);
 
         if (meta.pageSize() != cctx.database().pageSize()) {
             throw new IgniteCheckedException("Incompatible memory page size " +
@@ -713,7 +708,7 @@ public class SnapshotRestoreProcess {
         Map<String, StoredCacheData> cfgsByName = new HashMap<>();
         FilePageStoreManager pageStore = (FilePageStoreManager)cctx.pageStore();
 
-        long totalParts = 0;
+        int totalParts = 0;
         long totalBytes = 0;
 
         // Collect the cache configurations and prepare a temporary directory for copying files.
@@ -769,16 +764,12 @@ public class SnapshotRestoreProcess {
             pageStore.readCacheConfigurations(snpCacheDir, cfgsByName);
         }
 
-        metrics.totalParts = totalParts;
-        metrics.totalPartsSize = totalBytes;
-
-        if (F.isEmpty(metrics.cacheGrpNames))
-            metrics.cacheGrpNames = F.concat(F.viewReadOnly(cacheDirs, FilePageStoreManager::cacheGroupName), ",");
-
         Map<Integer, StoredCacheData> cfgsById =
             cfgsByName.values().stream().collect(Collectors.toMap(v -> CU.cacheId(v.config().getName()), v -> v));
 
-        return new SnapshotRestoreContext(req, cacheDirs, cfgsById);
+        SnapshotRestoreContext opCtx0 = new SnapshotRestoreContext(req, cacheDirs, cfgsById, totalParts, totalBytes);
+
+        return opCtx0;
     }
 
     /**
@@ -1021,31 +1012,8 @@ public class SnapshotRestoreProcess {
         /** Graceful shutdown future. */
         private volatile IgniteFuture<?> stopFut;
 
-        /**
-         * @param req Request to prepare cache group restore from the snapshot.
-         * @param dirs List of cache group names to restore from the snapshot.
-         * @param cfgs Cache ID to configuration mapping.
-         */
-        protected SnapshotRestoreContext(SnapshotOperationRequest req, Collection<File> dirs,
-            Map<Integer, StoredCacheData> cfgs) {
-            reqId = req.requestId();
-            snpName = req.snapshotName();
-            nodes = new HashSet<>(req.nodes());
-
-            this.dirs = dirs;
-            this.cfgs = cfgs;
-        }
-    }
-
-    /**
-     * Snapshot restore operation local metrics.
-     */
-    private static class SnapshotRestoreMetrics {
         /** Operation start time. */
         private final long startTime;
-
-        /** Snapshot name. */
-        private final String name;
 
         /** Number of processed (copied) partitions. */
         private final AtomicLong processedParts = new AtomicLong();
@@ -1057,31 +1025,44 @@ public class SnapshotRestoreProcess {
         private volatile long endTime;
 
         /** Cache groups to be restored. */
-        private volatile String cacheGrpNames;
+        private final String cacheGrpNames;
 
         /** Total number of partitions to be restored. */
-        private volatile long totalParts;
+        private final long totalParts;
 
         /** Total size of the partitions to be restored. */
-        private volatile long totalPartsSize;
+        private final long totalPartsSize;
+
+        /**
+         * @param req Request to prepare cache group restore from the snapshot.
+         * @param dirs List of cache group names to restore from the snapshot.
+         * @param cfgs Cache ID to configuration mapping.
+         * @param totalParts Total number of partitions to be restored.
+         * @param totalPartsSize Total size of the partitions to be restored.
+         */
+        protected SnapshotRestoreContext(SnapshotOperationRequest req, Collection<File> dirs,
+            Map<Integer, StoredCacheData> cfgs, int totalParts, long totalPartsSize) {
+            this.dirs = dirs;
+            this.cfgs = cfgs;
+            this.totalParts = totalParts;
+            this.totalPartsSize = totalPartsSize;
+
+            reqId = req.requestId();
+            snpName = req.snapshotName();
+            nodes = new HashSet<>(req.nodes());
+            startTime = U.currentTimeMillis();
+            cacheGrpNames = F.concat(F.viewReadOnly(dirs, FilePageStoreManager::cacheGroupName), ",");
+        }
 
         /**
          * Default constructor.
          */
-        private SnapshotRestoreMetrics() {
-            startTime = 0;
-            name = cacheGrpNames = "";
-        }
-
-        /**
-         * @param startTime Start time.
-         * @param name Snapshot name.
-         * @param cacheGrpNames Cache group names.
-         */
-        private SnapshotRestoreMetrics(long startTime, String name, Collection<String> cacheGrpNames) {
-            this.startTime = startTime;
-            this.name = name;
-            this.cacheGrpNames = cacheGrpNames == null ? "" : F.concat(cacheGrpNames, ",");
+        protected SnapshotRestoreContext() {
+            reqId = null;
+            dirs = null;
+            nodes = null;
+            snpName = cacheGrpNames = "";
+            startTime = totalPartsSize = totalParts = 0;
         }
     }
 }
