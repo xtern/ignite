@@ -109,10 +109,10 @@ public class SnapshotRestoreProcess {
     /** Future to be completed when the cache restore process is complete (this future will be returned to the user). */
     private volatile ClusterSnapshotFuture fut = new ClusterSnapshotFuture();
 
-    /** Snapshot restore operation context. */
+    /** Current snapshot restore operation context (will be {@code null} when the operation is not running). */
     private volatile SnapshotRestoreContext opCtx;
 
-    /** Last snapshot restore operation context. */
+    /** Last snapshot restore operation context (saves the metrics of the last operation). */
     private volatile SnapshotRestoreContext lastOpCtx = new SnapshotRestoreContext();
 
     /**
@@ -208,8 +208,6 @@ public class SnapshotRestoreProcess {
                     throw new IgniteException(OP_REJECT_MSG + "The previous snapshot restore operation was not completed.");
 
                 fut0 = fut = new ClusterSnapshotFuture(UUID.randomUUID(), snpName);
-                // todo
-//                metrics = new SnapshotRestoreMetrics(fut0.startTime, snpName, cacheGrpNames);
             }
         }
         catch (IgniteException e) {
@@ -357,6 +355,47 @@ public class SnapshotRestoreProcess {
         }
 
         return false;
+    }
+
+    /**
+     * Get the status of the last local snapshot restore operation.
+     *
+     * @param snpName Snapshot name.
+     * @return Status details.
+     */
+    public SnapshotRestoreOperationDetails status(String snpName) {
+        SnapshotRestoreContext opCtx = lastOpCtx;
+        ClusterSnapshotFuture fut0 = fut;
+
+        boolean trackFut = snpName.equals(fut0.name);
+        boolean trackCtx = snpName.equals(opCtx.snpName);
+
+        if (!trackCtx && !trackFut)
+            return null;
+
+        if (trackCtx && trackFut && !fut0.rqId.equals(opCtx.reqId)) {
+            if (fut0.startTime <= opCtx.startTime)
+                trackFut = false;
+            else
+                trackCtx = false;
+        }
+
+        long startTime = trackFut ? fut0.startTime : opCtx.startTime;
+        long endTime = trackFut ? fut0.endTime : opCtx.endTime;
+        UUID reqId = trackFut ? fut0.rqId : opCtx.reqId;
+        Throwable err = trackCtx ? opCtx.err.get() : fut0.interruptEx;
+
+        return new SnapshotRestoreOperationDetails(
+            reqId,
+            startTime,
+            endTime,
+            err == null ? null : err.getMessage(),
+            trackCtx ? opCtx.processedParts.get() : 0,
+            trackCtx ? opCtx.processedPartsSize.get() : 0,
+            trackCtx ? opCtx.cacheGrpNames : null,
+            trackCtx ? opCtx.totalParts : 0,
+            trackCtx ? opCtx.totalPartsSize : 0
+        );
     }
 
     /**
@@ -767,9 +806,7 @@ public class SnapshotRestoreProcess {
         Map<Integer, StoredCacheData> cfgsById =
             cfgsByName.values().stream().collect(Collectors.toMap(v -> CU.cacheId(v.config().getName()), v -> v));
 
-        SnapshotRestoreContext opCtx0 = new SnapshotRestoreContext(req, cacheDirs, cfgsById, totalParts, totalBytes);
-
-        return opCtx0;
+        return new SnapshotRestoreContext(req, cacheDirs, cfgsById, totalParts, totalBytes);
     }
 
     /**
@@ -1006,36 +1043,36 @@ public class SnapshotRestoreProcess {
         /** The exception that led to the interruption of the process. */
         private final AtomicReference<Throwable> err = new AtomicReference<>();
 
+        /** Operation start time. */
+        private final long startTime;
+
+        /** Names of the restored cache groups. */
+        private final String cacheGrpNames;
+
+        /** Number of processed (copied) partitions. */
+        private final AtomicLong processedParts = new AtomicLong();
+
+        /** Size of processed (copied) partitions in bytes. */
+        private final AtomicLong processedPartsSize = new AtomicLong();
+
+        /** Total number of partitions to be restored. */
+        private final long totalParts;
+
+        /** Total size of the partitions to be restored in bytes. */
+        private final long totalPartsSize;
+
         /** Cache ID to configuration mapping. */
         private volatile Map<Integer, StoredCacheData> cfgs;
 
         /** Graceful shutdown future. */
         private volatile IgniteFuture<?> stopFut;
 
-        /** Operation start time. */
-        private final long startTime;
-
-        /** Number of processed (copied) partitions. */
-        private final AtomicLong processedParts = new AtomicLong();
-
-        /** Size of processed (copied) partitions. */
-        private final AtomicLong processedPartsSize = new AtomicLong();
-
         /** Operation end time. */
         private volatile long endTime;
 
-        /** Cache groups to be restored. */
-        private final String cacheGrpNames;
-
-        /** Total number of partitions to be restored. */
-        private final long totalParts;
-
-        /** Total size of the partitions to be restored. */
-        private final long totalPartsSize;
-
         /**
          * @param req Request to prepare cache group restore from the snapshot.
-         * @param dirs List of cache group names to restore from the snapshot.
+         * @param dirs List of restored cache group directories.
          * @param cfgs Cache ID to configuration mapping.
          * @param totalParts Total number of partitions to be restored.
          * @param totalPartsSize Total size of the partitions to be restored.

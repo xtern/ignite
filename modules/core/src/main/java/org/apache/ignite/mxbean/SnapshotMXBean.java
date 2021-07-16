@@ -51,11 +51,11 @@ public interface SnapshotMXBean {
      */
     @MXBeanDescription("Restore cluster-wide snapshot.")
     public void restoreSnapshot(
-        @MXBeanParameter(name = "snpName", description = "Snapshot name.") String name,
-        @MXBeanParameter(
-            name = "cacheGroupNames",
-            description = "Optional comma-separated list of cache group names."
-        ) String cacheGroupNames);
+        @MXBeanParameter(name = "snpName", description = "Snapshot name.")
+            String name,
+        @MXBeanParameter(name = "cacheGroupNames", description = "Optional comma-separated list of cache group names.")
+            String cacheGroupNames
+    );
 
     /**
      * Cancel previously started snapshot restore operation.

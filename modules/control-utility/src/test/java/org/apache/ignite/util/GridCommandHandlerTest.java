@@ -3259,12 +3259,12 @@ public class GridCommandHandlerTest extends GridCommandHandlerClusterPerMethodAb
 
         assertEquals(EXIT_CODE_OK, execute(h, "--snapshot", "restore", snpName, "--status"));
         assertContains(log, testOut.toString(),
-            "Snapshot cache group restore operation is running [snapshot=" + snpName + ']');
+            "Restore operation for snapshot \"" + snpName + "\"  is still in progress");
 
         // Check wrong snapshot name.
         assertEquals(EXIT_CODE_OK, execute(h, "--snapshot", "restore", missingSnpName, "--status"));
         assertContains(log, testOut.toString(),
-            "Snapshot cache group restore operation is NOT running [snapshot=" + missingSnpName + ']');
+            "No information about restoring snapshot \"" + missingSnpName + "\" is available.");
 
         assertEquals(EXIT_CODE_OK, execute(h, "--snapshot", "restore", missingSnpName, "--cancel"));
         assertContains(log, testOut.toString(),
@@ -3288,7 +3288,17 @@ public class GridCommandHandlerTest extends GridCommandHandlerClusterPerMethodAb
 
         assertEquals(EXIT_CODE_OK, execute(h, "--snapshot", "restore", snpName, "--status"));
         assertContains(log, testOut.toString(),
-            "Snapshot cache group restore operation is NOT running [snapshot=" + snpName + ']');
+            "Error: Operation has been canceled by the user.");
+
+        grid(1).snapshot().restoreSnapshot(snpName, null).get(getTestTimeout());
+
+        assertEquals(EXIT_CODE_OK, execute(h, "--snapshot", "restore", snpName, "--status"));
+
+        String out = testOut.toString();
+
+        assertContains(log, out, "Restore operation for snapshot \"" + snpName + "\" completed successfully");
+        assertContains(log, out, "Cache groups: " + DEFAULT_CACHE_NAME);
+        assertContains(log, out, "Progress: 100% completed");
     }
 
     /**

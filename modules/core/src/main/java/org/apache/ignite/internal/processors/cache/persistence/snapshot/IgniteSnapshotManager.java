@@ -794,16 +794,6 @@ public class IgniteSnapshotManager extends GridCacheSharedManagerAdapter
     }
 
     /**
-     * Check if snapshot restore process is currently running.
-     *
-     * @param snpName Snapshot name.
-     * @return {@code True} if the snapshot restore operation from the specified snapshot is in progress locally.
-     */
-    public boolean isRestoring(String snpName) {
-        return snpName.equals(restoreCacheGrpProc.restoringSnapshotName());
-    }
-
-    /**
      * Check if the cache or group with the specified name is currently being restored from the snapshot.
      *
      * @param cacheName Cache name.
@@ -818,12 +808,21 @@ public class IgniteSnapshotManager extends GridCacheSharedManagerAdapter
      * Status of the restore operation cluster-wide.
      *
      * @param snpName Snapshot name.
-     * @return Future that will be completed when the status of the restore operation is received from all the server
-     * nodes. The result of this future will be {@code false} if the restore process with the specified snapshot name is
-     * not running on all nodes.
+     * @return Future that will be completed when the status of the restore operation is received from all server nodes.
+     *         The result of this future is the node ids mapping with restore operation state.
      */
-    public IgniteFuture<Boolean> restoreStatus(String snpName) {
+    public IgniteFuture<Map<UUID, SnapshotRestoreOperationDetails>> restoreStatus(String snpName) {
         return executeRestoreManagementTask(SnapshotRestoreStatusTask.class, snpName);
+    }
+
+    /**
+     * Get the status of the last local snapshot restore operation.
+     *
+     * @param snpName Snapshot name.
+     * @return Status of the last local snapshot restore operation.
+     */
+    public SnapshotRestoreOperationDetails restoreStatusLocal(String snpName) {
+        return restoreCacheGrpProc.status(snpName);
     }
 
     /**
@@ -1577,8 +1576,8 @@ public class IgniteSnapshotManager extends GridCacheSharedManagerAdapter
      * @param taskCls Snapshot restore operation management task class.
      * @param snpName Snapshot name.
      */
-    private IgniteFuture<Boolean> executeRestoreManagementTask(
-        Class<? extends ComputeTask<String, Boolean>> taskCls,
+    private <T> IgniteFuture<T> executeRestoreManagementTask(
+        Class<? extends ComputeTask<String, T>> taskCls,
         String snpName
     ) {
         cctx.kernalContext().security().authorize(ADMIN_SNAPSHOT);

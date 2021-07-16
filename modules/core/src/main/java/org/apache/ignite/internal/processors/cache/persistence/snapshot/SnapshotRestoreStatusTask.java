@@ -17,18 +17,24 @@
 
 package org.apache.ignite.internal.processors.cache.persistence.snapshot;
 
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
 import org.apache.ignite.IgniteException;
 import org.apache.ignite.compute.ComputeJob;
 import org.apache.ignite.compute.ComputeJobAdapter;
+import org.apache.ignite.compute.ComputeJobResult;
 import org.apache.ignite.internal.IgniteEx;
 import org.apache.ignite.internal.processors.task.GridInternal;
+import org.apache.ignite.internal.util.typedef.T2;
 import org.apache.ignite.resources.IgniteInstanceResource;
 
 /**
  * Snapshot restore status task.
  */
 @GridInternal
-class SnapshotRestoreStatusTask extends SnapshotRestoreManagementTask {
+class SnapshotRestoreStatusTask extends SnapshotRestoreManagementTask<Map<UUID, SnapshotRestoreOperationDetails>> {
     /** Serial version uid. */
     private static final long serialVersionUID = 0L;
 
@@ -39,9 +45,32 @@ class SnapshotRestoreStatusTask extends SnapshotRestoreManagementTask {
             @IgniteInstanceResource
             private transient IgniteEx ignite;
 
-            @Override public Boolean execute() throws IgniteException {
-                return ignite.context().cache().context().snapshotMgr().isRestoring(snpName);
+            @Override public SnapshotRestoreOperationDetails execute() throws IgniteException {
+                return ignite.context().cache().context().snapshotMgr().restoreStatusLocal(snpName);
             }
         };
+    }
+
+    /** {@inheritDoc} */
+    @Override public Map<UUID, SnapshotRestoreOperationDetails> reduce(List<ComputeJobResult> results) throws IgniteException {
+        Map</*reqId*/UUID, Map</*nodeId*/UUID, SnapshotRestoreOperationDetails>> reqMap = new HashMap<>();
+        T2<Long, UUID> oldestUUID = new T2<>(0L, null);
+
+        for (ComputeJobResult r : results) {
+            if (r.getException() != null)
+                throw new IgniteException("Failed to execute job [nodeId=" + r.getNode().id() + ']', r.getException());
+
+            SnapshotRestoreOperationDetails details = r.getData();
+
+            if (details == null)
+                continue;
+
+            if (oldestUUID.get1() < details.startTime())
+                oldestUUID.set(details.startTime(), details.requestId());
+
+            reqMap.computeIfAbsent(details.requestId(), v -> new HashMap<>()).put(r.getNode().id(), details);
+        }
+
+        return reqMap.isEmpty() ? null : reqMap.get(oldestUUID.get2());
     }
 }
