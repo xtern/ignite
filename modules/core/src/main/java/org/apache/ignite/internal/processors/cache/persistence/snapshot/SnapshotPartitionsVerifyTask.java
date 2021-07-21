@@ -191,12 +191,20 @@ public class SnapshotPartitionsVerifyTask
             this.rqGrps = rqGrps == null ? Collections.emptySet() : new HashSet<>(rqGrps);
         }
 
+        /** {@inheritDoc} */
         @Override public Map<PartitionKeyV2, PartitionHashRecordV2> execute() throws IgniteException {
             IgniteSnapshotManager snpMgr = ignite.context().cache().context().snapshotMgr();
 
             if (log.isInfoEnabled()) {
                 log.info("Verify snapshot partitions procedure has been initiated " +
                     "[snpName=" + snpName + ", consId=" + consId + ']');
+            }
+
+            try {
+                snpMgr.optionalSnapshotCheck(snpName);
+            }
+            catch (SnapshotVerifierException e) {
+                throw new IgniteException(e);
             }
 
             SnapshotMetadata meta = snpMgr.readSnapshotMetadata(snpName, consId);

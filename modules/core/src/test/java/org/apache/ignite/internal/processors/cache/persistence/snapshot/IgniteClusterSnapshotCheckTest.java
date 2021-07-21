@@ -37,6 +37,7 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
+import org.apache.ignite.Ignite;
 import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.IgniteException;
 import org.apache.ignite.cache.affinity.rendezvous.RendezvousAffinityFunction;
@@ -71,6 +72,7 @@ import org.apache.ignite.internal.processors.cache.version.GridCacheVersion;
 import org.apache.ignite.internal.util.GridUnsafe;
 import org.apache.ignite.internal.util.lang.GridIterator;
 import org.apache.ignite.internal.util.typedef.F;
+import org.apache.ignite.internal.util.typedef.G;
 import org.apache.ignite.internal.util.typedef.X;
 import org.apache.ignite.internal.util.typedef.internal.CU;
 import org.apache.ignite.internal.util.typedef.internal.U;
@@ -80,7 +82,6 @@ import org.apache.ignite.plugin.AbstractTestPluginProvider;
 import org.apache.ignite.plugin.PluginConfiguration;
 import org.apache.ignite.plugin.PluginContext;
 import org.apache.ignite.plugin.PluginProvider;
-import org.apache.ignite.testframework.GridTestUtils;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Before;
 import org.junit.Test;
@@ -175,15 +176,20 @@ public class IgniteClusterSnapshotCheckTest extends AbstractSnapshotSelfTest {
 
         startClientGrid();
 
-        ignite.snapshot().createSnapshot(SNAPSHOT_NAME)
-            .get();
+        ignite.snapshot().createSnapshot(SNAPSHOT_NAME).get();
 
-        GridTestUtils.assertThrowsAnyCause(
-            log,
-            () -> snp(ignite).checkSnapshot(SNAPSHOT_NAME).get(),
-            IgniteSnapshotVerifyException.class,
-            exMsg
-        );
+        IdleVerifyResultV2 res = snp(ignite).checkSnapshot(SNAPSHOT_NAME).get();
+
+        assertTrue(!res.exceptions().isEmpty());
+
+        for (Ignite grid : G.allGrids()) {
+            if (grid.cluster().localNode().isClient())
+                continue;
+
+            Exception ex = res.exceptions().get(grid.cluster().localNode());
+
+            assertTrue(X.hasCause(ex, exMsg, SnapshotVerifierException.class));
+        }
     }
 
     /** @throws Exception If fails. */

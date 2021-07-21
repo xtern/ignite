@@ -1407,19 +1407,14 @@ public class IgniteSnapshotManager extends GridCacheSharedManagerAdapter
     }
 
     /**
-     * @param metas List of snapshot metadata.
+     * @param snpName Snapshot name.
      * @throws SnapshotVerifierException If optional verification has failed.
      */
-    void optionalSnapshotCheck(List<SnapshotMetadata> metas) throws SnapshotVerifierException {
+    void optionalSnapshotCheck(String snpName) throws SnapshotVerifierException {
         if (optSnpCheck == null)
             return;
 
-        SnapshotMetadata meta = F.first(metas);
-
-        if (!meta.consistentId().equals(cctx.localNode().consistentId().toString()))
-            return;
-
-        optSnpCheck.verify(snapshotLocalDir(meta.snapshotName()).toPath());
+        optSnpCheck.verify(snapshotLocalDir(snpName).toPath());
     }
 
     /**

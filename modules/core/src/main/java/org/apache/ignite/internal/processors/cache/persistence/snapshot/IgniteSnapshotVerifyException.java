@@ -52,7 +52,7 @@ public class IgniteSnapshotVerifyException extends IgniteException {
         SB buf = new SB();
 
         for (Map.Entry<ClusterNode, Exception> entry : exs.entrySet())
-            buf.a("Snapshot check failed [nodeId=").a(entry.getKey().id()).a(", reason=").a(entry.getValue()).a("]. ");
+            buf.a(entry.getValue()).a(" [nodeId=").a(entry.getKey().id()).a("]. ");
 
         return buf.toString();
     }
